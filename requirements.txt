@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+aiohttp
+pandas
+numpy
+python-multipart
+websockets
+aiofiles
+akshare
+yfinance
+tushare
