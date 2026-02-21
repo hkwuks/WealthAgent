@@ -65,9 +65,10 @@ class ValuationResult(BaseModel):
     estimated_change_percent: Optional[float] = Field(None, description="估算涨跌幅(%)")
     previous_nav: Optional[float] = Field(None, description="昨日净值")
     total_value: float = Field(0.0, description="总价值")
-    holdings_value: Dict[str, float] = Field(default_factory=dict, description="持仓贡献值")
+    holdings_value: Dict[str, Any] = Field(default_factory=dict, description="持仓贡献值")
     benchmark_info: Optional[Dict[str, Any]] = Field(None, description="业绩基准信息")
     confidence: float = Field(0.0, ge=0.0, le=1.0, description="估值置信度(0-1)")
+    confidence_note: Optional[str] = Field(None, description="置信度说明")
     timestamp: datetime
 
 

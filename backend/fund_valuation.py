@@ -1,36 +1,15 @@
-import asyncio
-import re
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from backend.models import Fund, Holding, AssetType, ValuationResult, ValuationType, MarketType
-import akshare as ak
-from backend.market_data import market_data_service, determine_market_type
+from backend.market_data import (
+    market_data_service, 
+    determine_market_type,
+    INDEX_MAPPING,
+    GLOBAL_INDEX_MAPPING,
+)
 from loguru import logger
 
 logger.add("./logs/fund_valuation.log", encoding="utf-8")
-
-INDEX_MAPPING = {
-    "000001": {"name": "上证指数", "code": "sh000001"},
-    "000016": {"name": "上证50", "code": "sh000016"},
-    "000300": {"name": "沪深300", "code": "sh000300"},
-    "000905": {"name": "中证500", "code": "sh000905"},
-    "000852": {"name": "中证1000", "code": "sh000852"},
-    "399001": {"name": "深证成指", "code": "sz399001"},
-    "399006": {"name": "创业板指", "code": "sz399006"},
-    "399673": {"name": "创业板50", "code": "sz399673"},
-    "000688": {"name": "科创50", "code": "sh000688"},
-    "399005": {"name": "中小板指", "code": "sz399005"},
-    "931079": {"name": "国证2000", "code": "sz399303"},
-    "399303": {"name": "国证2000", "code": "sz399303"},
-    "399997": {"name": "中证白酒", "code": "sz399997"},
-    "399808": {"name": "中证新能源", "code": "sz399808"},
-    "399967": {"name": "中证军工", "code": "sz399967"},
-    "399986": {"name": "中证银行", "code": "sz399986"},
-    "399975": {"name": "中证证券", "code": "sz399975"},
-    "000932": {"name": "中证消费", "code": "sh000932"},
-    "000933": {"name": "中证医药", "code": "sh000933"},
-    "000922": {"name": "中证红利", "code": "sh000922"},
-}
 
 ETF_INDEX_MAPPING = {
     "510300": "000300",
@@ -83,81 +62,21 @@ class FundValuationService:
     
     async def get_etf_realtime_price(self, fund_code: str) -> Optional[Dict]:
         """
-        获取场内ETF实时价格
-        
-        Args:
-            fund_code: ETF代码
-            
-        Returns:
-            Optional[Dict]: 包含价格、涨跌幅等信息的字典
+        获取场内ETF实时价格（复用 market_data_service）
         """
-        try:
-            etf_spot_df = ak.fund_etf_spot_em()
-            etf_info = etf_spot_df[etf_spot_df['代码'] == fund_code]
-            
-            if not etf_info.empty:
-                row = etf_info.iloc[0]
-                return {
-                    "code": fund_code,
-                    "name": row.get('名称', ''),
-                    "price": float(row.get('最新价', 0)),
-                    "change_percent": float(row.get('涨跌幅', 0)),
-                    "volume": float(row.get('成交量', 0)),
-                    "amount": float(row.get('成交额', 0)),
-                }
-            
-            logger.warning(f"ETF {fund_code} not found in realtime data")
-            return None
-        except Exception as e:
-            logger.error(f"Error getting ETF realtime price for {fund_code}: {e}")
-            return None
+        return await market_data_service.get_etf_realtime_data(fund_code)
     
     async def get_index_realtime_data(self, index_code: str) -> Optional[Dict]:
         """
-        获取指数实时数据
-        
-        Args:
-            index_code: 指数代码（如 000300）
-            
-        Returns:
-            Optional[Dict]: 包含价格、涨跌幅等信息的字典
+        获取指数实时数据（复用 market_data_service）
         """
-        try:
-            index_info = INDEX_MAPPING.get(index_code)
-            if not index_info:
-                logger.warning(f"Index {index_code} not in mapping, trying direct query")
-                index_spot_df = ak.stock_zh_index_spot_em(symbol="上证系列指数")
-                index_row = index_spot_df[index_spot_df['代码'] == index_code]
-                if not index_row.empty:
-                    row = index_row.iloc[0]
-                    return {
-                        "code": index_code,
-                        "name": row.get('名称', ''),
-                        "price": float(row.get('最新价', 0)),
-                        "change_percent": float(row.get('涨跌幅', 0)),
-                    }
-                return None
-            
-            full_code = index_info["code"]
-            market = "上证" if full_code.startswith("sh") else "深证"
-            pure_code = full_code[2:]
-            
-            index_spot_df = ak.stock_zh_index_spot_em(symbol=f"{market}系列指数")
-            index_row = index_spot_df[index_spot_df['代码'] == pure_code]
-            
-            if not index_row.empty:
-                row = index_row.iloc[0]
-                return {
-                    "code": index_code,
-                    "name": row.get('名称', ''),
-                    "price": float(row.get('最新价', 0)),
-                    "change_percent": float(row.get('涨跌幅', 0)),
-                }
-            
-            return None
-        except Exception as e:
-            logger.error(f"Error getting index realtime data for {index_code}: {e}")
-            return None
+        return await market_data_service.get_index_realtime_data(index_code)
+    
+    async def get_global_index_realtime_data(self, index_code: str) -> Optional[Dict]:
+        """
+        获取海外指数实时数据（复用 market_data_service）
+        """
+        return await market_data_service.get_global_index_realtime_data(index_code)
     
     async def get_tracking_index(self, fund_code: str, fund_name: str = "", tracking_index_name: Optional[str] = "") -> Optional[str]:
         """
@@ -231,11 +150,12 @@ class FundValuationService:
                 valuation_type=ValuationType.REAL_TIME_PRICE,
                 estimated_nav=realtime_data["price"],
                 estimated_change_percent=realtime_data["change_percent"],
-                previous_nav=None,
+                previous_nav=realtime_data.get("previous_close"),
                 total_value=realtime_data["price"],
                 holdings_value={},
                 benchmark_info=None,
                 confidence=1.0,
+                confidence_note="场内ETF实时价格，100%准确",
                 timestamp=datetime.now()
             )
         except Exception as e:
@@ -278,10 +198,14 @@ class FundValuationService:
                     holdings_value={},
                     benchmark_info=None,
                     confidence=0.3,
+                    confidence_note="无法找到跟踪指数，估值仅供参考",
                     timestamp=datetime.now()
                 )
             
-            index_data = await self.get_index_realtime_data(tracking_index)
+            if tracking_index.lower() in GLOBAL_INDEX_MAPPING:
+                index_data = await self.get_global_index_realtime_data(tracking_index)
+            else:
+                index_data = await self.get_index_realtime_data(tracking_index)
             
             if not index_data:
                 logger.warning(f"Cannot get index data for {tracking_index}")
@@ -307,10 +231,116 @@ class FundValuationService:
                     "index_change_percent": index_change_percent,
                 },
                 confidence=0.85,
+                confidence_note="基于跟踪指数估值，误差约0.2%（跟踪误差）",
                 timestamp=datetime.now()
             )
         except Exception as e:
             logger.error(f"Error calculating index fund valuation for {fund_code}: {e}")
+            return None
+    
+    async def calculate_holdings_based_valuation(
+        self,
+        fund_code: str,
+        fund_name: str,
+        previous_nav: float
+    ) -> Optional[ValuationResult]:
+        """
+        基于持仓股票比例计算基金估值
+        
+        Args:
+            fund_code: 基金代码
+            fund_name: 基金名称
+            previous_nav: 昨日净值
+            
+        Returns:
+            Optional[ValuationResult]: 估值结果
+        """
+        try:
+            holdings = await market_data_service.get_fund_holdings(fund_code)
+            
+            if not holdings:
+                logger.warning(f"No holdings data for fund {fund_code}")
+                return None
+            
+            top_holdings = holdings[:10]
+            
+            stock_codes = [h.asset_code for h in top_holdings if h.asset_code]
+            stock_prices = {}
+            
+            for stock_code in stock_codes:
+                try:
+                    data = await market_data_service.get_stock_price(stock_code)
+                    if data:
+                        stock_prices[stock_code] = {
+                            "name": data.name,
+                            "price": data.price,
+                            "change_percent": data.change_percent or 0,
+                        }
+                except Exception as e:
+                    logger.warning(f"Error getting price for stock {stock_code}: {e}")
+                    continue
+            
+            if not stock_prices:
+                logger.warning(f"No stock prices available for fund {fund_code}")
+                return None
+            
+            total_weight = 0.0
+            weighted_change = 0.0
+            holdings_value = {}
+            
+            for holding in top_holdings:
+                if holding.asset_code in stock_prices:
+                    stock_data = stock_prices[holding.asset_code]
+                    weight = holding.weight if holding.weight else 0
+                    change_percent = stock_data["change_percent"]
+                    
+                    contribution = weight * change_percent / 100
+                    weighted_change += contribution
+                    total_weight += weight
+                    
+                    holdings_value[holding.asset_name] = {
+                        "weight": weight,
+                        "change_percent": change_percent,
+                        "contribution": round(contribution, 4),
+                    }
+            
+            if total_weight > 0:
+                coverage_ratio = min(total_weight / 100, 1.0)
+            else:
+                coverage_ratio = 0
+            
+            estimated_change_percent = weighted_change
+            estimated_nav = previous_nav * (1 + estimated_change_percent / 100)
+            
+            confidence = min(0.9, 0.5 + coverage_ratio * 0.4)
+            
+            if coverage_ratio >= 0.8:
+                confidence_note = f"基于持仓估值，覆盖率{coverage_ratio*100:.0f}%，参考价值较高"
+            elif coverage_ratio >= 0.5:
+                confidence_note = f"基于持仓估值，覆盖率{coverage_ratio*100:.0f}%，存在一定偏差"
+            else:
+                confidence_note = f"基于持仓估值，覆盖率仅{coverage_ratio*100:.0f}%，偏差可能较大"
+            
+            return ValuationResult(
+                fund_code=fund_code,
+                fund_name=fund_name,
+                valuation_type=ValuationType.HOLDINGS_BASED,
+                estimated_nav=round(estimated_nav, 4),
+                estimated_change_percent=round(estimated_change_percent, 2),
+                previous_nav=previous_nav,
+                total_value=estimated_nav,
+                holdings_value=holdings_value,
+                benchmark_info={
+                    "total_weight": round(total_weight, 2),
+                    "coverage_ratio": round(coverage_ratio, 2),
+                    "holdings_count": len(holdings_value),
+                },
+                confidence=round(confidence, 2),
+                confidence_note=confidence_note,
+                timestamp=datetime.now()
+            )
+        except Exception as e:
+            logger.error(f"Error calculating holdings-based valuation for {fund_code}: {e}")
             return None
     
     async def calculate_active_fund_valuation(
@@ -358,6 +388,7 @@ class FundValuationService:
                 holdings_value={},
                 benchmark_info=benchmark_info,
                 confidence=0.2,
+                confidence_note="主动型基金无法准确估值，仅供参考业绩基准",
                 timestamp=datetime.now()
             )
         except Exception as e:
@@ -385,7 +416,8 @@ class FundValuationService:
     async def calculate_fund_valuation(
         self, 
         fund_code: str, 
-        previous_nav: Optional[float] = None
+        previous_nav: Optional[float] = None,
+        prefer_holdings: bool = True
     ) -> Optional[ValuationResult]:
         """
         计算基金估值（自动判断基金类型并选择合适的估值方法）
@@ -393,6 +425,7 @@ class FundValuationService:
         Args:
             fund_code: 基金代码
             previous_nav: 昨日净值（可选，如不提供会自动获取）
+            prefer_holdings: 是否优先使用持仓估值（默认True）
             
         Returns:
             Optional[ValuationResult]: 估值结果
@@ -426,6 +459,16 @@ class FundValuationService:
                     fund_code, fund_name, previous_nav, tracking_index
                 )
             
+            if valuation_type == ValuationType.BENCHMARK_ONLY and prefer_holdings:
+                holdings_result = await self.calculate_holdings_based_valuation(
+                    fund_code, fund_name, previous_nav
+                )
+                if holdings_result and holdings_result.confidence >= 0.5:
+                    logger.info(f"Using holdings-based valuation for {fund_code}")
+                    return holdings_result
+                elif holdings_result:
+                    logger.info(f"Holdings valuation confidence too low, falling back for {fund_code}")
+            
             if valuation_type == ValuationType.BENCHMARK_ONLY:
                 return await self.calculate_active_fund_valuation(
                     fund_code, fund_name, previous_nav, fund_info.benchmark
@@ -442,6 +485,7 @@ class FundValuationService:
                 holdings_value={},
                 benchmark_info=None,
                 confidence=0.0,
+                confidence_note="该基金类型暂不支持估值",
                 timestamp=datetime.now()
             )
         except Exception as e:
@@ -452,18 +496,19 @@ class FundValuationService:
 fund_valuation_service = FundValuationService()
 
 
-async def calculate_fund_valuation(fund_code: str, previous_nav: Optional[float] = None) -> Optional[ValuationResult]:
+async def calculate_fund_valuation(fund_code: str, previous_nav: Optional[float] = None, prefer_holdings: bool = True) -> Optional[ValuationResult]:
     """
     计算基金估值的外部接口
     
     Args:
         fund_code: 基金代码
         previous_nav: 昨日净值（可选）
+        prefer_holdings: 是否优先使用持仓估值（默认True）
         
     Returns:
         Optional[ValuationResult]: 估值结果
     """
-    return await fund_valuation_service.calculate_fund_valuation(fund_code, previous_nav)
+    return await fund_valuation_service.calculate_fund_valuation(fund_code, previous_nav, prefer_holdings)
 
 
 async def get_etf_realtime_price(fund_code: str) -> Optional[Dict]:
