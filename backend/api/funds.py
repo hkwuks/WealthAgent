@@ -1,51 +1,155 @@
-from fastapi import APIRouter, HTTPException
-from typing import List
-from backend.models import Fund, FundListResponse, ValuationRequest, ValuationResult, FundInfo
-from backend.fund_service import fund_service
-from backend.market_data import get_fund_info
+from fastapi import APIRouter, HTTPException, Query
+from typing import Optional
+from backend.market_data import market_data_service
+from backend.api.schemas import (
+    FundInfoResponse,
+    FundInfoListResponse,
+    HoldingsResponse,
+    NavHistoryResponse,
+)
+from backend.models import FundInfo
+from loguru import logger
 
 
-router = APIRouter(prefix="/funds", tags=["funds"])
+router = APIRouter(prefix="/funds", tags=["基金信息"])
 
 
-@router.get("", response_model=FundListResponse)
-async def get_funds():
-    funds = fund_service.load_funds()
-    return FundListResponse(funds=funds, total=len(funds))
+@router.get(
+    "/{fund_code}",
+    response_model=FundInfoResponse,
+    summary="获取基金信息",
+    description="根据基金代码获取基金的详细信息，包括名称、类型、净值、业绩基准等"
+)
+async def get_fund_info(fund_code: str):
+    """
+    获取基金信息
+    
+    - **fund_code**: 基金代码（如 110022, 510300）
+    """
+    try:
+        info = await market_data_service.get_fund_info(fund_code)
+        
+        if not info:
+            return FundInfoResponse(
+                success=False,
+                message=f"未找到基金 {fund_code} 的信息",
+                data=None
+            )
+        
+        return FundInfoResponse(
+            success=True,
+            message="获取成功",
+            data=info
+        )
+    except Exception as e:
+        logger.error(f"获取基金信息失败: {fund_code}, {e}")
+        return FundInfoResponse(
+            success=False,
+            message=f"获取基金信息失败: {str(e)}",
+            data=None
+        )
 
 
-@router.get("/{fund_code}", response_model=Fund)
-async def get_fund(fund_code: str):
-    fund = fund_service.get_fund(fund_code)
-    if not fund:
-        raise HTTPException(status_code=404, detail="Fund not found")
-    return fund
+@router.post(
+    "/batch",
+    response_model=FundInfoListResponse,
+    summary="批量获取基金信息",
+    description="批量获取多个基金的信息"
+)
+async def get_fund_info_batch(fund_codes: list[str]):
+    """
+    批量获取基金信息
+    
+    - **fund_codes**: 基金代码列表
+    """
+    results = []
+    
+    for code in fund_codes:
+        try:
+            info = await market_data_service.get_fund_info(code)
+            if info:
+                results.append(info)
+        except Exception as e:
+            logger.warning(f"获取基金 {code} 信息失败: {e}")
+    
+    return FundInfoListResponse(
+        success=True,
+        message=f"成功获取 {len(results)}/{len(fund_codes)} 个基金信息",
+        data=results,
+        total=len(results)
+    )
 
 
-@router.get("/info/{fund_code}", response_model=FundInfo)
-async def get_fund_info_endpoint(fund_code: str):
-    info = await get_fund_info(fund_code)
-    if not info:
-        raise HTTPException(status_code=404, detail="Fund info not found")
-    return info
+@router.get(
+    "/{fund_code}/holdings",
+    response_model=HoldingsResponse,
+    summary="获取基金持仓",
+    description="获取基金的最新持仓信息"
+)
+async def get_fund_holdings(fund_code: str):
+    """
+    获取基金持仓
+    
+    - **fund_code**: 基金代码
+    """
+    try:
+        holdings = await market_data_service.get_fund_holdings(fund_code)
+        
+        if not holdings:
+            return HoldingsResponse(
+                success=False,
+                message=f"未找到基金 {fund_code} 的持仓信息",
+                data=[],
+                total=0
+            )
+        
+        return HoldingsResponse(
+            success=True,
+            message="获取成功",
+            data=holdings,
+            total=len(holdings)
+        )
+    except Exception as e:
+        logger.error(f"获取基金持仓失败: {fund_code}, {e}")
+        return HoldingsResponse(
+            success=False,
+            message=f"获取基金持仓失败: {str(e)}",
+            data=[],
+            total=0
+        )
 
 
-@router.post("", response_model=Fund)
-async def create_fund(fund: Fund):
-    return fund_service.add_fund(fund)
-
-
-@router.delete("/{fund_code}")
-async def delete_fund(fund_code: str):
-    success = fund_service.delete_fund(fund_code)
-    if not success:
-        raise HTTPException(status_code=404, detail="Fund not found")
-    return {"message": "Fund deleted successfully"}
-
-
-@router.post("/valuation", response_model=List[ValuationResult])
-async def calculate_valuation(request: ValuationRequest):
-    results = await fund_service.calculate_batch_valuation(request.fund_codes)
-    if not results:
-        raise HTTPException(status_code=404, detail="No funds found")
-    return results
+@router.get(
+    "/{fund_code}/nav-history",
+    response_model=NavHistoryResponse,
+    summary="获取基金净值历史",
+    description="获取基金的最新净值和昨日净值"
+)
+async def get_fund_nav_history(fund_code: str):
+    """
+    获取基金净值历史
+    
+    - **fund_code**: 基金代码
+    """
+    try:
+        nav_history = await market_data_service.get_fund_nav_history(fund_code)
+        
+        if not nav_history:
+            return NavHistoryResponse(
+                success=False,
+                message=f"未找到基金 {fund_code} 的净值历史",
+                data=None
+            )
+        
+        return NavHistoryResponse(
+            success=True,
+            message="获取成功",
+            data=nav_history
+        )
+    except Exception as e:
+        logger.error(f"获取基金净值历史失败: {fund_code}, {e}")
+        return NavHistoryResponse(
+            success=False,
+            message=f"获取基金净值历史失败: {str(e)}",
+            data=None
+        )
