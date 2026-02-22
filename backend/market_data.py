@@ -66,8 +66,8 @@ async def get_session() -> aiohttp.ClientSession:
     """获取共享的 aiohttp session"""
     global _session
     if _session is None or _session.closed:
-        connector = aiohttp.TCPConnector(limit=20, limit_per_host=5, ttl_dns_cache=300)
-        timeout = aiohttp.ClientTimeout(total=15.0, connect=5.0)
+        connector = aiohttp.TCPConnector(limit=30, limit_per_host=5, ttl_dns_cache=300)
+        timeout = aiohttp.ClientTimeout(total=15, connect=5.0)
         _session = aiohttp.ClientSession(connector=connector, timeout=timeout)
     return _session
 
@@ -162,12 +162,24 @@ class BaseBrokerAPI:
         """获取基金持仓"""
         return []
 
+    async def get_fund_nav_history(self, fund_code: str) -> Optional[Dict[str, Any]]:
+        """获取基金历史净值"""
+        return None
+
     async def get_index_price(self, code: str) -> Optional[MarketData]:
         """获取指数价格"""
         pass
 
     async def get_etf_realtime_data(self, code: str) -> Optional[Dict[str, Any]]:
         """获取ETF实时数据"""
+        return None
+
+    async def get_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
+        """获取指数实时数据"""
+        return None
+
+    async def get_global_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
+        """获取海外指数实时数据"""
         return None
 
 
@@ -248,7 +260,7 @@ class EastMoneyAPI(BaseBrokerAPI):
         return None
 
     async def _get_fund_detail_info(self, code: str) -> Dict[str, Optional[str]]:
-        result: Dict[str, Optional[str]] = {"benchmark": None, "tracking_index": None}
+        result: Dict[str, Optional[str]] = {"benchmark": None, "tracking_index": None, "fund_type": None}
         try:
             url = f"https://fundf10.eastmoney.com/jbgk_{code}.html"
             headers = {
@@ -259,6 +271,12 @@ class EastMoneyAPI(BaseBrokerAPI):
                     if response.status != 200:
                         return result
                     content = await response.text()
+                
+                type_match = re.search(r'基金类型.*?<td[^>]*>(.*?)</td>', content, re.DOTALL)
+                if type_match:
+                    type_text = type_match.group(1).strip()
+                    type_text = re.sub(r'<[^>]+>', '', type_text)
+                    result["fund_type"] = type_text
                 
                 benchmark_match = re.search(r'业绩比较基准.*?<td[^>]*>(.*?)</td>', content, re.DOTALL)
                 if benchmark_match:
@@ -285,11 +303,12 @@ class EastMoneyAPI(BaseBrokerAPI):
                     content = await response.text()
                     
                 name_match = re.search(r'var fS_name = "([^"]+)";', content)
-                type_match = re.search(r'var fS_type = "([^"]+)";', content)
                 nav_match = re.search(r'var Data_netWorthTrend = \[(.*?)\];', content, re.DOTALL)
                 
-                fund_name = name_match.group(1) if name_match else code
-                fund_type = type_match.group(1) if type_match else "未知"
+                if not name_match:
+                    return None
+                
+                fund_name = name_match.group(1)
                 
                 nav = None
                 if nav_match:
@@ -301,8 +320,9 @@ class EastMoneyAPI(BaseBrokerAPI):
                     except Exception:
                         pass
 
-                market_type = determine_market_type(code, fund_name, fund_type)
                 detail_info = await self._get_fund_detail_info(code)
+                fund_type = detail_info.get("fund_type") or "未知"
+                market_type = determine_market_type(code, fund_name, fund_type)
 
                 return FundInfo(
                     fund_code=code,
@@ -393,15 +413,208 @@ class EastMoneyAPI(BaseBrokerAPI):
             logger.error(f"EastMoney ETF realtime API error: {e}")
         return None
 
+    async def get_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
+        index_info = INDEX_MAPPING.get(index_code)
+        if not index_info:
+            return None
+        
+        try:
+            full_code = index_info["code"]
+            secid = f"1.{index_code}" if full_code.startswith("sh") else f"0.{index_code}"
+            
+            url = "https://push2.eastmoney.com/api/qt/stock/get"
+            params = {
+                "secid": secid,
+                "fields": "f43,f44,f45,f46,f47,f48,f49,f14,f169,f170",
+            }
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                    data = await response.json()
+                
+                if data.get("data"):
+                    tick = data["data"]
+                    price = float(tick.get("f43", 0)) / 100
+                    change_percent = float(tick.get("f170", 0)) / 100
+                    
+                    return {
+                        "code": index_code,
+                        "name": tick.get("f14", index_info["name"]),
+                        "price": price,
+                        "change_percent": change_percent,
+                    }
+        except Exception as e:
+            logger.error(f"EastMoney index realtime API error: {e}")
+        return None
+
+    async def get_global_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
+        index_info = GLOBAL_INDEX_MAPPING.get(index_code.lower())
+        if not index_info:
+            return None
+        
+        try:
+            secid = index_info["secid"]
+            url = "https://push2.eastmoney.com/api/qt/stock/get"
+            params = {
+                "secid": secid,
+                "fields": "f43,f44,f45,f46,f47,f48,f49,f14,f169,f170",
+            }
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                    data = await response.json()
+                
+                if data.get("data"):
+                    tick = data["data"]
+                    price = float(tick.get("f43", 0)) / 100
+                    change_percent = float(tick.get("f170", 0)) / 100
+                    
+                    return {
+                        "code": index_code,
+                        "name": index_info["name"],
+                        "price": price,
+                        "change_percent": change_percent,
+                    }
+        except Exception as e:
+            logger.error(f"EastMoney global index realtime API error: {e}")
+        return None
+
+
+class TianTianJiJinAPI(BaseBrokerAPI):
+    """天天基金网API实现
+    
+    支持功能:
+    - 基金信息查询（包括香港互认基金等特殊基金）
+    - 基金实时估值
+    - 基金类型识别
+    """
+
+    def _extract_fund_type(self, fund_name: str) -> str:
+        """从基金名称中提取基金类型"""
+        fund_name_lower = fund_name.lower()
+        
+        if "etf" in fund_name_lower:
+            return "ETF基金"
+        if "lof" in fund_name_lower:
+            return "LOF基金"
+        if any(kw in fund_name for kw in ["指数", "沪深300", "中证500", "中证1000", "创业板", "科创50", "上证50"]):
+            return "指数型"
+        if any(kw in fund_name for kw in ["股票", "消费行业", "医疗", "科技", "新能源"]):
+            return "股票型"
+        if any(kw in fund_name for kw in ["混合", "成长", "价值", "精选", "优势"]):
+            return "混合型"
+        if any(kw in fund_name for kw in ["债券", "纯债", "信用债", "利率债"]):
+            return "债券型"
+        if any(kw in fund_name for kw in ["货币", "现金"]):
+            return "货币型"
+        if any(kw in fund_name for kw in ["QDII", "纳斯达克", "标普", "恒生", "港股", "美股"]):
+            return "QDII基金"
+        if any(kw in fund_name for kw in ["对冲", "绝对收益"]):
+            return "对冲基金"
+        if "fof" in fund_name_lower:
+            return "FOF基金"
+        
+        return "混合型"
+
+    async def get_stock_price(self, code: str) -> Optional[MarketData]:
+        return None
+
+    async def get_fund_price(self, code: str) -> Optional[MarketData]:
+        try:
+            url = f"https://fundgz.1234567.com.cn/js/{code}.js"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                    content = await response.text()
+                    
+                match = re.search(r'jsonpgz\((\{.*?\})\)', content)
+                if match:
+                    data = json.loads(match.group(1))
+                    gsz = float(data.get("gsz", 0))
+                    gszzl = float(data.get("gszzl", 0))
+                    
+                    return MarketData(
+                        code=code,
+                        name=data.get("name", code),
+                        price=gsz,
+                        change=0,
+                        change_percent=gszzl,
+                        volume=0,
+                        timestamp=datetime.now(),
+                    )
+        except Exception as e:
+            logger.error(f"TianTianJiJin fund price API error: {e}")
+        return None
+
+    async def get_fund_info(self, code: str) -> Optional[FundInfo]:
+        try:
+            url = f"https://fundgz.1234567.com.cn/js/{code}.js"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                    content = await response.text()
+                    
+                match = re.search(r'jsonpgz\((\{.*?\})\)', content)
+                if match:
+                    data = json.loads(match.group(1))
+                    fund_name = data.get("name", "").strip()
+                    nav = float(data.get("dwjz", 0)) if data.get("dwjz") else None
+                    fund_type = self._extract_fund_type(fund_name)
+                    market_type = determine_market_type(code, fund_name, fund_type)
+                    
+                    return FundInfo(
+                        fund_code=code,
+                        fund_name=fund_name,
+                        fund_type=fund_type,
+                        nav=nav,
+                        establish_date=None,
+                        market_type=market_type,
+                        benchmark=None,
+                        tracking_index=None,
+                    )
+        except Exception as e:
+            logger.error(f"TianTianJiJin fund info API error: {e}")
+        return None
+
+    async def get_fund_holdings(self, fund_code: str) -> List[Holding]:
+        return []
+
+    async def get_index_price(self, code: str) -> Optional[MarketData]:
+        return None
+
+    async def get_etf_realtime_data(self, code: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    async def get_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    async def get_global_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
+        return None
+
 
 class SinaAPI(BaseBrokerAPI):
     """新浪财经API实现
     
     支持功能:
-    - 股票实时行情 (A股、港股)
-    - 基金净值
+    - 股票实时行情 (A股、港股、美股)
     - 指数行情
+    - 基金实时估值 (场内ETF/LOF + 场外基金)
+    
+    基金接口使用 fu_ 前缀，支持场内场外基金
     """
+    
+    SINA_HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://finance.sina.com.cn/realstock/company/",
+    }
 
     async def get_stock_price(self, code: str) -> Optional[MarketData]:
         try:
@@ -412,18 +625,14 @@ class SinaAPI(BaseBrokerAPI):
                 sina_code = f"gb_{code}"
             elif is_hk:
                 sina_code = f"hk{code}"
-            elif code.startswith("6"):
+            elif code.startswith(("6", "5", "9")):
                 sina_code = f"sh{code}"
             else:
                 sina_code = f"sz{code}"
             
             url = f"https://hq.sinajs.cn/list={sina_code}"
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://finance.sina.com.cn/",
-            }
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                async with session.get(url, headers=self.SINA_HEADERS, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
                     content = await response.text()
                 match = re.search(r'"(.*?)"', content)
                 if match:
@@ -482,64 +691,63 @@ class SinaAPI(BaseBrokerAPI):
 
     async def get_fund_price(self, code: str) -> Optional[MarketData]:
         try:
-            url = f"https://hq.sinajs.cn/list=ff_{code}"
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://finance.sina.com.cn/",
-            }
+            url = f"https://hq.sinajs.cn/list=fu_{code}"
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                async with session.get(url, headers=self.SINA_HEADERS, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
                     content = await response.text()
                 match = re.search(r'"(.*?)"', content)
                 if match:
                     data = match.group(1).split(",")
-                    if len(data) >= 6 and data[0]:
-                        current_nav = float(data[1]) if data[1] else 0
-                        pre_nav = float(data[2]) if data[2] else 0
+                    if len(data) >= 7 and data[0]:
+                        fund_name = data[0]
+                        estimated_nav = float(data[2]) if data[2] else 0
+                        previous_nav = float(data[3]) if data[3] else 0
+                        change_percent = float(data[6]) if data[6] else 0
                         
                         return MarketData(
                             code=code,
-                            name=data[0],
-                            price=current_nav,
-                            change=current_nav - pre_nav,
-                            change_percent=(current_nav - pre_nav) / pre_nav * 100 if pre_nav > 0 else 0,
-                            volume=float(data[5]) if data[5] else 0,
+                            name=fund_name,
+                            price=estimated_nav,
+                            change=estimated_nav - previous_nav,
+                            change_percent=change_percent,
+                            volume=0.0,
                             timestamp=datetime.now(),
                         )
         except Exception as e:
             logger.error(f"Sina fund price API error: {e}")
+        
+        if code.startswith(("51", "15", "16")):
+            return await self.get_stock_price(code)
         return None
 
     async def get_fund_info(self, code: str) -> Optional[FundInfo]:
         try:
-            url = f"https://hq.sinajs.cn/list=ff_{code}"
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://finance.sina.com.cn/",
-            }
+            url = f"https://hq.sinajs.cn/list=fu_{code}"
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                async with session.get(url, headers=self.SINA_HEADERS, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
                     content = await response.text()
                 match = re.search(r'"(.*?)"', content)
                 if match:
-                    data = match.group(1).split(",")
-                    if len(data) >= 6 and data[0]:
-                        fund_name = data[0]
-                        nav = float(data[1]) if data[1] else None
-                        market_type = determine_market_type(code, fund_name)
-                        
-                        detail_info = await EastMoneyAPI()._get_fund_detail_info(code)
-                        
-                        return FundInfo(
-                            fund_code=code,
-                            fund_name=fund_name,
-                            fund_type="未知",
-                            nav=nav,
-                            establish_date=None,
-                            market_type=market_type,
-                            benchmark=detail_info.get("benchmark"),
-                            tracking_index=detail_info.get("tracking_index"),
-                        )
+                    data_str = match.group(1)
+                    if data_str:
+                        data = data_str.split(",")
+                        if len(data) >= 4 and data[0]:
+                            fund_name = data[0]
+                            nav = float(data[3]) if data[3] else None
+                            market_type = determine_market_type(code, fund_name)
+                            
+                            detail_info = await EastMoneyAPI()._get_fund_detail_info(code)
+                            
+                            return FundInfo(
+                                fund_code=code,
+                                fund_name=fund_name,
+                                fund_type=detail_info.get("fund_type", "未知"),
+                                nav=nav,
+                                establish_date=None,
+                                market_type=market_type,
+                                benchmark=detail_info.get("benchmark"),
+                                tracking_index=detail_info.get("tracking_index"),
+                            )
         except Exception as e:
             logger.error(f"Sina fund info API error: {e}")
         return None
@@ -552,12 +760,8 @@ class SinaAPI(BaseBrokerAPI):
                 sina_code = f"sz{code}"
             
             url = f"https://hq.sinajs.cn/list={sina_code}"
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://finance.sina.com.cn/",
-            }
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                async with session.get(url, headers=self.SINA_HEADERS, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
                     content = await response.text()
                 match = re.search(r'"(.*?)"', content)
                 if match:
@@ -581,15 +785,85 @@ class SinaAPI(BaseBrokerAPI):
             logger.error(f"Sina index API error: {e}")
         return None
 
+    async def get_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
+        index_info = INDEX_MAPPING.get(index_code)
+        if not index_info:
+            return None
+        
+        try:
+            full_code = index_info["code"]
+            sina_code = full_code
+            
+            url = f"https://hq.sinajs.cn/list={sina_code}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=self.SINA_HEADERS, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                    content = await response.text()
+                match = re.search(r'"(.*?)"', content)
+                if match:
+                    data = match.group(1).split(",")
+                    if len(data) >= 9:
+                        pre_close = float(data[2]) if data[2] else 0
+                        current_price = float(data[3]) if data[3] else 0
+                        change_percent = (current_price - pre_close) / pre_close * 100 if pre_close > 0 else 0
+                        
+                        return {
+                            "code": index_code,
+                            "name": data[0] if data[0] else index_info["name"],
+                            "price": current_price,
+                            "change_percent": change_percent,
+                        }
+        except Exception as e:
+            logger.error(f"Sina index realtime API error: {e}")
+        return None
+
+    async def get_global_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
+        index_info = GLOBAL_INDEX_MAPPING.get(index_code.lower())
+        if not index_info:
+            return None
+        
+        try:
+            sina_code = index_info.get("sina")
+            if not sina_code:
+                return None
+            
+            url = f"https://hq.sinajs.cn/list={sina_code}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=self.SINA_HEADERS, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                    content = await response.text()
+                match = re.search(r'"(.*?)"', content)
+                if match:
+                    data = match.group(1).split(",")
+                    if len(data) >= 4:
+                        name = data[0] if data[0] else index_info["name"]
+                        price = float(data[1]) if data[1] else 0
+                        change_percent = float(data[3]) if data[3] else 0
+                        
+                        return {
+                            "code": index_code,
+                            "name": name,
+                            "price": price,
+                            "change_percent": change_percent,
+                        }
+        except Exception as e:
+            logger.error(f"Sina global index realtime API error: {e}")
+        return None
+
 
 class QQAPI(BaseBrokerAPI):
     """腾讯财经API实现
     
     支持功能:
-    - 股票实时行情 (A股、港股)
-    - 基金净值和信息
+    - 股票实时行情 (A股、港股、美股)
     - 指数行情
+    - 场内基金(ETF/LOF)实时行情
+    
+    注意: 场外基金接口已失效，请使用EastMoneyAPI或TianTianJiJinAPI
     """
+    
+    QQ_HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://gu.qq.com/",
+    }
 
     async def get_stock_price(self, code: str) -> Optional[MarketData]:
         try:
@@ -600,18 +874,14 @@ class QQAPI(BaseBrokerAPI):
                 qq_code = f"us.{code}"
             elif is_hk:
                 qq_code = f"hk{code}"
-            elif code.startswith("6"):
+            elif code.startswith(("6", "5", "9")):
                 qq_code = f"sh{code}"
             else:
                 qq_code = f"sz{code}"
             
             url = f"https://qt.gtimg.cn/q={qq_code}"
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://gu.qq.com/",
-            }
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                async with session.get(url, headers=self.QQ_HEADERS, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
                     content = await response.text()
                 match = re.search(r'"(.*?)"', content)
                 if match:
@@ -636,63 +906,11 @@ class QQAPI(BaseBrokerAPI):
         return None
 
     async def get_fund_price(self, code: str) -> Optional[MarketData]:
-        try:
-            url = f"https://fund.qq.com/data/getFundInfo?fundcode={code}"
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://gu.qq.com/",
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
-                    data = await response.json()
-                if data.get("data"):
-                    fund_data = data["data"]
-                    nav = float(fund_data.get("NAV", 0)) if fund_data.get("NAV") else 0
-                    day_growth = float(fund_data.get("dayGrowth", 0)) if fund_data.get("dayGrowth") else 0
-                    
-                    return MarketData(
-                        code=code,
-                        name=fund_data.get("fund_name", code),
-                        price=nav,
-                        change=nav * day_growth / 100 if nav > 0 else 0,
-                        change_percent=day_growth,
-                        volume=0.0,
-                        timestamp=datetime.now(),
-                    )
-        except Exception as e:
-            logger.error(f"QQ fund price API error: {e}")
+        if code.startswith(("51", "15", "16")):
+            return await self.get_stock_price(code)
         return None
 
     async def get_fund_info(self, code: str) -> Optional[FundInfo]:
-        try:
-            url = f"https://fund.qq.com/data/getFundInfo?fundcode={code}"
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://gu.qq.com/",
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
-                    data = await response.json()
-                if data.get("data"):
-                    fund_data = data["data"]
-                    fund_name = fund_data.get("fund_name", code)
-                    fund_type = fund_data.get("fundtype", "未知")
-                    market_type = determine_market_type(code, fund_name, fund_type)
-                    
-                    detail_info = await EastMoneyAPI()._get_fund_detail_info(code)
-                    
-                    return FundInfo(
-                        fund_code=code,
-                        fund_name=fund_name,
-                        fund_type=fund_type,
-                        nav=float(fund_data.get("NAV", 0)) if fund_data.get("NAV") else None,
-                        establish_date=fund_data.get("start_date", None),
-                        market_type=market_type,
-                        benchmark=detail_info.get("benchmark"),
-                        tracking_index=detail_info.get("tracking_index"),
-                    )
-        except Exception as e:
-            logger.error(f"QQ fund info API error: {e}")
         return None
 
     async def get_index_price(self, code: str) -> Optional[MarketData]:
@@ -703,12 +921,8 @@ class QQAPI(BaseBrokerAPI):
                 qq_code = f"sz{code}"
             
             url = f"https://qt.gtimg.cn/q={qq_code}"
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://gu.qq.com/",
-            }
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                async with session.get(url, headers=self.QQ_HEADERS, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
                     content = await response.text()
                 match = re.search(r'"(.*?)"', content)
                 if match:
@@ -730,6 +944,80 @@ class QQAPI(BaseBrokerAPI):
                         )
         except Exception as e:
             logger.error(f"QQ index API error: {e}")
+        return None
+
+    async def get_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
+        index_info = INDEX_MAPPING.get(index_code)
+        if not index_info:
+            return None
+        
+        try:
+            full_code = index_info["code"]
+            if full_code.startswith("sh"):
+                qq_code = f"sh{index_code}"
+            else:
+                qq_code = f"sz{index_code}"
+            
+            url = f"https://qt.gtimg.cn/q={qq_code}"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://gu.qq.com/",
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                    content = await response.text()
+                match = re.search(r'"(.*?)"', content)
+                if match:
+                    data = match.group(1).split("~")
+                    if len(data) >= 7:
+                        current_price = float(data[3]) if data[3] else 0
+                        pre_close = float(data[4]) if data[4] else 0
+                        change_percent = (current_price - pre_close) / pre_close * 100 if pre_close > 0 else 0
+                        
+                        return {
+                            "code": index_code,
+                            "name": data[1] if data[1] else index_info["name"],
+                            "price": current_price,
+                            "change_percent": change_percent,
+                        }
+        except Exception as e:
+            logger.error(f"QQ index realtime API error: {e}")
+        return None
+
+    async def get_global_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
+        index_info = GLOBAL_INDEX_MAPPING.get(index_code.lower())
+        if not index_info:
+            return None
+        
+        try:
+            qq_code = index_info.get("qq")
+            if not qq_code:
+                return None
+            
+            url = f"https://qt.gtimg.cn/q={qq_code}"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://gu.qq.com/",
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                    content = await response.text()
+                match = re.search(r'"(.*?)"', content)
+                if match:
+                    data = match.group(1).split("~")
+                    if len(data) >= 7:
+                        current_price = float(data[3]) if data[3] else 0
+                        pre_close = float(data[4]) if data[4] else 0
+                        change_percent = (current_price - pre_close) / pre_close * 100 if pre_close > 0 else 0
+                        
+                        return {
+                            "code": index_code,
+                            "name": data[1] if data[1] else index_info["name"],
+                            "price": current_price,
+                            "change_percent": change_percent,
+                        }
+        except Exception as e:
+            logger.error(f"QQ global index realtime API error: {e}")
         return None
 
 
@@ -847,8 +1135,9 @@ class AkShareFallbackAPI(BaseBrokerAPI):
         return None
 
     async def get_fund_price(self, code: str) -> Optional[MarketData]:
+        start_date = datetime.now().strftime("%Y%m%d")
         try:
-            df = await asyncio.to_thread(ak.fund_etf_hist_em, symbol=code, period="daily", start_date="20200101", end_date="20991231", adjust="")
+            df = await asyncio.to_thread(ak.fund_etf_hist_em, symbol=code, period="daily", start_date=start_date, end_date="20991231", adjust="")
             if df.empty:
                 return None
 
@@ -870,16 +1159,15 @@ class AkShareFallbackAPI(BaseBrokerAPI):
         try:
             fund_info = await asyncio.to_thread(ak.fund_open_fund_info_em, symbol=code, indicator="单位净值走势")
             if not fund_info.empty:
-                fund_name = code
-                fund_type = "未知"
-                market_type = determine_market_type(code, fund_name, fund_type)
-                
                 latest_nav = None
                 if len(fund_info) > 0:
                     latest_row = fund_info.iloc[-1]
                     latest_nav = float(latest_row.get("单位净值", 0)) if "单位净值" in latest_row else None
                 
                 detail_info = await EastMoneyAPI()._get_fund_detail_info(code)
+                fund_name = detail_info.get("fund_name") or code
+                fund_type = detail_info.get("fund_type") or "未知"
+                market_type = determine_market_type(code, fund_name, fund_type)
                 
                 return FundInfo(
                     fund_code=code,
@@ -895,13 +1183,13 @@ class AkShareFallbackAPI(BaseBrokerAPI):
             logger.error(f"AkShare fund info API error: {e}")
         return None
 
-    async def get_fund_nav_history(self, code: str) -> Optional[Dict[str, Any]]:
+    async def get_fund_nav_history(self, fund_code: str) -> Optional[Dict[str, Any]]:
         """
         获取基金历史净值
         返回: {"previous_nav": 昨日净值, "latest_nav": 最新净值, "nav_date": 净值日期}
         """
         try:
-            fund_info = await asyncio.to_thread(ak.fund_open_fund_info_em, symbol=code, indicator="单位净值走势")
+            fund_info = await asyncio.to_thread(ak.fund_open_fund_info_em, symbol=fund_code, indicator="单位净值走势")
             if fund_info is not None and len(fund_info) >= 2:
                 latest = fund_info.iloc[-1]
                 previous = fund_info.iloc[-2]
@@ -937,6 +1225,82 @@ class AkShareFallbackAPI(BaseBrokerAPI):
             )
         except Exception as e:
             logger.error(f"AkShare index price API error: {e}")
+        return None
+
+    async def get_fund_holdings(self, fund_code: str) -> List[Holding]:
+        try:
+            df = await asyncio.to_thread(ak.fund_portfolio_hold_em, symbol=fund_code)
+            
+            if df.empty:
+                return []
+            
+            holdings = []
+            for _, row in df.iterrows():
+                try:
+                    weight_str = str(row.get('占净值比例', '0'))
+                    weight = float(weight_str.replace('%', '')) if '%' in weight_str else float(weight_str)
+                    
+                    holding = Holding(
+                        asset_code=str(row.get('股票代码', '')),
+                        asset_name=str(row.get('股票名称', '')),
+                        asset_type=AssetType.STOCK,
+                        quantity=float(row.get('持股数', 0)) if row.get('持股数') else 0,
+                        market_value=float(row.get('持仓市值', 0)) if row.get('持仓市值') else 0,
+                        weight=weight,
+                        price=float(row.get('最新价', 0)) if row.get('最新价') else 0,
+                    )
+                    holdings.append(holding)
+                except Exception:
+                    continue
+            
+            return holdings
+        except Exception as e:
+            logger.error(f"AkShare fund holdings API error: {e}")
+        return []
+
+    async def get_etf_realtime_data(self, code: str) -> Optional[Dict[str, Any]]:
+        try:
+            df = await asyncio.to_thread(ak.fund_etf_spot_em)
+            etf_info = df[df['代码'] == code]
+            
+            if not etf_info.empty:
+                row = etf_info.iloc[0]
+                return {
+                    "code": code,
+                    "name": row.get('名称', ''),
+                    "price": float(row.get('最新价', 0)),
+                    "change_percent": float(row.get('涨跌幅', 0)),
+                    "previous_close": float(row.get('昨收', 0)),
+                    "volume": float(row.get('成交量', 0)),
+                    "amount": float(row.get('成交额', 0)),
+                }
+        except Exception as e:
+            logger.error(f"AkShare ETF realtime API error: {e}")
+        return None
+
+    async def get_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
+        try:
+            df = await asyncio.to_thread(ak.index_zh_a_hist, symbol=index_code, period="daily", start_date="20200101", end_date="20991231")
+            if df.empty or len(df) < 2:
+                return None
+            
+            latest = df.iloc[-1]
+            previous = df.iloc[-2]
+            price = float(latest["收盘"])
+            pre_close = float(previous["收盘"])
+            change_percent = (price - pre_close) / pre_close * 100 if pre_close > 0 else 0
+            
+            return {
+                "code": index_code,
+                "name": index_code,
+                "price": price,
+                "change_percent": change_percent,
+            }
+        except Exception as e:
+            logger.error(f"AkShare index realtime API error: {e}")
+        return None
+
+    async def get_global_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
         return None
 
 
@@ -1003,6 +1367,7 @@ class MarketDataService:
         """初始化券商API列表"""
         return [
             EastMoneyAPI(),
+            TianTianJiJinAPI(),
             SinaAPI(),
             QQAPI(),
             HSBCAPI(),
@@ -1053,20 +1418,19 @@ class MarketDataService:
             return info
 
         logger.warning(f"All data sources failed for fund {fund_code}")
-        return FundInfo(
-            fund_code=fund_code,
-            fund_name=f"基金{fund_code}",
-            fund_type="未知",
-            nav=0.0,
-            establish_date=None,
-            market_type=determine_market_type(fund_code),
-            benchmark=None,
-            tracking_index=None,
-        )
+        return None
 
     async def get_fund_holdings(self, fund_code: str) -> List[Holding]:
         """获取基金持仓"""
-        return await EastMoneyAPI().get_fund_holdings(fund_code)
+        for broker in self.brokers:
+            try:
+                holdings = await broker.get_fund_holdings(fund_code)
+                if holdings:
+                    return holdings
+            except Exception as e:
+                logger.debug(f"Broker {broker.__class__.__name__} error: {e}")
+        
+        return await AkShareFallbackAPI().get_fund_holdings(fund_code)
 
     async def get_fund_nav_history(self, fund_code: str) -> Optional[Dict[str, Any]]:
         """
@@ -1078,6 +1442,14 @@ class MarketDataService:
         Returns:
             Optional[Dict]: {"previous_nav": 昨日净值, "latest_nav": 最新净值, "nav_date": 净值日期}
         """
+        for broker in self.brokers:
+            try:
+                data = await broker.get_fund_nav_history(fund_code)
+                if data:
+                    return data
+            except Exception as e:
+                logger.debug(f"Broker {broker.__class__.__name__} error: {e}")
+        
         return await AkShareFallbackAPI().get_fund_nav_history(fund_code)
 
     async def get_index_price(self, code: str) -> Optional[MarketData]:
@@ -1094,123 +1466,39 @@ class MarketDataService:
 
     async def get_etf_realtime_data(self, code: str) -> Optional[Dict[str, Any]]:
         """获取ETF实时数据"""
-        return await EastMoneyAPI().get_etf_realtime_data(code)
+        for broker in self.brokers:
+            try:
+                data = await broker.get_etf_realtime_data(code)
+                if data:
+                    return data
+            except Exception as e:
+                logger.debug(f"Broker {broker.__class__.__name__} error: {e}")
+        
+        return await AkShareFallbackAPI().get_etf_realtime_data(code)
 
     async def get_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
-        """
-        获取指数实时数据
+        """获取指数实时数据"""
+        for broker in self.brokers:
+            try:
+                data = await broker.get_index_realtime_data(index_code)
+                if data:
+                    return data
+            except Exception as e:
+                logger.debug(f"Broker {broker.__class__.__name__} error: {e}")
         
-        Args:
-            index_code: 指数代码（如 000300）
-            
-        Returns:
-            Optional[Dict]: 包含价格、涨跌幅等信息的字典
-        """
-        index_info = INDEX_MAPPING.get(index_code)
-        if not index_info:
-            logger.warning(f"Index {index_code} not in mapping")
-            return None
-        
-        try:
-            session = await get_session()
-            full_code = index_info["code"]
-            secid = f"1.{index_code}" if full_code.startswith("sh") else f"0.{index_code}"
-            
-            url = "https://push2.eastmoney.com/api/qt/stock/get"
-            params = {
-                "secid": secid,
-                "fields": "f43,f44,f45,f46,f47,f48,f49,f14,f169,f170",
-            }
-            
-            async with session.get(url, params=params, headers=DEFAULT_HEADERS) as response:
-                data = await response.json()
-            
-            if data.get("data"):
-                tick = data["data"]
-                price = float(tick.get("f43", 0)) / 100
-                change_percent = float(tick.get("f170", 0)) / 100
-                
-                return {
-                    "code": index_code,
-                    "name": tick.get("f14", index_info["name"]),
-                    "price": price,
-                    "change_percent": change_percent,
-                }
-            
-            logger.warning(f"Index {index_code} not found in response")
-            return None
-        except Exception as e:
-            logger.error(f"Error getting index realtime data for {index_code}: {e}")
-            return None
+        return await AkShareFallbackAPI().get_index_realtime_data(index_code)
 
     async def get_global_index_realtime_data(self, index_code: str) -> Optional[Dict[str, Any]]:
-        """
-        获取海外指数实时数据
+        """获取海外指数实时数据"""
+        for broker in self.brokers:
+            try:
+                data = await broker.get_global_index_realtime_data(index_code)
+                if data:
+                    return data
+            except Exception as e:
+                logger.debug(f"Broker {broker.__class__.__name__} error: {e}")
         
-        Args:
-            index_code: 指数代码（如 nasdaq, sp500, hsi）
-            
-        Returns:
-            Optional[Dict]: 包含价格、涨跌幅等信息的字典
-        """
-        index_info = GLOBAL_INDEX_MAPPING.get(index_code.lower())
-        if not index_info:
-            logger.warning(f"Global index {index_code} not in mapping")
-            return None
-        
-        try:
-            session = await get_session()
-            secid = index_info["secid"]
-            url = "https://push2.eastmoney.com/api/qt/stock/get"
-            params = {
-                "secid": secid,
-                "fields": "f43,f44,f45,f46,f47,f48,f49,f14,f169,f170",
-            }
-            
-            async with session.get(url, params=params, headers=DEFAULT_HEADERS) as response:
-                data = await response.json()
-            
-            if data.get("data"):
-                tick = data["data"]
-                price = float(tick.get("f43", 0)) / 100
-                change_percent = float(tick.get("f170", 0)) / 100
-                
-                return {
-                    "code": index_code,
-                    "name": index_info["name"],
-                    "price": price,
-                    "change_percent": change_percent,
-                }
-        except Exception as e:
-            logger.error(f"Error getting global index data for {index_code}: {e}")
-        
-        try:
-            session = await get_session()
-            sina_code = index_info["sina"]
-            url = f"https://hq.sinajs.cn/list={sina_code}"
-            headers = {**DEFAULT_HEADERS, "Referer": "https://finance.sina.com.cn/"}
-            
-            async with session.get(url, headers=headers) as response:
-                content = await response.text()
-            
-            match = re.search(r'"(.*?)"', content)
-            if match:
-                data = match.group(1).split(",")
-                if len(data) >= 4:
-                    name = data[0] if data[0] else index_info["name"]
-                    price = float(data[1]) if data[1] else 0
-                    change_percent = float(data[3]) if data[3] else 0
-                    
-                    return {
-                        "code": index_code,
-                        "name": name,
-                        "price": price,
-                        "change_percent": change_percent,
-                    }
-        except Exception as e:
-            logger.error(f"Error getting global index data from Sina for {index_code}: {e}")
-        
-        return None
+        return await AkShareFallbackAPI().get_global_index_realtime_data(index_code)
 
     async def get_market_data(self, code: str, asset_type: AssetType) -> Optional[MarketData]:
         """获取市场数据"""

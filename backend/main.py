@@ -1,3 +1,9 @@
+import sys
+import os
+
+# 添加项目根目录到Python路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -6,7 +12,6 @@ from backend.config import settings
 from backend.api import funds, market, valuation
 from backend.market_data import close_session
 from loguru import logger
-import sys
 from contextlib import asynccontextmanager
 
 
