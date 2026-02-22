@@ -1,0 +1,2100 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* 浅色模式颜色 */
+  --primary-color: #3b82f6;
+  --primary-hover: #2563eb;
+  --danger-color: #ef4444;
+  --success-color: #22c55e;
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f9fafb;
+  --border-color: #e5e7eb;
+  --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+}
+
+/* 深色模式颜色 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text-primary: #f9fafb;
+    --text-secondary: #d1d5db;
+    --bg-primary: #1f2937;
+    --bg-secondary: #374151;
+    --border-color: #4b5563;
+    --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
+  }
+}
+
+/* 手动切换深色模式 */
+.dark-mode {
+  --text-primary: #f9fafb;
+  --text-secondary: #d1d5db;
+  --bg-primary: #1f2937;
+  --bg-secondary: #374151;
+  --border-color: #4b5563;
+  --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+header {
+  background-color: var(--bg-primary);
+  padding: 20px 0;
+  box-shadow: var(--shadow);
+  margin-bottom: 20px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  transition: all 0.3s ease;
+}
+
+header.scrolled {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* 导航栏样式 */
+.navbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.navbar-brand {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--primary-color);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.navbar-brand:hover {
+  color: var(--primary-hover);
+}
+
+.navbar-links {
+  display: flex;
+  gap: 16px;
+}
+
+.navbar-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+
+.navbar-link:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-secondary);
+}
+
+.navbar-link.active {
+  color: var(--primary-color);
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+/* 主题切换按钮 */
+.theme-toggle {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--text-secondary);
+}
+
+.theme-toggle:hover {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+h1 {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+.btn-primary {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.btn-primary:hover {
+  background-color: var(--primary-hover);
+}
+
+.btn-secondary {
+  background-color: var(--text-secondary);
+  color: white;
+}
+
+.btn-secondary:hover {
+  background-color: #4b5563;
+}
+
+.btn-danger {
+  background-color: var(--danger-color);
+  color: white;
+}
+
+.btn-danger:hover {
+  background-color: #dc2626;
+}
+
+.btn-success {
+  background-color: var(--success-color);
+  color: white;
+}
+
+.btn-success:hover {
+  background-color: #16a34a;
+}
+
+.btn-sm {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.btn-lg {
+  padding: 10px 24px;
+  font-size: 16px;
+}
+
+/* 卡片样式优化 */
+.card {
+  background-color: var(--bg-primary);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 20px;
+  transition: all 0.3s ease;
+  margin-bottom: 16px;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.card-header {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.card-body {
+  color: var(--text-secondary);
+}
+
+/* 微动画效果 */
+.fade-in {
+  animation: fadeIn 0.5s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.slide-in {
+  animation: slideIn 0.5s ease-in-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* 加载动画优化 */
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border-color);
+  border-top: 3px solid var(--primary-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* 进度条样式 */
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background-color: var(--bg-secondary);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+
+.progress-fill {
+  height: 100%;
+  background-color: var(--primary-color);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+/* 徽章样式 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.badge-primary {
+  background-color: rgba(59, 130, 246, 0.1);
+  color: var(--primary-color);
+}
+
+.badge-success {
+  background-color: rgba(34, 197, 94, 0.1);
+  color: var(--success-color);
+}
+
+.badge-danger {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: var(--danger-color);
+}
+
+.badge-secondary {
+  background-color: rgba(107, 114, 128, 0.1);
+  color: var(--text-secondary);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: var(--bg-primary);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+th, td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+th {
+  background-color: var(--bg-secondary);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+tr:hover {
+  background-color: var(--bg-secondary);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-secondary);
+}
+
+.fund-detail {
+  background-color: var(--bg-primary);
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: var(--shadow);
+}
+
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.detail-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.fund-type {
+  background-color: var(--bg-secondary);
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.detail-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.stat-card {
+  background-color: var(--bg-secondary);
+  padding: 16px;
+  border-radius: 8px;
+}
+
+.stat-card h3 {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.stat-value.highlight {
+  color: var(--primary-color);
+}
+
+.holdings-section {
+  margin-top: 32px;
+}
+
+.holdings-section h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.valuation-card {
+  background-color: var(--bg-primary);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow);
+}
+
+.valuation-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.valuation-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.valuation-code {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.valuation-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.valuation-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.valuation-item .label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.valuation-item .value {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.valuation-item .value.highlight {
+  color: var(--primary-color);
+}
+
+.valuation-holdings h4 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+}
+
+.valuation-holdings ul {
+  list-style: none;
+}
+
+.valuation-holdings li {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.valuation-holdings li:last-child {
+  border-bottom: none;
+}
+
+.modal {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background-color: var(--bg-primary);
+  border-radius: 8px;
+  padding: 24px;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.modal-content h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 20px;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.form-group input,
+.form-group select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: var(--primary-color);
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.no-data {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-secondary);
+}
+
+/* 基金管理样式 */
+.fund-manager {
+  max-width: 1000px;
+  margin: 0 auto;
+  text-align: left;
+}
+
+/* 表单样式 */
+.fund-form {
+  background-color: var(--bg-primary);
+  padding: 24px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow);
+}
+
+.fund-form h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.fund-form form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.fund-form button {
+  grid-column: 1 / -1;
+  margin-top: 8px;
+  background-color: var(--primary-color);
+  color: white;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.fund-form button:hover {
+  background-color: var(--primary-hover);
+}
+
+/* 基金列表样式 */
+.fund-list {
+  margin-top: 24px;
+}
+
+.fund-list h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.fund-list table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: var(--bg-primary);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.fund-list th,
+.fund-list td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.fund-list th {
+  background-color: var(--bg-secondary);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.fund-list tr:hover {
+  background-color: var(--bg-secondary);
+}
+
+.fund-list .delete-fund {
+  background-color: var(--danger-color);
+  color: white;
+  padding: 6px 12px;
+  font-size: 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.fund-list .delete-fund:hover {
+  background-color: #dc2626;
+}
+
+.fund-list .positive {
+  color: var(--success-color);
+  font-weight: 600;
+}
+
+.fund-list .negative {
+  color: var(--danger-color);
+  font-weight: 600;
+}
+
+.fund-list .refresh-info {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* 标签切换样式 */
+.tabs {
+  display: flex;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.tab-button {
+  padding: 12px 24px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--text-secondary);
+}
+
+.tab-button:hover {
+  color: var(--text-primary);
+}
+
+.tab-button.active {
+  color: var(--primary-color);
+  border-bottom-color: var(--primary-color);
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* 估值界面样式 */
+.valuation-container {
+  max-width: 1000px;
+}
+
+.valuation-section {
+  background-color: var(--bg-primary);
+  padding: 24px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow);
+}
+
+.valuation-section h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* 单个估值表单 */
+.single-valuation-form {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.single-valuation-form input[type="text"] {
+  flex: 1;
+  min-width: 200px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.single-valuation-form label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.single-valuation-form button {
+  padding: 10px 20px;
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.single-valuation-form button:hover {
+  background-color: var(--primary-hover);
+}
+
+/* 批量估值表单 */
+.batch-valuation-form {
+  margin-bottom: 24px;
+}
+
+.batch-valuation-form textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+  min-height: 120px;
+  resize: vertical;
+  margin-bottom: 12px;
+}
+
+.batch-valuation-form label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+
+.batch-valuation-form button {
+  padding: 10px 20px;
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.batch-valuation-form button:hover {
+  background-color: var(--primary-hover);
+}
+
+/* 估值结果样式 */
+.valuation-result {
+  margin-bottom: 24px;
+}
+
+.valuation-card {
+  background-color: var(--bg-secondary);
+  padding: 20px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.valuation-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.valuation-header h4 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.valuation-type {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background-color: var(--bg-primary);
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+.valuation-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+}
+
+.valuation-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.valuation-item .label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.valuation-item .value {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.valuation-item .value.positive {
+  color: var(--success-color);
+}
+
+.valuation-item .value.negative {
+  color: var(--danger-color);
+}
+
+.confidence-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: 8px;
+}
+
+/* 估值详情样式 */
+.valuation-detail {
+  margin-bottom: 24px;
+}
+
+.valuation-detail-content {
+  background-color: var(--bg-secondary);
+  padding: 20px;
+  border-radius: 8px;
+}
+
+.valuation-detail-content h4 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.holdings-section,
+.benchmark-section {
+  margin-bottom: 24px;
+}
+
+.holdings-section h5,
+.benchmark-section h5 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+}
+
+.holdings-list {
+  display: grid;
+  gap: 8px;
+}
+
+.holding-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background-color: var(--bg-primary);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.holding-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.holding-weight {
+  margin: 0 12px;
+  color: var(--text-secondary);
+}
+
+.holding-change {
+  font-weight: 600;
+}
+
+.holding-change.positive {
+  color: var(--success-color);
+}
+
+.holding-change.negative {
+  color: var(--danger-color);
+}
+
+.holding-contribution {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.benchmark-info {
+  display: grid;
+  gap: 8px;
+}
+
+.benchmark-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background-color: var(--bg-primary);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.benchmark-name {
+  font-weight: 500;
+}
+
+.benchmark-change {
+  font-weight: 600;
+}
+
+.benchmark-change.positive {
+  color: var(--success-color);
+}
+
+.benchmark-change.negative {
+  color: var(--danger-color);
+}
+
+/* 批量估值结果样式 */
+.batch-valuation-results {
+  margin-bottom: 24px;
+}
+
+.batch-valuation-results-list {
+  background-color: var(--bg-secondary);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.batch-valuation-header {
+  display: flex;
+  justify-content: space-between;
+  padding: 16px;
+  background-color: var(--bg-primary);
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.batch-valuation-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.batch-valuation-item:last-child {
+  border-bottom: none;
+}
+
+.batch-valuation-item:hover {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.batch-valuation-info {
+  flex: 1;
+}
+
+.fund-name {
+  font-weight: 500;
+  margin-right: 8px;
+}
+
+.fund-code {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.batch-valuation-values {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+}
+
+.estimated-nav {
+  font-weight: 600;
+}
+
+.estimated-change {
+  font-weight: 600;
+}
+
+.estimated-change.positive {
+  color: var(--success-color);
+}
+
+.estimated-change.negative {
+  color: var(--danger-color);
+}
+
+.valuation-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* 估值历史记录样式 */
+.valuation-history {
+  margin-bottom: 24px;
+}
+
+.history-list {
+  background-color: var(--bg-secondary);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.history-item:last-child {
+  border-bottom: none;
+}
+
+.history-item:hover {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.history-info {
+  flex: 1;
+}
+
+.history-fund-name {
+  font-weight: 500;
+  margin-right: 8px;
+}
+
+.history-fund-code {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.history-values {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+}
+
+.history-nav {
+  font-weight: 600;
+}
+
+.history-change {
+  font-weight: 600;
+}
+
+.history-change.positive {
+  color: var(--success-color);
+}
+
+.history-change.negative {
+  color: var(--danger-color);
+}
+
+.history-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.no-history {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-secondary);
+  background-color: var(--bg-secondary);
+  border-radius: 8px;
+}
+
+/* 加载和错误消息样式 */
+.loading {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-secondary);
+  background-color: var(--bg-secondary);
+  border-radius: 8px;
+}
+
+.error-message {
+  text-align: center;
+  padding: 20px;
+  color: var(--danger-color);
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+/* 响应式设计 - 平板设备 */
+@media (max-width: 1024px) {
+  .container {
+    padding: 16px;
+  }
+  
+  h1 {
+    font-size: 22px;
+  }
+  
+  .valuation-body {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .indices-grid {
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  }
+}
+
+/* 响应式设计 - 移动设备 */
+@media (max-width: 768px) {
+  .container {
+    padding: 12px;
+  }
+  
+  h1 {
+    font-size: 20px;
+  }
+  
+  .header-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  
+  .tabs {
+    flex-direction: column;
+  }
+  
+  .tab-button {
+    width: 100%;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+  }
+  
+  .tab-button.active {
+    border-left: 3px solid var(--primary-color);
+    border-bottom: 1px solid var(--border-color);
+  }
+  
+  .single-valuation-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .single-valuation-form input[type="text"] {
+    width: 100%;
+  }
+  
+  .valuation-body {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  
+  .batch-valuation-header,
+  .batch-valuation-item,
+  .history-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .batch-valuation-values,
+  .history-values {
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  .holding-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .benchmark-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .indices-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .details-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .fund-form form {
+    grid-template-columns: 1fr;
+  }
+  
+  .fund-list table {
+    font-size: 14px;
+  }
+  
+  .fund-list th,
+  .fund-list td {
+    padding: 10px;
+  }
+  
+  .search-input-group {
+    flex-direction: column;
+  }
+  
+  .search-input-group select,
+  .search-input-group input {
+    width: 100%;
+  }
+  
+  .price-info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .change {
+    align-items: flex-start;
+  }
+}
+
+/* Toast 通知样式 */
+.toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font-size: 14px;
+  font-weight: 500;
+  animation: toast-slide-in 0.3s ease;
+  min-width: 200px;
+  max-width: 400px;
+}
+
+.toast-fade-out {
+  animation: toast-fade-out 0.3s ease forwards;
+}
+
+.toast-icon {
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.toast-message {
+  flex: 1;
+}
+
+.toast-success {
+  background-color: #10b981;
+  color: white;
+}
+
+.toast-error {
+  background-color: #ef4444;
+  color: white;
+}
+
+.toast-info {
+  background-color: #3b82f6;
+  color: white;
+}
+
+.toast-warning {
+  background-color: #f59e0b;
+  color: white;
+}
+
+@keyframes toast-slide-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes toast-fade-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+/* 响应式设计 - 小屏幕移动设备 */
+@media (max-width: 480px) {
+  .container {
+    padding: 8px;
+  }
+  
+  h1 {
+    font-size: 18px;
+  }
+  
+  .btn {
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+  
+  .fund-detail,
+  .valuation-section,
+  .search-container,
+  .details-container {
+    padding: 16px;
+  }
+  
+  .detail-stats {
+    grid-template-columns: 1fr;
+  }
+  
+  .stat-value {
+    font-size: 20px;
+  }
+  
+  .tab-button {
+    padding: 10px 16px;
+  }
+  
+  .index-card {
+    padding: 16px;
+  }
+  
+  .price {
+    font-size: 20px;
+  }
+  
+  .change-percent {
+    font-size: 16px;
+  }
+}
+
+/* 基金管理样式 */
+.fund-manager {
+  max-width: 1000px;
+  margin: 0 auto;
+  text-align: left;
+}
+
+/* 表单样式 */
+.fund-form {
+  background-color: var(--bg-primary);
+  padding: 24px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow);
+}
+
+.fund-form h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.fund-form form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.fund-form button {
+  grid-column: 1 / -1;
+  margin-top: 8px;
+  background-color: var(--primary-color);
+  color: white;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.fund-form button:hover {
+  background-color: var(--primary-hover);
+}
+
+/* 基金列表样式 */
+.fund-list {
+  margin-top: 24px;
+}
+
+.fund-list h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.fund-list table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: var(--bg-primary);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.fund-list th,
+.fund-list td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.fund-list th {
+  background-color: var(--bg-secondary);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.fund-list tr:hover {
+  background-color: var(--bg-secondary);
+}
+
+.fund-list .delete-fund {
+  background-color: var(--danger-color);
+  color: white;
+  padding: 6px 12px;
+  font-size: 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.fund-list .delete-fund:hover {
+  background-color: #dc2626;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .fund-form form {
+    grid-template-columns: 1fr;
+  }
+  
+  .fund-list table {
+    font-size: 14px;
+  }
+  
+  .fund-list th,
+  .fund-list td {
+    padding: 10px;
+  }
+  
+  .fund-list .delete-fund {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+}
+
+/* 市场数据样式 */
+.market-data-container {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.market-data-container h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 24px;
+}
+
+/* 市场数据标签样式 */
+.market-tabs {
+  display: flex;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.market-tab-button {
+  padding: 12px 24px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--text-secondary);
+}
+
+.market-tab-button:hover {
+  color: var(--text-primary);
+}
+
+.market-tab-button.active {
+  color: var(--primary-color);
+  border-bottom-color: var(--primary-color);
+}
+
+.market-tab-content > div {
+  display: none;
+}
+
+.market-tab-content > div.active {
+  display: block;
+}
+
+/* 指数行情样式 */
+.indices-section {
+  margin-bottom: 32px;
+}
+
+.indices-section h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text-primary);
+}
+
+.indices-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.index-card {
+  background-color: var(--bg-primary);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: var(--shadow);
+  transition: transform 0.2s, box-shadow 0.2s;
+  cursor: pointer;
+}
+
+.index-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.index-card h4 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.index-card .code {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.price-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+
+.price {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.change {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.change-percent {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.change-value {
+  font-size: 14px;
+  margin-top: 2px;
+}
+
+.change.positive {
+  color: var(--success-color);
+}
+
+.change.negative {
+  color: var(--danger-color);
+}
+
+.timestamp {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+}
+
+.index-card.error {
+  background-color: rgba(239, 68, 68, 0.05);
+  border: 1px solid rgba(239, 68, 68, 0.1);
+}
+
+.error-message {
+  color: var(--danger-color);
+  font-size: 14px;
+  margin-top: 8px;
+}
+
+/* 搜索界面样式 */
+.search-container {
+  background-color: var(--bg-primary);
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: var(--shadow);
+}
+
+.search-input-group {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.search-input-group select,
+.search-input-group input {
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.search-input-group select {
+  min-width: 120px;
+}
+
+.search-input-group input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.search-input-group button {
+  padding: 10px 20px;
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.search-input-group button:hover {
+  background-color: var(--primary-hover);
+}
+
+.search-result {
+  padding: 20px;
+  border-radius: 8px;
+  margin-top: 16px;
+}
+
+.search-result.success {
+  background-color: var(--bg-secondary);
+}
+
+.search-result.error {
+  background-color: rgba(239, 68, 68, 0.05);
+  border: 1px solid rgba(239, 68, 68, 0.1);
+}
+
+.search-result h4 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.search-result .code {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.search-result .volume {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+}
+
+.view-details-button {
+  margin-top: 16px;
+  padding: 8px 16px;
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.view-details-button:hover {
+  background-color: var(--primary-hover);
+}
+
+/* 详情界面样式 */
+.details-container {
+  background-color: var(--bg-primary);
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: var(--shadow);
+}
+
+.market-details-content h4 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+}
+
+.market-details-content .details-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.market-details-content .back-button {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  padding: 6px 12px;
+  font-size: 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.market-details-content .back-button:hover {
+  background-color: var(--primary-color);
+  color: white;
+  border-color: var(--primary-color);
+}
+
+.market-details-content .code {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+}
+
+.details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-item .label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.detail-item .value {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.chart-container {
+  margin-top: 32px;
+}
+
+.chart-container h5 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text-secondary);
+}
+
+.price-chart {
+  background-color: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 20px;
+  height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 图表容器样式 */
+.chart-container {
+  position: relative;
+  margin: 20px 0;
+  padding: 20px;
+  background-color: var(--bg-secondary);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+/* 响应式图表 */
+.responsive-chart {
+  width: 100%;
+  height: auto;
+  min-height: 300px;
+}
+
+/* 小型图表 */
+.small-chart {
+  height: 200px;
+}
+
+/* 中型图表 */
+.medium-chart {
+  height: 300px;
+}
+
+/* 大型图表 */
+.large-chart {
+  height: 400px;
+}
+
+/* 图表标题 */
+.chart-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text-primary);
+  text-align: center;
+}
+
+/* 图表图例 */
+.chart-legend {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 16px;
+  font-size: 14px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.legend-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* 响应式图表调整 */
+@media (max-width: 768px) {
+  .chart-container {
+    padding: 16px;
+    margin: 16px 0;
+  }
+  
+  .responsive-chart {
+    min-height: 250px;
+  }
+  
+  .small-chart {
+    height: 180px;
+  }
+  
+  .medium-chart {
+    height: 250px;
+  }
+  
+  .large-chart {
+    height: 300px;
+  }
+  
+  .chart-title {
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+  
+  .chart-legend {
+    gap: 12px;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 480px) {
+  .chart-container {
+    padding: 12px;
+  }
+  
+  .responsive-chart {
+    min-height: 200px;
+  }
+  
+  .small-chart {
+    height: 160px;
+  }
+  
+  .medium-chart {
+    height: 200px;
+  }
+  
+  .large-chart {
+    height: 250px;
+  }
+}
+
+/* 加载动画 */
+.loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background-color: var(--bg-secondary);
+  border-radius: 8px;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border-color);
+  border-top: 3px solid var(--primary-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* 清除缓存按钮 */
+.clear-cache-button {
+  margin-top: 24px;
+  padding: 10px 20px;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.clear-cache-button:hover {
+  background-color: var(--border-color);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .market-data-container {
+    padding: 0 12px;
+  }
+  
+  .indices-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .search-input-group {
+    flex-direction: column;
+  }
+  
+  .search-input-group select,
+  .search-input-group input {
+    width: 100%;
+  }
+  
+  .details-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .price-info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .change {
+    align-items: flex-start;
+  }
+}

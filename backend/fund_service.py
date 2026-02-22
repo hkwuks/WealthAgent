@@ -69,6 +69,7 @@ class FundService:
             holdings_value={},
             benchmark_info=None,
             confidence=0.0,
+            confidence_note="基金估值不支持",
             timestamp=datetime.now()
         )
     
