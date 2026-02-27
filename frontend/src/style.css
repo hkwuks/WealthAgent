@@ -777,12 +777,12 @@ tr:hover {
 }
 
 .fund-list .positive {
-  color: var(--success-color);
+  color: var(--danger-color);
   font-weight: 600;
 }
 
 .fund-list .negative {
-  color: var(--danger-color);
+  color: var(--success-color);
   font-weight: 600;
 }
 
@@ -1051,11 +1051,11 @@ tr:hover {
 }
 
 .valuation-item .value.positive {
-  color: var(--success-color);
+  color: var(--danger-color);
 }
 
 .valuation-item .value.negative {
-  color: var(--danger-color);
+  color: var(--success-color);
 }
 
 .confidence-note {
@@ -1126,11 +1126,11 @@ tr:hover {
 }
 
 .holding-change.positive {
-  color: var(--success-color);
+  color: var(--danger-color);
 }
 
 .holding-change.negative {
-  color: var(--danger-color);
+  color: var(--success-color);
 }
 
 .holding-contribution {
@@ -1162,11 +1162,11 @@ tr:hover {
 }
 
 .benchmark-change.positive {
-  color: var(--success-color);
+  color: var(--danger-color);
 }
 
 .benchmark-change.negative {
-  color: var(--danger-color);
+  color: var(--success-color);
 }
 
 /* 批量估值结果样式 */
@@ -1234,11 +1234,11 @@ tr:hover {
 }
 
 .estimated-change.positive {
-  color: var(--success-color);
+  color: var(--danger-color);
 }
 
 .estimated-change.negative {
-  color: var(--danger-color);
+  color: var(--success-color);
 }
 
 .valuation-time {
@@ -1301,11 +1301,11 @@ tr:hover {
 }
 
 .history-change.positive {
-  color: var(--success-color);
+  color: var(--danger-color);
 }
 
 .history-change.negative {
-  color: var(--danger-color);
+  color: var(--success-color);
 }
 
 .history-time {
@@ -1840,11 +1840,11 @@ tr:hover {
 }
 
 .change.positive {
-  color: var(--success-color);
+  color: var(--danger-color);
 }
 
 .change.negative {
-  color: var(--danger-color);
+  color: var(--success-color);
 }
 
 .timestamp {
