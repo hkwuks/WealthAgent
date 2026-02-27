@@ -831,19 +831,40 @@ class TianTianJiJinAPI(BaseBrokerAPI):
             fund_type = self._extract_fund_type(fund_name)
             market_type = determine_market_type(code, fund_name, fund_type)
 
+            # 计算昨日净值：使用估算净值和估算涨跌幅反推
+            # 公式：估算涨跌幅 = (估算净值 - 昨日净值) / 昨日净值 * 100
+            # 所以：昨日净值 = 估算净值 / (1 + 估算涨跌幅 / 100)
+            previous_nav = None
+            if gsz > 0 and gszzl != 0:
+                try:
+                    previous_nav = gsz / (1 + gszzl / 100)
+                except Exception as e:
+                    logger.debug(f"计算昨日净值失败: {e}")
+
+            # 如果无法从估算数据计算昨日净值，尝试从东方财富获取
+            if previous_nav is None and nav is not None:
+                try:
+                    eastmoney_api = EastMoneyAPI()
+                    eastmoney_data = await eastmoney_api.get_fund_data(code)
+                    if eastmoney_data and eastmoney_data.previous_nav:
+                        previous_nav = eastmoney_data.previous_nav
+                        logger.info(f"从东方财富获取昨日净值: {previous_nav}")
+                except Exception as e:
+                    logger.debug(f"从东方财富获取昨日净值失败: {e}")
+
             return FundData(
                 fund_code=code,
                 fund_name=fund_name,
                 fund_type=fund_type,
                 nav=nav,
                 nav_date=nav_date,
-                previous_nav=None,
+                previous_nav=previous_nav,
                 establish_date=None,
                 market_type=market_type,
                 benchmark=None,
                 tracking_index=None,
                 price=gsz,
-                change=0,
+                change=gsz - previous_nav if previous_nav else 0,
                 change_percent=gszzl,
                 volume=0,
                 timestamp=datetime.now(),
@@ -851,7 +872,118 @@ class TianTianJiJinAPI(BaseBrokerAPI):
         return None
 
     async def get_fund_holdings(self, fund_code: str) -> List[Holding]:
-        return []
+        """获取基金持仓（使用东方财富 HTML 解析）"""
+        try:
+            url = f"https://fundf10.eastmoney.com/ccmx_{fund_code}.html"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)
+                ) as response:
+                    if response.status != 200:
+                        return []
+                    content = await response.text()
+
+            holdings = []
+            
+            # 解析 HTML 表格数据
+            # 查找持仓表格的行数据
+            import re
+            
+            # 查找表格中的股票代码、名称、占比等数据
+            # 东方财富的持仓数据通常在特定的表格结构中
+            
+            # 尝试匹配表格行数据
+            # 格式示例：<tr><td>600519</td><td>贵州茅台</td><td>8.56%</td></tr>
+            table_pattern = r'<tr[^>]*>.*?</tr>'
+            rows = re.findall(table_pattern, content, re.DOTALL)
+            
+            for row in rows:
+                try:
+                    # 提取股票代码
+                    code_match = re.search(r'>(\d{6})<', row)
+                    if not code_match:
+                        continue
+                    
+                    stock_code = code_match.group(1)
+                    
+                    # 提取股票名称
+                    name_match = re.search(r'>([^<>]{2,10})<', row)
+                    if not name_match:
+                        continue
+                    
+                    stock_name = name_match.group(1)
+                    
+                    # 提取占比
+                    weight_match = re.search(r'>(\d+\.?\d*%)<', row)
+                    if not weight_match:
+                        continue
+                    
+                    weight_str = weight_match.group(1)
+                    weight = float(weight_str.replace('%', ''))
+                    
+                    if weight > 0:
+                        holding = Holding(
+                            asset_code=stock_code,
+                            asset_name=stock_name,
+                            asset_type=AssetType.STOCK,
+                            quantity=0,
+                            market_value=0,
+                            weight=weight,
+                            price=0,
+                        )
+                        holdings.append(holding)
+                        
+                except Exception as e:
+                    logger.debug(f"解析持仓行失败: {e}")
+                    continue
+            
+            # 如果 HTML 解析失败，尝试使用 AkShare
+            if not holdings:
+                try:
+                    df = await asyncio.to_thread(ak.fund_portfolio_hold_em, symbol=fund_code)
+                    if not df.empty:
+                        for _, row in df.iterrows():
+                            try:
+                                weight_str = str(row.get("占净值比例", "0"))
+                                weight = (
+                                    float(weight_str.replace("%", ""))
+                                    if "%" in weight_str
+                                    else float(weight_str)
+                                )
+
+                                holding = Holding(
+                                    asset_code=str(row.get("股票代码", "")),
+                                    asset_name=str(row.get("股票名称", "")),
+                                    asset_type=AssetType.STOCK,
+                                    quantity=float(row.get("持股数", 0))
+                                    if row.get("持股数")
+                                    else 0,
+                                    market_value=float(row.get("持仓市值", 0))
+                                    if row.get("持仓市值")
+                                    else 0,
+                                    weight=weight,
+                                    price=float(row.get("最新价", 0)) if row.get("最新价") else 0,
+                                )
+                                holdings.append(holding)
+                            except Exception as e:
+                                logger.warning(f"解析 AkShare 持仓行失败: {e}")
+                                continue
+                except Exception as e:
+                    logger.debug(f"使用 AkShare 获取持仓失败: {e}")
+
+            # 按权重排序，取前10大持仓
+            holdings.sort(key=lambda x: x.weight or 0, reverse=True)
+            holdings = holdings[:10]
+            
+            logger.info(f"从东方财富获取到 {len(holdings)} 个持仓 for {fund_code}")
+            return holdings
+
+        except Exception as e:
+            logger.error(f"获取基金持仓失败 {fund_code}: {e}")
+            return []
 
     async def get_index_price(self, code: str) -> Optional[MarketData]:
         return None
