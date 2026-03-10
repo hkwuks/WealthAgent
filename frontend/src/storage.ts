@@ -43,10 +43,12 @@ export class StorageService {
     try {
       const response = await fetch('/api/funds');
       if (!response.ok) {
+        console.error('加载基金数据 HTTP 错误:', response.status);
         throw new Error('加载基金数据失败');
       }
       const data = await response.json();
-      return data.success ? data.data.funds : [];
+      const funds = data.success ? data.data.funds : [];
+      return funds;
     } catch (error) {
       console.error('从文件加载基金数据失败:', error);
       return [];

@@ -10,10 +10,14 @@ from backend.market_data import (
     market_data_service,
     determine_market_type,
     GLOBAL_INDEX_MAPPING,
+    INDEX_MAPPING,
 )
 from loguru import logger
 
 logger.add("./logs/fund_valuation.log", encoding="utf-8")
+
+
+
 
 
 def get_valuation_method_name(valuation_type: ValuationType) -> str:
@@ -123,8 +127,11 @@ ETF_LINKING_MAPPING = {
     # 恒生 ETF 联接
     "000071": "513180",  # 华夏恒生 ETF 联接 A
     "000072": "513180",  # 华夏恒生 ETF 联接 C
-    "019260": "513180",  # 富国恒生红利 ETF 联接 A
-    "019261": "513180",  # 富国恒生红利 ETF 联接 C
+    # 注意：019260/019261 富国恒生红利 ETF 联接实际跟踪"恒生港股通高股息低波动指数"
+    # 市场上没有富国恒生红利 ETF，该基金是普通指数基金，不是 ETF 联接基金
+    # 已移除映射，让其作为普通指数基金使用跟踪指数进行估值
+    # "019260": "513180",  # 移除：富国恒生红利 ETF 联接 A（映射错误，513180 跟踪恒生指数而非恒生红利指数）
+    # "019261": "513180",  # 移除：富国恒生红利 ETF 联接 C
     # 纳指 100 联接
     "000834": "513100",  # 广发纳斯达克 100ETF 联接 A
     "006479": "513100",  # 广发纳斯达克 100ETF 联接 C
@@ -164,6 +171,11 @@ ETF_LINKING_MAPPING = {
     # 恒生红利低波 ETF 联接
     "021457": "513210",  # 易方达恒生红利低波 ETF 联接 A
     "021458": "513210",  # 易方达恒生红利低波 ETF 联接 C
+    # 港股通 ETF 联接
+    "021031": "159369",  # 汇添富国证港股通创新药 ETF 发起式联接 C
+    "021030": "159369",  # 汇添富国证港股通创新药 ETF 发起式联接 A
+    "018721": "513860",  # 华夏中证港股通 50ETF 发起式联接 A
+    "018722": "513860",  # 华夏中证港股通 50ETF 发起式联接 C
 }
 
 
@@ -255,13 +267,16 @@ class FundValuationService:
 
         # 恒生 ETF 联接
         if "恒生" in fund_name_lower:
+            # 注意：恒生红利/恒生红利低波类的 ETF 联接基金，跟踪的是"恒生港股通高股息低波动指数"
+            # 富国恒生红利 ETF 联接 (019260/019261) 虽然名称有"联接"，但富国没有对应的恒生红利 ETF
+            # 让它作为普通指数基金处理，使用跟踪指数 hshk_dividend 进行估值
+            if "红利" in fund_name_lower:
+                return None  # 不作为 ETF 联接基金，作为普通指数基金处理
             if fund_company == "华夏":
                 return "513180"  # 华夏恒生 ETF
-            if fund_company == "富国":
-                return "513180"  # 富国恒生 ETF
             if fund_company == "易方达":
                 return "513210"  # 易方达恒生红利低波 ETF
-            return "513180"
+            return "513180"  # 默认恒生 ETF
 
         # 标普中国 A 股大盘红利低波联接
         if "标普" in fund_name_lower and "红利低波" in fund_name_lower:
@@ -478,20 +493,30 @@ class FundValuationService:
                 logger.info(f"债券指数 {index_code} 不支持实时涨跌幅数据，返回昨日净值参考")
                 return {"code": index_code, "name": "中债指数", "change_percent": 0, "note": "债券指数波动小，无实时数据"}
 
+            # 优先使用 INDEX_MAPPING（包含 ETF 替代逻辑）
+            # 对于同时在 INDEX_MAPPING 和 GLOBAL_INDEX_MAPPING 中的指数（如 hshk_dividend）
+            # 先尝试使用 IndexPriceAPI 获取数据
+            if index_code.lower() in INDEX_MAPPING:
+                logger.debug(f"尝试使用国内指数 API 获取：{index_code}")
+                data = await self.get_index_realtime_data(index_code)
+                if data:
+                    if "timestamp" not in data:
+                        data["timestamp"] = datetime.now().isoformat()
+                    logger.debug(f"指数 {index_code} 数据获取成功：涨跌幅={data.get('change_percent')}%")
+                    return data
+
+            # INDEX_MAPPING 获取失败，尝试使用 GLOBAL_INDEX_MAPPING
             if index_code.lower() in GLOBAL_INDEX_MAPPING:
                 logger.debug(f"获取海外指数数据：{index_code}")
                 data = await self.get_global_index_realtime_data(index_code)
             else:
-                logger.debug(f"获取国内指数数据：{index_code}")
-                data = await self.get_index_realtime_data(index_code)
+                logger.warning(f"指数 {index_code} 不在映射表中")
+                return None
 
             if data:
-                # 数据成功获取（timestamp 可能已存在或刚添加）
                 if "timestamp" not in data:
                     data["timestamp"] = datetime.now().isoformat()
-                logger.debug(
-                    f"指数 {index_code} 数据获取成功：涨跌幅={data.get('change_percent')}%"
-                )
+                logger.debug(f"指数 {index_code} 数据获取成功：涨跌幅={data.get('change_percent')}%")
             else:
                 logger.warning(f"指数 {index_code} 数据获取失败")
 

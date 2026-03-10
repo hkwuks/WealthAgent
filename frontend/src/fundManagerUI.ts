@@ -302,6 +302,12 @@ class FundManagerUI {
   }
 
   async handleAddFund(form: HTMLFormElement): Promise<void> {
+    // 如果估值正在加载中，等待完成后再添加
+    if (this.isValuationLoading) {
+      toast.warning('估值数据正在刷新中，请稍后再添加');
+      return;
+    }
+
     try {
       const fundCode = (form.querySelector('#fund-code') as HTMLInputElement).value;
       const fundName = (form.querySelector('#fund-name') as HTMLInputElement).value;
@@ -326,33 +332,73 @@ class FundManagerUI {
       const addResult = await api.addFund(newFund);
 
       if (addResult.success) {
-        // 添加基金到本地数组
+        // 暂停自动刷新，防止数据冲突
+        this.stopAutoRefresh();
+
+        // 保存现有基金的所有数据（包括基本数据和估值数据）
+        const existingFunds = new Map<string, Fund>();
+        const currentFunds = fundManager.getFunds();
+        for (const fund of currentFunds) {
+          existingFunds.set(fund.fund_code, { ...fund });
+        }
+
+        // 从后端重新加载基金列表（确保新基金在列表中）
         await fundManager.loadFunds();
+
+        // 恢复现有基金的数据（保留之前的估值和基本信息）
+        const updatedFunds = fundManager.getFunds();
+        for (const fund of updatedFunds) {
+          const existing = existingFunds.get(fund.fund_code);
+          if (existing) {
+            // 保留所有已有的数据
+            fund.estimated_nav = existing.estimated_nav;
+            fund.estimated_change_percent = existing.estimated_change_percent;
+            fund.confidence_note = existing.confidence_note;
+            fund.valuation_method = existing.valuation_method;
+            fund.last_update = existing.last_update;
+            fund.nav = existing.nav;
+            fund.previous_nav = existing.previous_nav;
+            fund.nav_date = existing.nav_date;
+          }
+        }
+
         toast.success('基金添加成功');
         form.reset();
+
+        // 渲染表格
         await this.render();
 
+        // 只刷新新添加基金的数据，避免频繁请求触发反爬机制
         const fund = fundManager.getFund(fundCode);
         if (fund) {
           try {
-            const [fundData, valuationResult] = await Promise.all([
-              api.queryFundData(fundCode),
-              api.getFundValuation(fundCode, true)
-            ]);
+            const valuationResult = await api.getFundValuation(fundCode, true);
 
-            fund.nav = valuationResult.latest_nav !== undefined && valuationResult.latest_nav !== null ? valuationResult.latest_nav : fundData.nav;
-            fund.previous_nav = valuationResult.previous_nav !== undefined && valuationResult.previous_nav !== null ? valuationResult.previous_nav : fundData.previous_nav;
+            // 更新估值数据
             fund.estimated_nav = valuationResult.estimated_nav;
             fund.estimated_change_percent = valuationResult.estimated_change_percent;
             fund.confidence_note = valuationResult.confidence_note;
             fund.valuation_method = valuationResult.valuation_method;
             fund.last_update = valuationResult.timestamp;
+            if (valuationResult.latest_nav !== undefined && valuationResult.latest_nav !== null) {
+              fund.nav = valuationResult.latest_nav;
+            }
+            if (valuationResult.previous_nav !== undefined && valuationResult.previous_nav !== null) {
+              fund.previous_nav = valuationResult.previous_nav;
+            }
+            if (valuationResult.nav_date) {
+              fund.nav_date = valuationResult.nav_date;
+            }
 
-            await this.render();
+            // 更新该行的显示
+            this.updateFundRow(fundCode);
           } catch (error) {
-            console.error('刷新新添加基金数据失败:', error);
+            console.error('刷新新添加基金估值失败:', error);
           }
         }
+
+        // 恢复自动刷新
+        this.startAutoRefresh();
       } else {
         // 显示后端返回的具体错误消息
         toast.error(addResult.message || '基金添加失败');
@@ -459,25 +505,6 @@ class FundManagerUI {
         },
         true
       );
-
-      // 单独获取基金数据（净值信息）
-      try {
-        const fundDatas = await api.getFundDataBatch(fundCodes);
-        for (const fundData of fundDatas.data) {
-          const fund = fundManager.getFund(fundData.fund_code);
-          if (fund) {
-            fund.nav = fundData.nav;
-            fund.previous_nav = fundData.previous_nav;
-            if (fundData.nav_date) {
-              fund.nav_date = fundData.nav_date;
-            }
-          }
-          // 实时更新单个基金行
-          this.updateFundRow(fundData.fund_code);
-        }
-      } catch (error) {
-        console.error('获取基金数据失败:', error);
-      }
 
       console.log('估值刷新完成');
     } catch (error) {
