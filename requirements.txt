@@ -11,3 +11,4 @@ aiofiles
 akshare
 yfinance
 tushare
+loguru
