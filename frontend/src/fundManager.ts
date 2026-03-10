@@ -16,16 +16,26 @@ export class FundManager {
     try {
       // 优先从后端文件加载
       const fundsFromFile = await StorageService.loadFundsFromFile();
+      console.log('从后端加载的基金数据:', fundsFromFile.length, '只基金');
+
+      // 只有当后端数据非空时才覆盖本地数据，防止数据丢失
       if (fundsFromFile.length > 0) {
         this.funds = fundsFromFile;
+        // 同步到本地存储
+        StorageService.saveFunds(this.funds);
+        console.log('已从后端同步数据到本地存储');
       } else {
-        // 从本地存储加载
-        this.funds = StorageService.loadFunds();
+        // 后端数据为空时，从本地存储加载
+        const localFunds = StorageService.loadFunds();
+        console.log('后端数据为空，从本地存储加载:', localFunds.length, '只基金');
+        this.funds = localFunds;
       }
     } catch (error) {
       console.error('加载基金数据失败:', error);
       // 加载失败时从本地存储加载
-      this.funds = StorageService.loadFunds();
+      const localFunds = StorageService.loadFunds();
+      console.log('从本地存储加载:', localFunds.length, '只基金');
+      this.funds = localFunds;
     }
   }
 
