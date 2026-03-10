@@ -123,9 +123,53 @@ GLOBAL_INDEX_MAPPING = {
     "nifty50": {"name": "印度 Nifty 50", "code": "^NSEI", "secid": "100.NSEI", "sina": "gb_$nsei", "qq": "in.NSEI", "yf": "^NSEI", "investing": "17940"},
 }
 
+# ETF 代码到跟踪指数的映射（用于自动发现）
+# 格式：ETF 代码 -> 指数名称关键字列表
+ETF_TRACKING_INDEX = {
+    # 港股 ETF
+    "513210": ["恒生红利", "恒生港股通高股息", "港股通高股息"],
+    "513130": ["恒生红利", "恒生港股通高股息", "港股通高股息"],
+    "159369": ["国证港股通创新药", "港股通创新药", "创新药"],
+    "513860": ["中证港股通 50", "港股通 50"],
+    "513010": ["恒生科技", "港股通科技"],
+    "513330": ["恒生互联网", "港股通互联网"],
+    "513050": ["中概互联", "中证海外中国互联网 50"],
+    "513370": ["标普港股通低波红利", "港股通低波红利"],
+    # A 股 ETF
+    "510300": ["沪深 300"],
+    "510500": ["中证 500"],
+    "510050": ["上证 50"],
+    "588000": ["科创 50"],
+    "159915": ["创业板"],
+    "512170": ["中证医疗", "医疗"],
+    "159992": ["中证医疗", "医疗"],
+    "519908": ["白酒", "消费"],
+}
+
 
 # ==================== 工具函数 ====================
+def find_etf_by_index_name(index_name: str) -> Optional[str]:
+    """
+    根据指数名称查找跟踪该指数的 ETF 代码
 
+    Args:
+        index_name: 指数名称
+
+    Returns:
+        Optional[str]: ETF 代码
+    """
+    if not index_name:
+        return None
+
+    index_name_lower = index_name.lower()
+
+    for etf_code, keywords in ETF_TRACKING_INDEX.items():
+        for keyword in keywords:
+            if keyword.lower() in index_name_lower:
+                return etf_code
+
+    return None
+    
 def determine_market_type(fund_code: str, fund_name: str = "", fund_type: str = "") -> MarketType:
     """判断基金是场内基金还是场外基金"""
     if not fund_code:
@@ -1206,45 +1250,72 @@ class IndexPriceAPI:
             logger.debug(f"Sina index API error: {e}")
 
         # ===== 数据源 3: 东方财富 Push API (仅支持 A 股指数) =====
-        try:
-            index_code = index_info["code"]
+        # 港股指数不使用东方财富，直接跳过到数据源 4
+        index_code = index_info["code"]
+        if not index_code.startswith("hk"):
+            try:
+                if index_code.startswith("sh"):
+                    secid = f"1.{index_code[2:]}"
+                elif index_code.startswith("sz"):
+                    secid = f"0.{index_code[2:]}"
+                else:
+                    secid = f"1.{index_code}"
 
-            # 港股指数跳过东方财富
-            if index_code.startswith("hk"):
-                return None
+                url = "https://push2.eastmoney.com/api/qt/stock/get"
+                params = {"secid": secid, "fields": "f43,f44,f45,f46,f47,f48,f49,f14,f169,f170"}
 
-            if index_code.startswith("sh"):
-                secid = f"1.{index_code[2:]}"
-            elif index_code.startswith("sz"):
-                secid = f"0.{index_code[2:]}"
-            else:
-                secid = f"1.{index_code}"
+                content = await self._request_with_retry("GET", url, params=params, timeout=aiohttp.ClientTimeout(total=5.0))
+                if content:
+                    data = json.loads(content)
+                    if data.get("data"):
+                        tick = data["data"]
+                        price = float(tick.get("f43", 0)) / 100
+                        open_price = float(tick.get("f46", 0)) / 100
+                        change = price - open_price
+                        change_percent = (change / open_price * 100) if open_price > 0 else 0
 
-            url = "https://push2.eastmoney.com/api/qt/stock/get"
-            params = {"secid": secid, "fields": "f43,f44,f45,f46,f47,f48,f49,f14,f169,f170"}
+                        logger.debug(f"东方财富指数 {code} 成功：price={price}, change_percent={change_percent}%")
+                        return MarketData(
+                            code=code,
+                            name=tick.get("f14", code) or index_info["name"],
+                            price=price,
+                            change=change,
+                            change_percent=change_percent,
+                            volume=float(tick.get("f47", 0)),
+                            timestamp=datetime.now(),
+                        )
+            except Exception as e:
+                logger.debug(f"EastMoney index API error: {e}")
 
-            content = await self._request_with_retry("GET", url, params=params, timeout=aiohttp.ClientTimeout(total=5.0))
-            if content:
-                data = json.loads(content)
-                if data.get("data"):
-                    tick = data["data"]
-                    price = float(tick.get("f43", 0)) / 100
-                    open_price = float(tick.get("f46", 0)) / 100
-                    change = price - open_price
-                    change_percent = (change / open_price * 100) if open_price > 0 else 0
+        # ===== 数据源 4: 使用 ETF 价格作为替代（针对无法直接获取的指数） =====
+        # 对于无法通过常规数据源获取的指数（如某些港股指数），使用跟踪该指数的 ETF 价格作为替代
+        # 这样可以避免硬编码每个指数的 ETF 对应关系
 
-                    logger.debug(f"东方财富指数 {code} 成功：price={price}, change_percent={change_percent}%")
-                    return MarketData(
-                        code=code,
-                        name=tick.get("f14", code) or index_info["name"],
-                        price=price,
-                        change=change,
-                        change_percent=change_percent,
-                        volume=float(tick.get("f47", 0)),
-                        timestamp=datetime.now(),
-                    )
-        except Exception as e:
-            logger.debug(f"EastMoney index API error: {e}")
+        etf_code = find_etf_by_index_name(index_info.get("name", ""))
+        if etf_code:
+            try:
+                url = f"https://push2.eastmoney.com/api/qt/stock/get?secid=1.{etf_code}&fields=f43,f44,f45,f46,f47,f48,f49,f14,f169,f170"
+                content = await self._request_with_retry("GET", url, timeout=aiohttp.ClientTimeout(total=5.0))
+                if content:
+                    data = json.loads(content)
+                    if data.get("data"):
+                        tick = data["data"]
+                        # f43=当前价，f169=涨跌额，f170=涨跌幅（都需要除以 100）
+                        price = float(tick.get("f43", 0)) / 100
+                        change = float(tick.get("f169", 0)) / 100
+                        change_percent = float(tick.get("f170", 0)) / 100
+
+                        logger.info(f"指数 {code} 使用 ETF {etf_code} 价格作为替代：price={price}, change_percent={change_percent}%")
+                        return MarketData(
+                            code=code,
+                            name=f"{index_info['name']} ({etf_code} 替代)",
+                            price=price,
+                            change=change,
+                            change_percent=round(change_percent, 2),
+                            timestamp=datetime.now(),
+                        )
+            except Exception as e:
+                logger.debug(f"使用 ETF 替代指数数据失败：{e}")
 
         return None
 
@@ -1501,7 +1572,7 @@ class BondIndexAPI:
                     logger.debug(f"东方财富债券指数 {index_code} 成功：price={price}, change_percent={change_percent}%")
                     return {
                         "code": index_code,
-                        "name": tick.get("f14", index_info.get("name", "债券指数")),
+                        "name": tick.get("f14", "债券指数"),
                         "price": price,
                         "change_percent": round(change_percent, 4),
                         "source": "eastmoney",
