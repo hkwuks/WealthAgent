@@ -82,6 +82,46 @@ async def health_check():
     return {"status": "healthy"}
 
 
+@app.get("/mcp/info", tags=["MCP"])
+async def mcp_info():
+    """获取 MCP 服务器信息"""
+    return {
+        "success": True,
+        "message": "MCP 服务器运行中",
+        "data": {
+            "name": "fund-valuation-system",
+            "version": "1.0.0",
+            "tools": [
+                "get_fund_list",
+                "add_fund",
+                "delete_fund",
+                "get_fund_info",
+                "get_valuation",
+                "get_batch_valuation",
+                "get_stock_price",
+                "get_etf_price",
+                "get_index_price",
+                "get_global_index_price",
+                "get_valuation_types",
+                "get_supported_indices",
+            ],
+            "resources": [
+                "fund://{fund_code}",
+                "valuation://{fund_code}",
+                "market://stock/{stock_code}",
+                "market://etf/{etf_code}",
+                "market://index/{index_code}",
+                "market://global-index/{index_code}",
+            ],
+            "prompts": [
+                "analyze_fund",
+                "portfolio_summary",
+                "market_daily",
+            ],
+        }
+    }
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """全局异常处理"""
