@@ -12,3 +12,5 @@ akshare
 yfinance
 tushare
 loguru
+httpx
+mcp

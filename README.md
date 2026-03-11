@@ -11,6 +11,7 @@
 - **市场数据**：获取 A 股、港股、美股、指数实时行情
 - **自动刷新**：可配置自动刷新间隔（30秒-10分钟）
 - **数据持久化**：基金数据本地存储，刷新不丢失
+- **MCP 集成**：支持 Model Context Protocol，AI 助手可直接调用系统功能
 
 ## 技术栈
 
@@ -21,6 +22,8 @@
 - **yFinance**：Yahoo Finance 数据接口（国际市场）
 - **aiohttp**：异步 HTTP 客户端
 - **Loguru**：日志记录
+- **httpx**：异步 HTTP 客户端
+- **MCP**：Model Context Protocol 服务器
 
 ### 前端
 - **TypeScript**：类型安全的 JavaScript
@@ -52,6 +55,11 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 服务将在 http://localhost:8000 启动，API 文档访问 http://localhost:8000/docs
+
+4. 启动 MCP 服务器（可选）：
+```bash
+python -m backend.mcp_server.run_server
+```
 
 ### 前端
 
@@ -185,6 +193,61 @@ npm run dev
 └── README.md                   # 项目说明
 ```
 
+## MCP 服务
+
+系统支持 MCP (Model Context Protocol)，可与 AI 助手集成实现自动化操作。
+
+### MCP 配置
+
+将以下配置添加到 Claude Desktop 配置文件：
+
+```json
+{
+  "mcpServers": {
+    "fund-valuation-system": {
+      "command": "python",
+      "args": ["-m", "backend.mcp_server.run_server"],
+      "cwd": "<PROJECT_ROOT>",
+      "env": {
+        "PYTHONPATH": "<PROJECT_ROOT>"
+      }
+    }
+  }
+}
+```
+
+### MCP Tools
+
+| Tool | 功能描述 |
+|------|---------|
+| `get_fund_list` | 获取持仓基金列表 |
+| `add_fund` | 添加基金到持仓 |
+| `delete_fund` | 删除持仓基金 |
+| `get_fund_info` | 获取基金详细信息 |
+| `get_valuation` | 获取基金实时估值 |
+| `get_batch_valuation` | 批量获取基金估值 |
+| `get_stock_price` | 获取 A 股股票行情 |
+| `get_etf_price` | 获取场内 ETF 行情 |
+| `get_index_price` | 获取国内指数行情 |
+| `get_global_index_price` | 获取海外指数行情 |
+| `get_valuation_types` | 获取估值类型说明 |
+| `get_supported_indices` | 获取支持的指数列表 |
+
+### MCP Resources
+
+- `fund://{fund_code}` - 基金详细信息
+- `valuation://{fund_code}` - 基金实时估值
+- `market://stock/{stock_code}` - 股票行情
+- `market://etf/{etf_code}` - ETF 行情
+- `market://index/{index_code}` - 国内指数行情
+- `market://global-index/{index_code}` - 海外指数行情
+
+### MCP Prompts
+
+- `analyze_fund` - 分析单只基金投资价值
+- `portfolio_summary` - 生成持仓组合总结报告
+- `market_daily` - 生成市场日报
+
 ## 数据源
 
 系统整合多个数据源，自动选择最优数据：
@@ -244,7 +307,7 @@ server: {
 - [x] 自动刷新机制
 - [x] 数据缓存
 - [x] 估值方法显示
-- [ ] MCP 服务
+- [x] MCP 服务
 - [ ] 大模型接入
 
 ## 许可证
