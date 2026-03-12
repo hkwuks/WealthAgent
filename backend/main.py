@@ -1,7 +1,10 @@
 import sys
 import os
+import asyncio
+import multiprocessing
+from contextlib import asynccontextmanager
 
-# 添加项目根目录到Python路径
+# 添加项目根目录到 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI, Request
@@ -25,6 +28,34 @@ logger.add(
 )
 
 
+def run_mcp_server():
+    """在独立进程中运行 MCP 服务器"""
+    from backend.mcp_server.server import create_mcp_server
+    mcp = create_mcp_server()
+    mcp.run()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    # 启动时初始化
+    logger.info("正在启动 MCP 服务器...")
+
+    # 在后台进程中启动 MCP 服务器
+    mcp_process = multiprocessing.Process(target=run_mcp_server, daemon=True)
+    mcp_process.start()
+    logger.info(f"MCP 服务器已启动 (PID: {mcp_process.pid})")
+
+    yield
+
+    # 关闭时清理
+    logger.info("正在关闭 MCP 服务器...")
+    if mcp_process.is_alive():
+        mcp_process.terminate()
+        mcp_process.join(timeout=5)
+    logger.info("MCP 服务器已关闭")
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
@@ -43,12 +74,13 @@ app = FastAPI(
 
 | 类型 | 说明 | 置信度 |
 |------|------|--------|
-| real_time_price | 场内ETF实时价格 | 100% |
+| real_time_price | 场内 ETF 实时价格 | 100% |
 | index_based | 基于跟踪指数估值 | 85% |
 | holdings_based | 基于持仓股票估值 | 60-80% |
 | benchmark_only | 仅基于业绩基准 | 30% |
 """,
     debug=settings.DEBUG,
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -66,7 +98,7 @@ app.include_router(valuation.router, prefix=settings.API_PREFIX)
 
 @app.get("/", tags=["系统"])
 async def root():
-    """API根路径"""
+    """API 根路径"""
     return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
