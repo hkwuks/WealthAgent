@@ -29,14 +29,25 @@ pip install -r requirements.txt
 
 ## 启动方式
 
-### 方式 1: 独立启动 MCP 服务器
+### 方式 1: 自动启动（推荐）
+
+启动后端 FastAPI 服务时，MCP 服务器会自动同时启动：
+
+```bash
+# 在项目根目录执行
+uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+MCP 服务器会在后台进程中自动运行，无需额外配置。
+
+### 方式 2: 独立启动 MCP 服务器
 
 ```bash
 # 在项目根目录执行
 python -m backend.mcp_server.run_server
 ```
 
-### 方式 2: 通过 Claude Code 配置启动
+### 方式 3: 通过 Claude Code 配置启动
 
 在 `mcp_config.json` 中配置：
 
@@ -55,7 +66,7 @@ python -m backend.mcp_server.run_server
 }
 ```
 
-### 方式 3: 在 Claude Desktop 中使用
+### 方式 4: 在 Claude Desktop 中使用
 
 将配置添加到 Claude Desktop 配置文件中：
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`

@@ -21,15 +21,22 @@ class FundValuationResources:
     async def _request(self, method: str, endpoint: str, json: dict = None) -> dict:
         """发送 HTTP 请求到后端 API"""
         url = f"{self.api_base_url}{endpoint}"
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            if method == "GET":
-                response = await client.get(url)
-            elif method == "POST":
-                response = await client.post(url, json=json)
-            else:
-                raise ValueError(f"不支持的 HTTP 方法：{method}")
-            response.raise_for_status()
-            return response.json()
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0, read=60.0)) as client:
+            try:
+                if method == "GET":
+                    response = await client.get(url)
+                elif method == "POST":
+                    response = await client.post(url, json=json)
+                else:
+                    raise ValueError(f"不支持的 HTTP 方法：{method}")
+                response.raise_for_status()
+                return response.json()
+            except httpx.TimeoutException as e:
+                logger.error(f"HTTP 超时：{url}, 错误：{e}")
+                raise
+            except httpx.HTTPError as e:
+                logger.error(f"HTTP 错误：{url}, 错误：{type(e).__name__}: {str(e)}")
+                raise
 
     async def get_fund_resource(self, fund_code: str) -> str:
         """
@@ -37,6 +44,7 @@ class FundValuationResources:
 
         Resource URI: fund://{fund_code}
         """
+        logger.info(f"[MCP Resource] get_fund_resource: {fund_code}")
         try:
             result = await self._request("GET", f"/funds/{fund_code}")
 
@@ -88,6 +96,7 @@ class FundValuationResources:
 
         Resource URI: valuation://{fund_code}
         """
+        logger.info(f"[MCP Resource] get_valuation_resource: {fund_code}")
         try:
             result = await self._request("GET", f"/valuation/{fund_code}")
 
@@ -143,6 +152,7 @@ class FundValuationResources:
 
         Resource URI: market://stock/{stock_code}
         """
+        logger.info(f"[MCP Resource] get_stock_resource: {stock_code}")
         try:
             result = await self._request("GET", f"/market/stock/{stock_code}")
 
@@ -195,6 +205,7 @@ class FundValuationResources:
 
         Resource URI: market://etf/{etf_code}
         """
+        logger.info(f"[MCP Resource] get_etf_resource: {etf_code}")
         try:
             result = await self._request("GET", f"/market/etf/{etf_code}")
 
@@ -240,6 +251,7 @@ class FundValuationResources:
 
         Resource URI: market://index/{index_code}
         """
+        logger.info(f"[MCP Resource] get_index_resource: {index_code}")
         try:
             result = await self._request("GET", f"/market/index/{index_code}")
 
@@ -280,6 +292,7 @@ class FundValuationResources:
 
         Resource URI: market://global-index/{index_code}
         """
+        logger.info(f"[MCP Resource] get_global_index_resource: {index_code}")
         try:
             result = await self._request("GET", f"/market/global-index/{index_code}")
 

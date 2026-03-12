@@ -56,10 +56,7 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
 服务将在 http://localhost:8000 启动，API 文档访问 http://localhost:8000/docs
 
-4. 启动 MCP 服务器（可选）：
-```bash
-python -m backend.mcp_server.run_server
-```
+**注意**: 启动后端服务时，MCP 服务器会自动同时启动，无需额外操作。
 
 ### 前端
 
@@ -164,6 +161,12 @@ npm run dev
 │   │   ├── valuation.py      # 估值计算接口
 │   │   ├── market.py         # 市场数据接口
 │   │   └── schemas.py        # API 响应模型
+│   ├── mcp_server/           # MCP 服务器
+│   │   ├── server.py        # MCP 服务器定义
+│   │   ├── tools.py         # MCP Tools 实现
+│   │   ├── resources.py     # MCP Resources 实现
+│   │   ├── prompts.py       # MCP Prompts 实现
+│   │   └── run_server.py    # MCP 启动脚本
 │   ├── fund_service.py       # 基金业务逻辑
 │   ├── fund_valuation.py     # 估值计算引擎
 │   ├── market_data.py        # 市场数据获取服务
@@ -199,6 +202,15 @@ npm run dev
 
 ### MCP 配置
 
+**自动启动（推荐）**：
+启动后端服务时，MCP 服务器会自动同时启动，无需额外配置。
+
+**独立启动（可选）**：
+```bash
+python -m backend.mcp_server.run_server
+```
+
+**Claude Desktop 配置**：
 将以下配置添加到 Claude Desktop 配置文件：
 
 ```json
