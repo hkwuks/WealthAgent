@@ -1,7 +1,7 @@
 """
 MCP Server 主模块
 
-使用 FastMCP 创建 MCP 服务器，集成基金估值系统的所有功能
+使用 FastMCP 创建 MCP 服务器，并集成到 FastAPI 应用中
 """
 
 from mcp.server.fastmcp import FastMCP
@@ -17,10 +17,18 @@ def create_mcp_server() -> FastMCP:
 
     Returns:
         FastMCP: 配置好的 MCP 服务器实例
+
+    注意：
+        此 MCP 服务器设计为挂载到 FastAPI 应用中使用，
+        不需要独立运行 HTTP 服务器。
+
+        streamable_http_path='/' 确保挂载到 FastAPI 的 /mcp 后，
+        最终访问路径就是 /mcp
     """
     # 创建 MCP 服务器实例
+    # streamable_http_path='/' 确保挂载到 FastAPI 后路径正确
     mcp = FastMCP(
-        name="fund-valuation-system",
+        name="fund-valuation",
         instructions="""
 基金估值系统 MCP 服务器
 
@@ -35,6 +43,7 @@ def create_mcp_server() -> FastMCP:
 - 主动股票型基金（基于持仓估值）
 - QDII 基金（混合估值）
         """,
+        streamable_http_path='/',
     )
 
     # 注册 Tools
