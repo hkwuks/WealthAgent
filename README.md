@@ -165,8 +165,7 @@ npm run dev
 │   │   ├── server.py        # MCP 服务器定义
 │   │   ├── tools.py         # MCP Tools 实现
 │   │   ├── resources.py     # MCP Resources 实现
-│   │   ├── prompts.py       # MCP Prompts 实现
-│   │   └── run_server.py    # MCP 启动脚本
+│   │   └── prompts.py       # MCP Prompts 实现
 │   ├── fund_service.py       # 基金业务逻辑
 │   ├── fund_valuation.py     # 估值计算引擎
 │   ├── market_data.py        # 市场数据获取服务
@@ -198,35 +197,37 @@ npm run dev
 
 ## MCP 服务
 
-系统支持 MCP (Model Context Protocol)，可与 AI 助手集成实现自动化操作。
+系统支持 MCP (Model Context Protocol) Streamable HTTP 模式，可与 AI 助手集成实现自动化操作。
 
-### MCP 配置
+### MCP 配置（Streamable HTTP 模式）
 
-**自动启动（推荐）**：
-启动后端服务时，MCP 服务器会自动同时启动，无需额外配置。
+**配置方法**（以 Claude Code 为例）：
 
-**独立启动（可选）**：
 ```bash
-python -m backend.mcp_server.run_server
+# 通过命令行添加 MCP 服务器
+claude mcp add http fund-valuation http://127.0.0.1:8000/mcp
 ```
 
-**Claude Desktop 配置**：
-将以下配置添加到 Claude Desktop 配置文件：
+或在 `~/.claude/mcp.json` 中添加：
 
 ```json
 {
   "mcpServers": {
-    "fund-valuation-system": {
-      "command": "python",
-      "args": ["-m", "backend.mcp_server.run_server"],
-      "cwd": "<PROJECT_ROOT>",
-      "env": {
-        "PYTHONPATH": "<PROJECT_ROOT>"
-      }
+    "fund-valuation": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp"
     }
   }
 }
 ```
+
+**前提条件**：后端 API 必须运行在 `http://127.0.0.1:8000`
+
+```bash
+uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+启动后端服务后，MCP 服务器会自动挂载到 `/mcp` 端点，支持 SSE 连接和 HTTP 消息传输。
 
 ### MCP Tools
 

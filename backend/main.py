@@ -1,16 +1,7 @@
 import sys
 import os
 import asyncio
-import multiprocessing
 from contextlib import asynccontextmanager
-
-# 添加项目根目录到 Python 路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# 配置日志
-log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
-os.makedirs(log_dir, exist_ok=True)
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -18,6 +9,13 @@ from backend.config import settings
 from backend.api import funds, market, valuation
 from loguru import logger
 
+
+# 添加项目根目录到 Python 路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# 配置日志
+log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+os.makedirs(log_dir, exist_ok=True)
 
 logger.remove()
 logger.add(
@@ -32,57 +30,59 @@ logger.add(
 )
 
 
-def run_mcp_server():
-    """在独立进程中运行 MCP 服务器"""
-    from loguru import logger
-    import sys
-    import os
-
-    # 配置 MCP 服务器日志
-    log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, "mcp.log")
-
-    logger.remove()
-    logger.add(
-        sys.stdout,
-        level="INFO",
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <blue>MCP</blue> | {level} | {message}"
-    )
-    logger.add(
-        log_file,
-        rotation="10 MB",
-        retention="7 days",
-        level="DEBUG",
-        encoding="utf-8",
-        format="{time:YYYY-MM-DD HH:mm:ss} | MCP | {level} | {name}:{line} | {message}"
-    )
-
-    from backend.mcp_server.server import create_mcp_server
-    logger.info("正在初始化 MCP 服务器...")
-    mcp = create_mcp_server()
-    logger.info("正在启动 MCP 服务器...")
-    mcp.run()
+# 全局 MCP 服务器实例和 session manager 上下文
+_mcp_server = None
+_mcp_session_manager_context = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    # 启动时初始化
-    logger.info("正在启动 MCP 服务器...")
+    global _mcp_server, _mcp_session_manager_context
 
-    # 在后台进程中启动 MCP 服务器
-    mcp_process = multiprocessing.Process(target=run_mcp_server, daemon=True)
-    mcp_process.start()
-    logger.info(f"MCP 服务器已启动 (PID: {mcp_process.pid})")
+    # 启动时初始化 MCP 服务器
+    logger.info("正在初始化 MCP 服务器...")
+    from backend.mcp_server.server import create_mcp_server
+    _mcp_server = create_mcp_server()
+    logger.info("MCP 服务器初始化完成")
+
+    # 将 MCP streamable HTTP 应用挂载到 FastAPI
+    # FastMCP 的 streamable_http_app 同时支持 SSE 和 HTTP 消息
+    mcp_app = _mcp_server.streamable_http_app()
+
+    # 获取 session manager 并启动其生命周期
+    # StreamableHTTPSessionManager 需要在 lifespan 中调用 run() 来初始化 task_group
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+
+    # 从 mcp_app 的路由中获取 session_manager
+    session_manager = None
+    for route in mcp_app.routes:
+        if hasattr(route, 'app') and hasattr(route.app, 'session_manager'):
+            session_manager = route.app.session_manager
+            break
+
+    if session_manager is not None:
+        # 启动 session_manager 的 lifespan 上下文
+        _mcp_session_manager_context = session_manager.run()
+        await _mcp_session_manager_context.__aenter__()
+        logger.info("MCP session manager 已启动")
+
+    # 将 MCP 应用挂载到 /mcp 路径
+    app.mount("/mcp", mcp_app)
+
+    logger.info("MCP HTTP 服务已挂载到 /mcp 路径")
+    logger.info("MCP 端点：/mcp (SSE GET, HTTP POST)")
 
     yield
 
     # 关闭时清理
+    if _mcp_session_manager_context is not None:
+        logger.info("正在关闭 MCP session manager...")
+        await _mcp_session_manager_context.__aexit__(None, None, None)
+        _mcp_session_manager_context = None
+
     logger.info("正在关闭 MCP 服务器...")
-    if mcp_process.is_alive():
-        mcp_process.terminate()
-        mcp_process.join(timeout=5)
+    _mcp_server = None
     logger.info("MCP 服务器已关闭")
 
 
@@ -99,6 +99,18 @@ app = FastAPI(
 * **基金信息**: 获取基金基本信息、持仓、净值历史
 * **基金估值**: 实时估算基金净值涨跌
 * **市场数据**: 获取股票、ETF、指数实时行情
+
+### MCP (Model Context Protocol) 支持
+
+本系统支持 MCP Streamable HTTP 模式，可通过 SSE 与 AI 助手集成。
+
+**MCP 端点：**
+- **Streamable HTTP**: `/mcp` - SSE 连接和消息发送
+
+**配置示例 (Claude Code)：**
+```bash
+claude mcp add streamable-http fund-valuation http://127.0.0.1:8000/mcp
+```
 
 ### 估值类型说明
 
@@ -151,8 +163,10 @@ async def mcp_info():
         "success": True,
         "message": "MCP 服务器运行中",
         "data": {
-            "name": "fund-valuation-system",
+            "name": "fund-valuation",
             "version": "1.0.0",
+            "transport": "streamable-http",
+            "endpoint": "/mcp",
             "tools": [
                 "get_fund_list",
                 "add_fund",
