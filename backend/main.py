@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from backend.config import settings
-from backend.api import funds, market, valuation
+from backend.api import funds, market, valuation, gold
 from loguru import logger
 
 
@@ -136,6 +136,7 @@ app.add_middleware(
 app.include_router(funds.router, prefix=settings.API_PREFIX)
 app.include_router(market.router, prefix=settings.API_PREFIX)
 app.include_router(valuation.router, prefix=settings.API_PREFIX)
+app.include_router(gold.router, prefix=settings.API_PREFIX)
 
 
 @app.get("/", tags=["系统"])
@@ -180,6 +181,9 @@ async def mcp_info():
                 "get_global_index_price",
                 "get_valuation_types",
                 "get_supported_indices",
+                "get_gold_prediction",
+                "get_gold_price",
+                "run_gold_backtest",
             ],
             "resources": [
                 "fund://{fund_code}",

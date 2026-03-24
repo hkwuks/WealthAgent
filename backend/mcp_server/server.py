@@ -174,6 +174,33 @@ def _register_tools(mcp: FastMCP):
         """获取支持的指数列表"""
         return await tools.get_supported_indices()
 
+    @mcp.tool()
+    async def get_gold_prediction(symbol: str = "GC", horizon_days: int = 1) -> dict:
+        """
+        获取黄金价格预测（三模型）
+
+        Args:
+            symbol: 黄金交易代码（默认 GC）
+            horizon_days: 预测天数（1, 5, 20）
+        """
+        return await tools.get_gold_prediction(symbol, horizon_days)
+
+    @mcp.tool()
+    async def get_gold_price() -> dict:
+        """获取当前黄金价格和宏观指标"""
+        return await tools.get_gold_price()
+
+    @mcp.tool()
+    async def run_gold_backtest(years: int = 1, model_types: str = "xgboost,lstm,transformer") -> dict:
+        """
+        运行黄金预测模型回测
+
+        Args:
+            years: 回测年数（1, 2, 3）
+            model_types: 模型类型，逗号分隔（默认所有模型）
+        """
+        return await tools.run_gold_backtest(years, model_types)
+
 
 def _register_resources(mcp: FastMCP):
     """注册所有 MCP Resources"""
