@@ -173,3 +173,41 @@ class FundValuationTools:
         except Exception as e:
             logger.error(f"获取指数列表失败：{e}")
             return {"success": False, "message": f"获取指数列表失败：{str(e)}", "data": None}
+
+    async def get_gold_prediction(self, symbol: str = "GC", horizon_days: int = 1) -> dict:
+        """获取黄金价格预测（三模型）"""
+        logger.info(f"[MCP Tool] get_gold_prediction: symbol={symbol}, horizon={horizon_days}")
+        try:
+            payload = {
+                "symbol": symbol,
+                "horizon_days": horizon_days,
+            }
+            result = await self._request("POST", "/gold/predict", json=payload)
+            return result
+        except Exception as e:
+            logger.error(f"获取黄金预测失败：{e}")
+            return {"success": False, "message": f"获取黄金预测失败：{str(e)}", "data": None}
+
+    async def get_gold_price(self) -> dict:
+        """获取当前黄金价格和宏观指标"""
+        logger.info(f"[MCP Tool] get_gold_price")
+        try:
+            result = await self._request("GET", "/gold/current")
+            return result
+        except Exception as e:
+            logger.error(f"获取黄金价格失败：{e}")
+            return {"success": False, "message": f"获取黄金价格失败：{str(e)}", "data": None}
+
+    async def run_gold_backtest(self, years: int = 1, model_types: str = "xgboost,lstm,transformer") -> dict:
+        """运行黄金预测模型回测"""
+        logger.info(f"[MCP Tool] run_gold_backtest: years={years}, models={model_types}")
+        try:
+            payload = {
+                "years": years,
+                "model_types": model_types,
+            }
+            result = await self._request("POST", "/gold/backtest", json=payload)
+            return result
+        except Exception as e:
+            logger.error(f"运行黄金回测失败：{e}")
+            return {"success": False, "message": f"运行黄金回测失败：{str(e)}", "data": None}

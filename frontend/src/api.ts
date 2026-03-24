@@ -295,6 +295,24 @@ class ApiService {
     });
   }
 
+  // 黄金预测相关 API
+  async getGoldCurrent(): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>('/gold/current');
+  }
+
+  async predictGoldPrice(horizonDays: number): Promise<{ success: boolean; data: any; error_message?: string }> {
+    return this.request<{ success: boolean; data: any; error_message?: string }>('/gold/predict', {
+      method: 'POST',
+      body: JSON.stringify({ symbol: 'GC', horizon_days: horizonDays }),
+    });
+  }
+
+  async runGoldBacktest(years: number, horizonDays: number = 1): Promise<{ success: boolean; data: any; error_message?: string }> {
+    return this.request<{ success: boolean; data: any; error_message?: string }>(`/gold/backtest?years=${years}&horizon_days=${horizonDays}`, {
+      method: 'POST',
+    });
+  }
+
   // 带重试的请求方法
   async requestWithRetry<T>(url: string, options?: RequestInit, maxRetries: number = 3): Promise<T> {
     let lastError: Error;
