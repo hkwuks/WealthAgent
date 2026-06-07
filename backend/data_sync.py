@@ -17,6 +17,7 @@ import pandas as pd
 from loguru import logger
 
 from backend.data_store import data_store, StorageType
+from backend.config import settings
 
 logger.add("./logs/data_sync.log", encoding="utf-8", rotation="10 MB")
 
@@ -39,6 +40,12 @@ class DataSyncManager:
         'US2Y': {'yf': '^IRX', 'name': '美国2年期国债', 'source': 'yfinance'},
         'SP500': {'yf': '^GSPC', 'name': '标普500', 'source': 'yfinance'},
         'NASDAQ': {'yf': '^IXIC', 'name': '纳斯达克', 'source': 'yfinance'},
+    }
+
+    # FRED数据系列
+    FRED_SERIES = {
+        'TIPS': {'series_id': 'DFII10', 'name': '10Y TIPS实际利率', 'source': 'fred'},
+        'BREAKEVEN': {'series_id': 'T10YIE', 'name': '10Y通胀预期', 'source': 'fred'},
     }
 
     def __init__(self):
@@ -155,6 +162,10 @@ class DataSyncManager:
 
         for indicator in self.MACRO_SYMBOLS.keys():
             results[indicator] = self.sync_macro_history(indicator, period)
+
+        # 同步FRED数据
+        for indicator in self.FRED_SERIES.keys():
+            results[indicator] = self.sync_fred_history(indicator, years)
 
         return results
 
@@ -286,6 +297,123 @@ class DataSyncManager:
             records.append(record)
 
         return records
+
+    # ==================== FRED数据同步 ====================
+
+    def sync_fred_history(self, indicator: str, years: int = 5) -> Tuple[bool, int]:
+        """
+        同步FRED宏观指标（TIPS、Breakeven）
+
+        Args:
+            indicator: 指标代码，如 TIPS, BREAKEVEN
+            years: 历史年限
+
+        Returns:
+            (是否成功, 记录数)
+        """
+        config = self.FRED_SERIES.get(indicator)
+        if not config:
+            logger.error(f"Unknown FRED indicator: {indicator}")
+            return False, 0
+
+        try:
+            df = self._fetch_fred_series(config['series_id'], years)
+
+            if df.empty:
+                logger.warning(f"No FRED data fetched for {indicator}")
+                return False, 0
+
+            records = []
+            for _, row in df.iterrows():
+                records.append({
+                    'date': row['date'],
+                    'indicator_name': config['name'],
+                    'value': row['value'],
+                    'change_percent': row.get('change_percent')
+                })
+
+            success, count = self.data_store.save_macro_history(
+                indicator_code=indicator,
+                data=records,
+                source='fred'
+            )
+
+            logger.info(f"Synced {count} FRED records for {indicator}")
+            return success, count
+
+        except Exception as e:
+            logger.error(f"Failed to sync FRED data for {indicator}: {e}")
+            return False, 0
+
+    def _fetch_fred_series(self, series_id: str, years: int = 5) -> pd.DataFrame:
+        """从FRED API获取数据系列"""
+        api_key = settings.FRED_API_KEY
+
+        # 优先使用fredapi
+        if api_key:
+            try:
+                from fredapi import Fred
+                fred = Fred(api_key=api_key)
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=years * 365)
+
+                series = fred.get_series(series_id, start_date, end_date)
+
+                if series.empty:
+                    return pd.DataFrame()
+
+                df = pd.DataFrame({
+                    'date': series.index.strftime('%Y-%m-%d'),
+                    'value': series.values
+                })
+                df['change_percent'] = pd.to_numeric(df['value'], errors='coerce').pct_change() * 100
+
+                return df
+
+            except ImportError:
+                logger.warning("fredapi not installed, trying HTTP API fallback")
+            except Exception as e:
+                logger.warning(f"fredapi failed for {series_id}: {e}, trying HTTP fallback")
+
+        # HTTP API fallback
+        try:
+            import httpx
+            base_url = "https://api.stlouisfed.org/fred/series/observations"
+            end_date = datetime.now().strftime('%Y-%m-%d')
+            start_date = (datetime.now() - timedelta(days=years * 365)).strftime('%Y-%m-%d')
+
+            params = {
+                'series_id': series_id,
+                'observation_start': start_date,
+                'observation_end': end_date,
+                'file_type': 'json',
+            }
+            if api_key:
+                params['api_key'] = api_key
+            else:
+                # FRED allows limited access without key
+                logger.warning("No FRED API key configured, data may be limited")
+                return pd.DataFrame()
+
+            resp = httpx.get(base_url, params=params, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+
+            observations = data.get('observations', [])
+            if not observations:
+                return pd.DataFrame()
+
+            df = pd.DataFrame(observations)
+            df = df[df['value'] != '.']  # FRED用'.'表示缺失
+            df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+            df['value'] = pd.to_numeric(df['value'], errors='coerce')
+            df['change_percent'] = df['value'].pct_change() * 100
+
+            return df[['date', 'value', 'change_percent']]
+
+        except Exception as e:
+            logger.error(f"FRED HTTP API failed for {series_id}: {e}")
+            return pd.DataFrame()
 
     # ==================== 增量更新 ====================
 
@@ -495,8 +623,8 @@ def get_gold_training_data(symbol: str = 'GC', lookback_days: int = 2520) -> pd.
     # 转换为DataFrame
     gold_df = pd.DataFrame(gold_records)
 
-    # 获取相关宏观指标
-    for indicator in ['DXY', 'VIX', 'US10Y']:
+    # 获取相关宏观指标（含TIPS和Breakeven）
+    for indicator in ['DXY', 'VIX', 'US10Y', 'TIPS', 'BREAKEVEN']:
         macro_records = data_store.get_macro_history(
             indicator_code=indicator,
             start_date=start_date,
