@@ -2511,42 +2511,6 @@ body::after {
   color: #10b981;
 }
 
-.gold-prediction-page .ensemble-result {
-  margin-top: 24px;
-}
-
-.gold-prediction-page .ensemble-card {
-  background: var(--primary-gradient);
-  color: white;
-  padding: 20px;
-  border-radius: var(--radius-lg);
-  display: flex;
-  align-items: center;
-  justify-content: space-around;
-  gap: 20px;
-  flex-wrap: wrap;
-}
-
-.gold-prediction-page .ensemble-label {
-  font-size: 16px;
-  font-weight: 500;
-}
-
-.gold-prediction-page .ensemble-price {
-  font-size: 28px;
-  font-weight: 700;
-}
-
-.gold-prediction-page .ensemble-change {
-  font-size: 20px;
-  font-weight: 600;
-}
-
-.gold-prediction-page .ensemble-confidence {
-  font-size: 14px;
-  opacity: 0.9;
-}
-
 .gold-prediction-page #backtest-chart {
   width: 100%;
   height: 400px;

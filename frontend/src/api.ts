@@ -300,17 +300,32 @@ class ApiService {
     return this.request<{ success: boolean; data: any }>('/gold/current');
   }
 
-  async predictGoldPrice(horizonDays: number): Promise<{ success: boolean; data: any; error_message?: string }> {
-    return this.request<{ success: boolean; data: any; error_message?: string }>('/gold/predict', {
+  async predictGoldPrice(horizonDays: number, modelType: string = 'lightgbm'): Promise<{ success: boolean; data: any; error_message?: string }> {
+    return this.request<{ success: boolean; data: any; error_message?: string }>(`/gold/predict?symbol=GC&horizon_days=${horizonDays}&model_type=${modelType}`, {
       method: 'POST',
-      body: JSON.stringify({ symbol: 'GC', horizon_days: horizonDays }),
     });
   }
 
-  async runGoldBacktest(years: number, horizonDays: number = 1): Promise<{ success: boolean; data: any; error_message?: string }> {
-    return this.request<{ success: boolean; data: any; error_message?: string }>(`/gold/backtest?years=${years}&horizon_days=${horizonDays}`, {
+  async runGoldBacktest(years: number, horizonDays: number = 1, method: string = 'walk_forward'): Promise<{ success: boolean; data: any; error_message?: string }> {
+    return this.request<{ success: boolean; data: any; error_message?: string }>(`/gold/backtest?years=${years}&horizon_days=${horizonDays}&method=${method}`, {
       method: 'POST',
     });
+  }
+
+  async predictTripleBarrier(modelType: string = 'lightgbm'): Promise<{ success: boolean; data: any; error_message?: string }> {
+    return this.request<{ success: boolean; data: any; error_message?: string }>(`/gold/predict-tb?symbol=GC&model_type=${modelType}`, {
+      method: 'POST',
+    });
+  }
+
+  async runTrendBacktest(years: number = 2, fastMa: number = 50, slowMa: number = 200, slMultiplier: number = 2.0): Promise<{ success: boolean; data: any; error_message?: string }> {
+    return this.request<{ success: boolean; data: any; error_message?: string }>(`/gold/backtest-trend?years=${years}&fast_ma=${fastMa}&slow_ma=${slowMa}&sl_multiplier=${slMultiplier}`, {
+      method: 'POST',
+    });
+  }
+
+  async getTrendSignal(): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>('/gold/trend-signal?symbol=GC');
   }
 
   // 带重试的请求方法
