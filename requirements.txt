@@ -14,3 +14,7 @@ tushare
 loguru
 httpx
 mcp
+scikit-learn
+xgboost
+lightgbm
+fredapi
