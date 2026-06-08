@@ -30,7 +30,7 @@ def create_mcp_server() -> FastMCP:
     mcp = FastMCP(
         name="fund-valuation",
         instructions="""
-基金估值系统 MCP 服务器
+智能理财Agent MCP 服务器
 
 提供以下功能：
 1. 基金管理 - 查询、添加、删除基金

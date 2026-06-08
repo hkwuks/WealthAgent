@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from backend.config import settings
-from backend.api import funds, market, valuation
+from backend.api import funds, market, valuation, gold
 from loguru import logger
 
 
@@ -90,14 +90,15 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="""
-## 基金估值系统 API
+## 智能理财Agent API
 
-提供基金信息查询、实时估值、市场数据等功能。
+提供基金信息查询、实时估值、黄金预测、市场数据等功能。
 
 ### 主要功能
 
 * **基金信息**: 获取基金基本信息、持仓、净值历史
 * **基金估值**: 实时估算基金净值涨跌
+* **黄金预测**: 机器学习预测黄金价格走势
 * **市场数据**: 获取股票、ETF、指数实时行情
 
 ### MCP (Model Context Protocol) 支持
@@ -136,6 +137,7 @@ app.add_middleware(
 app.include_router(funds.router, prefix=settings.API_PREFIX)
 app.include_router(market.router, prefix=settings.API_PREFIX)
 app.include_router(valuation.router, prefix=settings.API_PREFIX)
+app.include_router(gold.router, prefix=settings.API_PREFIX)
 
 
 @app.get("/", tags=["系统"])
