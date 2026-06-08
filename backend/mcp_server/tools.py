@@ -13,7 +13,7 @@ API_BASE_URL = "http://127.0.0.1:8000/api"
 
 
 class FundValuationTools:
-    """基金估值系统 MCP Tools"""
+    """智能理财Agent MCP Tools"""
 
     def __init__(self, api_base_url: str = API_BASE_URL):
         self.api_base_url = api_base_url
