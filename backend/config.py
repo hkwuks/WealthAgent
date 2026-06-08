@@ -3,7 +3,7 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
-    APP_NAME: str = "基金估值系统"
+    APP_NAME: str = "智能理财Agent"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
     
