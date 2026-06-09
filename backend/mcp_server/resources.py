@@ -13,7 +13,7 @@ API_BASE_URL = "http://127.0.0.1:8000/api"
 
 
 class FundValuationResources:
-    """基金估值系统 MCP Resources"""
+    """智能理财Agent MCP Resources"""
 
     def __init__(self, api_base_url: str = API_BASE_URL):
         self.api_base_url = api_base_url
@@ -326,3 +326,196 @@ class FundValuationResources:
         except Exception as e:
             logger.error(f"获取海外指数资源失败：{e}")
             return f"获取海外指数资源失败：{str(e)}"
+
+
+class GoldPredictionResources:
+    """黄金预测系统 MCP Resources"""
+
+    def __init__(self, api_base_url: str = API_BASE_URL):
+        self.api_base_url = api_base_url
+
+    async def _request(self, method: str, endpoint: str, json: dict = None) -> dict:
+        """发送 HTTP 请求到后端 API"""
+        url = f"{self.api_base_url}{endpoint}"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0, read=60.0)) as client:
+            try:
+                if method == "GET":
+                    response = await client.get(url)
+                elif method == "POST":
+                    response = await client.post(url, json=json)
+                else:
+                    raise ValueError(f"不支持的 HTTP 方法：{method}")
+                response.raise_for_status()
+                return response.json()
+            except httpx.TimeoutException as e:
+                logger.error(f"HTTP 超时：{url}, 错误：{e}")
+                raise
+            except httpx.HTTPError as e:
+                logger.error(f"HTTP 错误：{url}, 错误：{type(e).__name__}: {str(e)}")
+                raise
+
+    async def get_gold_current_resource(self, symbol: str = "GC") -> str:
+        """
+        获取黄金当前价格与宏观指标资源
+
+        Resource URI: gold://current
+        """
+        logger.info(f"[MCP Resource] get_gold_current_resource: {symbol}")
+        try:
+            result = await self._request("GET", f"/gold/current?symbol={symbol}")
+
+            if not result.get("success"):
+                return f"获取黄金当前数据失败：{result.get('message', '未知错误')}"
+
+            data = result.get("data", {})
+            if not data:
+                return f"未找到黄金数据：{symbol}"
+
+            output = []
+            output.append(f"# 黄金当前价格与宏观指标")
+            output.append("")
+            output.append("## 价格")
+            output.append("")
+            if data.get('gold_price'):
+                output.append(f"- **黄金价格**: ${data['gold_price']:.2f}")
+            if data.get('gold_change_percent') is not None:
+                sign = "+" if data['gold_change_percent'] >= 0 else ""
+                output.append(f"- **涨跌幅**: {sign}{data['gold_change_percent']:.2f}%")
+
+            output.append("")
+            output.append("## 宏观指标")
+            output.append("")
+            if data.get('dxy') is not None:
+                output.append(f"- **美元指数 (DXY)**: {data['dxy']:.2f}")
+            if data.get('vix') is not None:
+                output.append(f"- **VIX 恐慌指数**: {data['vix']:.2f}")
+            if data.get('us10y') is not None:
+                output.append(f"- **美国10年期国债**: {data['us10y']:.2f}%")
+            if data.get('tips') is not None:
+                output.append(f"- **TIPS 实际利率**: {data['tips']:.2f}%")
+            if data.get('breakeven') is not None:
+                output.append(f"- **盈亏平衡通胀率**: {data['breakeven']:.2f}%")
+
+            output.append("")
+            output.append("## 技术指标")
+            output.append("")
+            if data.get('rsi_14') is not None:
+                output.append(f"- **RSI(14)**: {data['rsi_14']:.2f}")
+            if data.get('atr_ratio') is not None:
+                output.append(f"- **ATR比率**: {data['atr_ratio']:.4f}")
+            if data.get('bb_position') is not None:
+                output.append(f"- **布林带位置**: {data['bb_position']:.4f}")
+
+            output.append("")
+            output.append(f"_数据时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_")
+
+            return "\n".join(output)
+
+        except Exception as e:
+            logger.error(f"获取黄金资源失败：{e}")
+            return f"获取黄金资源失败：{str(e)}"
+
+    async def get_gold_signal_resource(self, symbol: str = "GC") -> str:
+        """
+        获取黄金趋势信号资源
+
+        Resource URI: gold://signal
+        """
+        logger.info(f"[MCP Resource] get_gold_signal_resource: {symbol}")
+        try:
+            result = await self._request("GET", f"/gold/trend-signal?symbol={symbol}")
+
+            if not result.get("success"):
+                return f"获取趋势信号失败：{result.get('message', '未知错误')}"
+
+            data = result.get("data", {})
+            if not data:
+                return f"无法获取趋势信号：{symbol}"
+
+            output = []
+            output.append("# 黄金趋势跟踪信号")
+            output.append("")
+            output.append("## 当前信号")
+            output.append("")
+            if data.get('current_price'):
+                output.append(f"- **当前价格**: ${data['current_price']:.2f}")
+            if data.get('ma50'):
+                output.append(f"- **MA50**: ${data['ma50']:.2f}")
+            if data.get('ma200'):
+                output.append(f"- **MA200**: ${data['ma200']:.2f}")
+            output.append(f"- **信号**: {data.get('signal', 'N/A')}")
+            output.append(f"- **信号类型**: {data.get('signal_type', 'N/A')}")
+            if data.get('cross_distance_pct') is not None:
+                output.append(f"- **MA距离**: {data['cross_distance_pct']:.2f}%")
+            if data.get('atr') is not None:
+                output.append(f"- **ATR**: {data['atr']:.4f}")
+            if data.get('stop_loss_level') is not None:
+                output.append(f"- **止损位**: ${data['stop_loss_level']:.2f}")
+            if data.get('last_cross_date'):
+                output.append(f"- **上次交叉日期**: {data['last_cross_date']}")
+
+            output.append("")
+            output.append(f"_数据时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_")
+
+            return "\n".join(output)
+
+        except Exception as e:
+            logger.error(f"获取趋势信号资源失败：{e}")
+            return f"获取趋势信号资源失败：{str(e)}"
+
+    async def get_gold_factors_resource(self, symbol: str = "GC") -> str:
+        """
+        获取黄金因子数据资源
+
+        Resource URI: gold://factors
+        """
+        logger.info(f"[MCP Resource] get_gold_factors_resource: {symbol}")
+        try:
+            result = await self._request("GET", f"/gold/factors?symbol={symbol}")
+
+            if not result.get("success", True):
+                return f"获取黄金因子失败"
+
+            price_factors = result.get("price_factors", {})
+            macro_factors = result.get("macro_factors", {})
+
+            output = []
+            output.append("# 黄金因子数据")
+            output.append("")
+            output.append("## 价格因子")
+            output.append("")
+            if price_factors.get('current_price') is not None:
+                output.append(f"- **当前价格**: ${price_factors['current_price']:.2f}")
+            if price_factors.get('rsi_14') is not None:
+                output.append(f"- **RSI(14)**: {price_factors['rsi_14']:.2f}")
+            if price_factors.get('atr_ratio') is not None:
+                output.append(f"- **ATR比率**: {price_factors['atr_ratio']:.4f}")
+            if price_factors.get('bb_position') is not None:
+                output.append(f"- **布林带位置**: {price_factors['bb_position']:.4f}")
+            if price_factors.get('ma_ratio_20') is not None:
+                output.append(f"- **MA5/20比率**: {price_factors['ma_ratio_20']:.4f}")
+            if price_factors.get('ma_ratio_60') is not None:
+                output.append(f"- **MA20/60比率**: {price_factors['ma_ratio_60']:.4f}")
+
+            output.append("")
+            output.append("## 宏观因子")
+            output.append("")
+            if macro_factors.get('dxy') is not None:
+                output.append(f"- **美元指数 (DXY)**: {macro_factors['dxy']:.2f}")
+            if macro_factors.get('vix') is not None:
+                output.append(f"- **VIX 恐慌指数**: {macro_factors['vix']:.2f}")
+            if macro_factors.get('us10y') is not None:
+                output.append(f"- **美国10年期国债**: {macro_factors['us10y']:.2f}%")
+            if macro_factors.get('tips') is not None:
+                output.append(f"- **TIPS 实际利率**: {macro_factors['tips']:.2f}%")
+            if macro_factors.get('breakeven') is not None:
+                output.append(f"- **盈亏平衡通胀率**: {macro_factors['breakeven']:.2f}%")
+
+            output.append("")
+            output.append(f"_数据时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_")
+
+            return "\n".join(output)
+
+        except Exception as e:
+            logger.error(f"获取黄金因子资源失败：{e}")
+            return f"获取黄金因子资源失败：{str(e)}"

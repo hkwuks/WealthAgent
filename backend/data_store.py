@@ -59,7 +59,13 @@ class DataStore:
     使用SQLite存储结构化数据
     """
 
-    def __init__(self, data_dir: str = "data"):
+    def __init__(self, data_dir: str = None):
+        # 默认使用 backend/data 目录
+        if data_dir is None:
+            # 获取当前文件所在目录 (backend/)，然后使用其下的 data
+            backend_dir = os.path.dirname(os.path.abspath(__file__))
+            data_dir = os.path.join(backend_dir, "data")
+
         self.data_dir = data_dir
         self.cache_dir = os.path.join(data_dir, "cache")
         self.history_dir = os.path.join(data_dir, "history")
