@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from backend.config import settings
-from backend.api import funds, market, valuation
+from backend.api import funds, market, valuation, gold
 from loguru import logger
 
 
@@ -136,14 +136,15 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="""
-## 基金估值系统 API
+## 智能理财Agent API
 
-提供基金信息查询、实时估值、市场数据等功能。
+提供基金信息查询、实时估值、黄金预测、市场数据等功能。
 
 ### 主要功能
 
 * **基金信息**: 获取基金基本信息、持仓、净值历史
 * **基金估值**: 实时估算基金净值涨跌
+* **黄金预测**: 机器学习预测黄金价格走势
 * **市场数据**: 获取股票、ETF、指数实时行情
 
 ### MCP (Model Context Protocol) 支持
@@ -182,6 +183,7 @@ app.add_middleware(
 app.include_router(funds.router, prefix=settings.API_PREFIX)
 app.include_router(market.router, prefix=settings.API_PREFIX)
 app.include_router(valuation.router, prefix=settings.API_PREFIX)
+app.include_router(gold.router, prefix=settings.API_PREFIX)
 
 
 @app.get("/", tags=["系统"])
@@ -210,30 +212,53 @@ async def mcp_info():
         "message": "MCP 服务器运行中",
         "data": {
             "name": "fund-valuation",
-            "version": "1.0.0",
+            "version": "2.0.0",
             "transport": "streamable-http",
             "endpoint": "/mcp",
             "tools": [
+                # 基金管理
                 "get_fund_list",
                 "add_fund",
                 "delete_fund",
                 "get_fund_info",
+                # 基金估值
                 "get_valuation",
                 "get_batch_valuation",
+                "get_valuation_types",
+                # 市场数据
                 "get_stock_price",
                 "get_etf_price",
                 "get_index_price",
                 "get_global_index_price",
-                "get_valuation_types",
                 "get_supported_indices",
+                # 黄金预测
+                "predict_gold_price",
+                "predict_gold_tb",
+                "retrain_gold_model",
+                "get_gold_history",
+                "sync_gold_data",
+                "get_gold_current",
+                "get_gold_factors",
+                "get_gold_drift_status",
+                "record_gold_actual",
+                "get_gold_factor_importance",
+                "get_gold_coverage",
+                "run_gold_backtest",
+                "run_gold_backtest_trend",
+                "get_gold_trend_signal",
             ],
             "resources": [
+                # 基金/市场
                 "fund://{fund_code}",
                 "valuation://{fund_code}",
                 "market://stock/{stock_code}",
                 "market://etf/{etf_code}",
                 "market://index/{index_code}",
                 "market://global-index/{index_code}",
+                # 黄金
+                "gold://current",
+                "gold://signal",
+                "gold://factors",
             ],
             "prompts": [
                 "analyze_fund",

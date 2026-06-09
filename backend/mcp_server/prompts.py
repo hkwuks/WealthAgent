@@ -8,7 +8,7 @@ from datetime import datetime
 
 
 class FundValuationPrompts:
-    """基金估值系统 MCP Prompts"""
+    """智能理财Agent MCP Prompts"""
 
     def analyze_fund(self, fund_code: str) -> str:
         """
