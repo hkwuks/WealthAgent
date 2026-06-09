@@ -7,6 +7,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
 import numpy as np
+import pandas as pd
 
 from backend.gold_prediction import (
     GoldPricePredictor, ModelType, PredictionHorizon,
@@ -322,19 +323,23 @@ async def get_gold_current(
         prev_price = prev.get('close')
         gold_change_percent = ((gold_price - prev_price) / prev_price * 100) if prev_price and prev_price > 0 else 0
 
+        # pd.notna handles both None and NaN from pandas
+        def _safe_round(val, digits):
+            return round(val, digits) if pd.notna(val) else None
+
         return {
             "success": True,
             "data": {
-                "gold_price": round(gold_price, 2) if gold_price is not None else None,
-                "gold_change_percent": round(gold_change_percent, 2),
-                "dxy": round(latest.get('DXY_value'), 2) if latest.get('DXY_value') is not None else None,
-                "vix": round(latest.get('VIX_value'), 2) if latest.get('VIX_value') is not None else None,
-                "us10y": round(latest.get('US10Y_value'), 2) if latest.get('US10Y_value') is not None else None,
-                "tips": round(latest.get('TIPS_value'), 2) if latest.get('TIPS_value') is not None else None,
-                "breakeven": round(latest.get('BREAKEVEN_level'), 2) if latest.get('BREAKEVEN_level') is not None else None,
-                "rsi_14": round(latest.get('rsi_14'), 2) if latest.get('rsi_14') is not None else None,
-                "atr_ratio": round(latest.get('atr_ratio'), 4) if latest.get('atr_ratio') is not None else None,
-                "bb_position": round(latest.get('bb_position'), 4) if latest.get('bb_position') is not None else None,
+                "gold_price": _safe_round(gold_price, 2),
+                "gold_change_percent": _safe_round(gold_change_percent, 2),
+                "dxy": _safe_round(latest.get('DXY_value'), 2),
+                "vix": _safe_round(latest.get('VIX_value'), 2),
+                "us10y": _safe_round(latest.get('US10Y_value'), 2),
+                "tips": _safe_round(latest.get('TIPS_value'), 2),
+                "breakeven": _safe_round(latest.get('BREAKEVEN_level'), 2),
+                "rsi_14": _safe_round(latest.get('rsi_14'), 2),
+                "atr_ratio": _safe_round(latest.get('atr_ratio'), 4),
+                "bb_position": _safe_round(latest.get('bb_position'), 4),
                 "timestamp": datetime.now().isoformat()
             }
         }
@@ -369,19 +374,19 @@ async def get_gold_factors(
 
         factors = {
             "price_factors": {
-                "current_price": round(latest.get('close'), 2) if latest.get('close') is not None else None,
-                "rsi_14": round(latest.get('rsi_14'), 2) if latest.get('rsi_14') is not None else None,
-                "atr_ratio": round(latest.get('atr_ratio'), 4) if latest.get('atr_ratio') is not None else None,
-                "bb_position": round(latest.get('bb_position'), 4) if latest.get('bb_position') is not None else None,
-                "ma_ratio_20": round(latest.get('ma_ratio_20'), 4) if latest.get('ma_ratio_20') is not None else None,
-                "ma_ratio_60": round(latest.get('ma_ratio_60'), 4) if latest.get('ma_ratio_60') is not None else None,
+                "current_price": _safe_round(latest.get('close'), 2),
+                "rsi_14": _safe_round(latest.get('rsi_14'), 2),
+                "atr_ratio": _safe_round(latest.get('atr_ratio'), 4),
+                "bb_position": _safe_round(latest.get('bb_position'), 4),
+                "ma_ratio_20": _safe_round(latest.get('ma_ratio_20'), 4),
+                "ma_ratio_60": _safe_round(latest.get('ma_ratio_60'), 4),
             },
             "macro_factors": {
-                "dxy": round(latest.get('DXY_value'), 2) if latest.get('DXY_value') is not None else None,
-                "vix": round(latest.get('VIX_value'), 2) if latest.get('VIX_value') is not None else None,
-                "us10y": round(latest.get('US10Y_value'), 2) if latest.get('US10Y_value') is not None else None,
-                "tips": round(latest.get('TIPS_value'), 2) if latest.get('TIPS_value') is not None else None,
-                "breakeven": round(latest.get('BREAKEVEN_level'), 2) if latest.get('BREAKEVEN_level') is not None else None,
+                "dxy": _safe_round(latest.get('DXY_value'), 2),
+                "vix": _safe_round(latest.get('VIX_value'), 2),
+                "us10y": _safe_round(latest.get('US10Y_value'), 2),
+                "tips": _safe_round(latest.get('TIPS_value'), 2),
+                "breakeven": _safe_round(latest.get('BREAKEVEN_level'), 2),
             },
             "timestamp": datetime.now().isoformat()
         }
@@ -498,7 +503,7 @@ async def run_backtest(
     if not selected_models:
         selected_models = [ModelType.LIGHTGBM, ModelType.RIDGE]
 
-    lookback_days = years * 252 + 300
+    lookback_days = int(years * 365) + 400
     df = get_gold_training_data("GC", lookback_days=lookback_days)
 
     if df.empty or len(df) < years * 252:
@@ -544,7 +549,7 @@ async def run_trend_following_backtest(
     """
     from backend.backtest_engine import TrendFollowingStrategy, CostModel
 
-    lookback_days = years * 252 + 300
+    lookback_days = int(years * 365) + 400
     df = get_gold_training_data(symbol, lookback_days=lookback_days)
 
     if df.empty or len(df) < slow_ma + 50:

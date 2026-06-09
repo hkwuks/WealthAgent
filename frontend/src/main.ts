@@ -16,6 +16,11 @@ class ThemeManager {
       document.body.classList.add('dark-mode');
     } else if (savedTheme === 'light') {
       document.body.classList.remove('dark-mode');
+    } else {
+      // No saved preference: sync with OS preference
+      if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.body.classList.add('dark-mode');
+      }
     }
   }
 
@@ -26,7 +31,7 @@ class ThemeManager {
   }
 
   static isDark(): boolean {
-    return document.body.classList.contains('dark-mode');
+    return document.body.classList.contains('dark-mode') || window.matchMedia('(prefers-color-scheme: dark)').matches;
   }
 }
 

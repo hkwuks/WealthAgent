@@ -1,6 +1,8 @@
 import { api } from './api'
 import { toast } from './toast'
 
+const isDarkMode = () => document.body.classList.contains('dark-mode') || window.matchMedia('(prefers-color-scheme: dark)').matches
+
 export class GoldPredictionUI {
   private container: HTMLDivElement | null = null
   private isPredicting = false
@@ -530,9 +532,11 @@ export class GoldPredictionUI {
     const height = rect.height
 
     ctx.clearRect(0, 0, width, height)
+    ctx.fillStyle = isDarkMode() ? '#1e293b' : '#ffffff'
+    ctx.fillRect(0, 0, width, height)
 
     ctx.font = `${Math.max(12, height * 0.04)}px Arial`
-    ctx.fillStyle = '#333'
+    ctx.fillStyle = isDarkMode() ? '#f1f5f9' : '#333'
     ctx.textAlign = 'center'
     ctx.fillText('累计收益对比', width / 2, height * 0.08)
 
@@ -545,7 +549,7 @@ export class GoldPredictionUI {
       const x = width * 0.1 + i * legendItemWidth
       ctx.fillStyle = colors[i]
       ctx.fillRect(x, legendY, 20, 10)
-      ctx.fillStyle = '#333'
+      ctx.fillStyle = isDarkMode() ? '#f1f5f9' : '#333'
       ctx.textAlign = 'left'
       ctx.font = `${Math.max(10, height * 0.025)}px Arial`
       ctx.fillText(this.getModelDisplayName(model), x + 25, legendY + 9)
@@ -556,7 +560,7 @@ export class GoldPredictionUI {
     const chartWidth = width * 0.8
     const chartHeight = height * 0.6
 
-    ctx.strokeStyle = '#ccc'
+    ctx.strokeStyle = isDarkMode() ? '#475569' : '#ccc'
     ctx.lineWidth = 1
     ctx.beginPath()
     ctx.moveTo(chartX, chartY)
@@ -590,7 +594,7 @@ export class GoldPredictionUI {
       maxVal = center + 0.05
     }
 
-    ctx.fillStyle = '#666'
+    ctx.fillStyle = isDarkMode() ? '#94a3b8' : '#666'
     ctx.textAlign = 'right'
     ctx.font = `${Math.max(9, height * 0.02)}px Arial`
     const ySteps = 5
@@ -600,7 +604,7 @@ export class GoldPredictionUI {
       ctx.fillText(val.toFixed(2), chartX - 5, y + 3)
 
       if (i > 0) {
-        ctx.strokeStyle = '#eee'
+        ctx.strokeStyle = isDarkMode() ? '#475569' : '#eee'
         ctx.beginPath()
         ctx.moveTo(chartX, y)
         ctx.lineTo(chartX + chartWidth, y)
@@ -731,7 +735,7 @@ export class GoldPredictionUI {
       </table>
     `
 
-    // 简单权益曲线（复用canvas）
+    // 权益曲线（模仿模型回测风格：图例 + 双线对比）
     const canvas = document.getElementById('trend-backtest-chart') as HTMLCanvasElement
     if (canvas && results.equity_curve) {
       const ctx = canvas.getContext('2d')
@@ -745,11 +749,56 @@ export class GoldPredictionUI {
         const width = rect.width
         const height = rect.height
         ctx.clearRect(0, 0, width, height)
+        ctx.fillStyle = isDarkMode() ? '#1e293b' : '#ffffff'
+        ctx.fillRect(0, 0, width, height)
 
         const curve = results.equity_curve
+        const bhCurve = results.buy_and_hold_curve
         if (curve.length > 1) {
+          // 标题
+          ctx.font = `${Math.max(12, height * 0.04)}px Arial`
+          ctx.fillStyle = isDarkMode() ? '#f1f5f9' : '#333'
+          ctx.textAlign = 'center'
+          ctx.fillText('累计收益对比', width / 2, height * 0.08)
+
+          // 图例
+          const legends = ['趋势跟踪策略', '买入持有']
+          const colors = ['#FF6384', '#4BC0C0']
+          const legendY = height * 0.15
+          const legendItemWidth = width / 3
+
+          legends.forEach((label, i) => {
+            const x = width * 0.25 + i * legendItemWidth
+            ctx.fillStyle = colors[i]
+            ctx.fillRect(x, legendY, 20, 10)
+            ctx.fillStyle = isDarkMode() ? '#f1f5f9' : '#333'
+            ctx.textAlign = 'left'
+            ctx.font = `${Math.max(10, height * 0.025)}px Arial`
+            ctx.fillText(label, x + 25, legendY + 9)
+          })
+
+          // 图表区域（与模型回测一致）
+          const chartX = width * 0.1
+          const chartY = height * 0.25
+          const chartWidth = width * 0.8
+          const chartHeight = height * 0.6
+
+          // 坐标轴
+          ctx.strokeStyle = isDarkMode() ? '#475569' : '#ccc'
+          ctx.lineWidth = 1
+          ctx.beginPath()
+          ctx.moveTo(chartX, chartY)
+          ctx.lineTo(chartX, chartY + chartHeight)
+          ctx.lineTo(chartX + chartWidth, chartY + chartHeight)
+          ctx.stroke()
+
+          // 计算值域（合并策略曲线和买入持有曲线）
           let minVal = Math.min(...curve)
           let maxVal = Math.max(...curve)
+          if (bhCurve && bhCurve.length > 1) {
+            minVal = Math.min(minVal, ...bhCurve)
+            maxVal = Math.max(maxVal, ...bhCurve)
+          }
           if (minVal === maxVal) {
             minVal = 0.9
             maxVal = 1.1
@@ -761,29 +810,8 @@ export class GoldPredictionUI {
             maxVal = center + 0.05
           }
 
-          // 标题
-          ctx.font = `${Math.max(12, height * 0.04)}px Arial`
-          ctx.fillStyle = '#333'
-          ctx.textAlign = 'center'
-          ctx.fillText('趋势跟踪策略累计收益', width / 2, height * 0.08)
-
-          // 图表区域
-          const chartX = width * 0.1
-          const chartY = height * 0.15
-          const chartWidth = width * 0.8
-          const chartHeight = height * 0.7
-
-          // 坐标轴
-          ctx.strokeStyle = '#ccc'
-          ctx.lineWidth = 1
-          ctx.beginPath()
-          ctx.moveTo(chartX, chartY)
-          ctx.lineTo(chartX, chartY + chartHeight)
-          ctx.lineTo(chartX + chartWidth, chartY + chartHeight)
-          ctx.stroke()
-
           // Y轴刻度 + 水平网格线
-          ctx.fillStyle = '#666'
+          ctx.fillStyle = isDarkMode() ? '#94a3b8' : '#666'
           ctx.textAlign = 'right'
           ctx.font = `${Math.max(9, height * 0.02)}px Arial`
           const ySteps = 5
@@ -793,7 +821,7 @@ export class GoldPredictionUI {
             ctx.fillText(val.toFixed(2), chartX - 5, y + 3)
 
             if (i > 0) {
-              ctx.strokeStyle = '#eee'
+              ctx.strokeStyle = isDarkMode() ? '#475569' : '#eee'
               ctx.beginPath()
               ctx.moveTo(chartX, y)
               ctx.lineTo(chartX + chartWidth, y)
@@ -801,19 +829,35 @@ export class GoldPredictionUI {
             }
           }
 
-          // X轴刻度
-          ctx.fillStyle = '#666'
+          // X轴刻度（日期）
+          const dates = results.dates
+          const xSteps = Math.min(6, curve.length - 1)
+          ctx.fillStyle = isDarkMode() ? '#94a3b8' : '#666'
           ctx.textAlign = 'center'
           ctx.font = `${Math.max(9, height * 0.02)}px Arial`
-          const xSteps = Math.min(6, curve.length - 1)
           for (let i = 0; i <= xSteps; i++) {
             const idx = Math.round(i * (curve.length - 1) / xSteps)
             const x = chartX + (idx / (curve.length - 1)) * chartWidth
-            ctx.fillText(`${idx}`, x, chartY + chartHeight + 15)
+            const label = dates && dates[idx] ? dates[idx].slice(0, 10) : `${idx}`
+            ctx.fillText(label, x, chartY + chartHeight + 15)
           }
 
-          // 趋势线
-          ctx.strokeStyle = '#FF6384'
+          // 买入持有曲线
+          if (bhCurve && bhCurve.length > 1) {
+            ctx.strokeStyle = colors[1]
+            ctx.lineWidth = 2
+            ctx.beginPath()
+            bhCurve.forEach((v: number, i: number) => {
+              const x = chartX + (i / (curve.length - 1)) * chartWidth
+              const y = chartY + chartHeight - ((v - minVal) / (maxVal - minVal)) * chartHeight
+              if (i === 0) ctx.moveTo(x, y)
+              else ctx.lineTo(x, y)
+            })
+            ctx.stroke()
+          }
+
+          // 趋势跟踪策略曲线
+          ctx.strokeStyle = colors[0]
           ctx.lineWidth = 2
           ctx.beginPath()
           curve.forEach((v: number, i: number) => {
@@ -823,22 +867,6 @@ export class GoldPredictionUI {
             else ctx.lineTo(x, y)
           })
           ctx.stroke()
-
-          // 起点1.0参考线
-          if (minVal < 1 && maxVal > 1) {
-            const refY = chartY + chartHeight - ((1 - minVal) / (maxVal - minVal)) * chartHeight
-            ctx.strokeStyle = '#999'
-            ctx.lineWidth = 1
-            ctx.setLineDash([5, 5])
-            ctx.beginPath()
-            ctx.moveTo(chartX, refY)
-            ctx.lineTo(chartX + chartWidth, refY)
-            ctx.stroke()
-            ctx.setLineDash([])
-            ctx.fillStyle = '#999'
-            ctx.textAlign = 'left'
-            ctx.fillText('1.0', chartX + chartWidth + 5, refY + 3)
-          }
         }
       }
     }

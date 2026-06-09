@@ -2,6 +2,18 @@ export class ChartRenderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
 
+  private isDarkMode(): boolean {
+    return document.body.classList.contains('dark-mode') || window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+
+  private get bgColor(): string {
+    return this.isDarkMode() ? '#1e293b' : '#ffffff';
+  }
+
+  private get textColor(): string {
+    return this.isDarkMode() ? '#e2e8f0' : '#374151';
+  }
+
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     const ctx = canvas.getContext('2d');
@@ -11,9 +23,15 @@ export class ChartRenderer {
 
   clear(): void {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.fillStyle = this.bgColor;
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
   drawPieChart(data: Array<{ label: string; value: number; color: string }>): void {
+    // Fill background
+    this.ctx.fillStyle = this.bgColor;
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
     const centerX = this.canvas.width / 2;
     const centerY = this.canvas.height / 2;
     const radius = Math.min(centerX, centerY) - 20;
@@ -23,7 +41,7 @@ export class ChartRenderer {
 
     data.forEach((item) => {
       const sliceAngle = (item.value / total) * 2 * Math.PI;
-      
+
       this.ctx.beginPath();
       this.ctx.moveTo(centerX, centerY);
       this.ctx.arc(centerX, centerY, radius, startAngle, startAngle + sliceAngle);
@@ -43,17 +61,21 @@ export class ChartRenderer {
 
     data.forEach((item, index) => {
       const y = legendY + index * 25;
-      
+
       this.ctx.fillStyle = item.color;
       this.ctx.fillRect(legendX, y, 15, 15);
-      
-      this.ctx.fillStyle = '#374151';
+
+      this.ctx.fillStyle = this.textColor;
       this.ctx.font = '12px sans-serif';
       this.ctx.fillText(`${item.label}: ${item.value.toFixed(2)}`, legendX + 20, y + 12);
     });
   }
 
   drawBarChart(data: Array<{ label: string; value: number }>, maxValue?: number): void {
+    // Fill background
+    this.ctx.fillStyle = this.bgColor;
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
     const padding = 40;
     const chartWidth = this.canvas.width - padding * 2;
     const chartHeight = this.canvas.height - padding * 2;
@@ -68,7 +90,7 @@ export class ChartRenderer {
 
       this.ctx.fillRect(x, y, barWidth, barHeight);
 
-      this.ctx.fillStyle = '#374151';
+      this.ctx.fillStyle = this.textColor;
       this.ctx.font = '10px sans-serif';
       this.ctx.textAlign = 'center';
       this.ctx.fillText(item.label, x + barWidth / 2, this.canvas.height - padding + 15);
