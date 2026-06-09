@@ -961,13 +961,28 @@ class TrendFollowingStrategy:
                 'holding_days': len(df) - 1 - entry_idx,
             })
 
-        # 计算指标
-        return self._calculate_metrics(equity_curve, trades_log)
+        # 买入持有基准曲线（与equity_curve等长）
+        start_idx = self.slow_ma + 10
+        bh_curve = [1.0]
+        for i in range(start_idx + 1, len(df)):
+            ret = (close.iloc[i] - close.iloc[i - 1]) / close.iloc[i - 1]
+            bh_curve.append(bh_curve[-1] * (1 + ret))
+        # 补齐长度差（equity_curve 多一个初始值）
+        if len(bh_curve) < len(equity_curve):
+            bh_curve.extend([bh_curve[-1]] * (len(equity_curve) - len(bh_curve)))
+
+        dates = df['date'].iloc[start_idx:].astype(str).tolist()
+        if len(dates) < len(equity_curve):
+            dates.extend([dates[-1]] * (len(equity_curve) - len(dates)))
+
+        return self._calculate_metrics(equity_curve, trades_log, bh_curve, dates)
 
     def _calculate_metrics(
         self,
         equity_curve: List[float],
         trades_log: List[Dict],
+        buy_and_hold_curve: List[float] = None,
+        dates: List[str] = None,
     ) -> Dict[str, Any]:
         """计算策略绩效指标"""
         equity_arr = np.array(equity_curve)
@@ -1049,6 +1064,8 @@ class TrendFollowingStrategy:
             "volatility": round(volatility * 100, 2),
             "exit_reasons": exit_reasons,
             "equity_curve": [round(v, 4) for v in (equity_curve.tolist() if hasattr(equity_curve, 'tolist') else equity_curve)],
+            "buy_and_hold_curve": [round(v, 4) for v in buy_and_hold_curve] if buy_and_hold_curve else None,
+            "dates": dates,
             "strategy": "trend_following",
             "parameters": {
                 "fast_ma": self.fast_ma,

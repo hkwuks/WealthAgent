@@ -39,13 +39,13 @@
 
   /* 背景色 */
   --bg-primary: #ffffff;
-  --bg-secondary: #f8fafc;
-  --bg-tertiary: #f1f5f9;
-  --bg-gradient: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);
+  --bg-secondary: #f5f7fa;
+  --bg-tertiary: #eef1f5;
+  --bg-gradient: linear-gradient(180deg, #f5f7fa 0%, #e8ecf1 100%);
 
   /* 边框色 */
-  --border-color: #e2e8f0;
-  --border-light: #f1f5f9;
+  --border-color: #e0e4ea;
+  --border-light: #eef1f5;
 
   /* 阴影 */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
@@ -80,21 +80,21 @@
     --primary-light: rgba(139, 92, 246, 0.15);
     --primary-glow: rgba(139, 92, 246, 0.5);
 
-    --text-primary: #f9fafb;
-    --text-secondary: #d1d5db;
-    --text-tertiary: #9ca3af;
+    --text-primary: #f1f5f9;
+    --text-secondary: #cbd5e1;
+    --text-tertiary: #94a3b8;
 
-    --bg-primary: #1a1a2e;
-    --bg-secondary: #16213e;
-    --bg-tertiary: #0f3460;
-    --bg-gradient: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+    --bg-primary: #1e293b;
+    --bg-secondary: #273549;
+    --bg-tertiary: #334155;
+    --bg-gradient: linear-gradient(180deg, #1e293b 0%, #273549 100%);
 
-    --border-color: #2d3748;
-    --border-light: #1e293b;
+    --border-color: #475569;
+    --border-light: #334155;
 
-    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+    --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.25);
+    --shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
     --shadow-glow: 0 0 30px rgba(139, 92, 246, 0.4);
   }
 }
@@ -104,14 +104,14 @@
   --primary-color: #8b5cf6;
   --primary-light: rgba(139, 92, 246, 0.15);
 
-  --text-primary: #f9fafb;
-  --text-secondary: #d1d5db;
+  --text-primary: #f1f5f9;
+  --text-secondary: #cbd5e1;
 
-  --bg-primary: #1a1a2e;
-  --bg-secondary: #16213e;
-  --bg-tertiary: #0f3460;
+  --bg-primary: #1e293b;
+  --bg-secondary: #273549;
+  --bg-tertiary: #334155;
 
-  --border-color: #2d3748;
+  --border-color: #475569;
 }
 
 /* 全局样式 */
@@ -177,7 +177,7 @@ body::before {
     linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
     radial-gradient(ellipse at 20% 20%, rgba(139, 92, 246, 0.1) 0%, transparent 50%),
     radial-gradient(ellipse at 80% 80%, rgba(219, 39, 119, 0.1) 0%, transparent 50%),
-    linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+    linear-gradient(180deg, #1e293b 0%, #273549 100%);
   background-size:
     30px 30px,
     30px 30px,
@@ -2511,7 +2511,8 @@ body::after {
   color: #10b981;
 }
 
-.gold-prediction-page #backtest-chart {
+.gold-prediction-page #backtest-chart,
+.gold-prediction-page #trend-backtest-chart {
   width: 100%;
   height: 400px;
   margin: 20px 0;

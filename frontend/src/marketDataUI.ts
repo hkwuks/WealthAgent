@@ -3,6 +3,8 @@ import { toast } from './toast';
 import { StorageService } from './storage';
 import type { MarketData } from './types';
 
+const isDarkMode = () => document.body.classList.contains('dark-mode') || window.matchMedia('(prefers-color-scheme: dark)').matches;
+
 interface CacheConfig {
   ttl: number; // 缓存时间（毫秒）
   lastUpdate: number;
@@ -759,7 +761,7 @@ class MarketDataUI {
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.clearRect(0, 0, canvas.width, canvas.height);
-          ctx.fillStyle = '#999';
+          ctx.fillStyle = isDarkMode() ? '#94a3b8' : '#999';
           ctx.font = '14px sans-serif';
           ctx.textAlign = 'center';
           ctx.fillText('暂无历史数据', canvas.width / 2, canvas.height / 2);
@@ -791,8 +793,10 @@ class MarketDataUI {
     const height = canvas.height;
     const padding = { top: 20, right: 20, bottom: 30, left: 60 };
 
-    // 清空画布
+    // 清空画布并填充背景
     ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = isDarkMode() ? '#1e293b' : '#ffffff';
+    ctx.fillRect(0, 0, width, height);
 
     // 计算价格范围
     const prices = history.map(h => h.price);
@@ -801,7 +805,7 @@ class MarketDataUI {
     const priceRange = maxPrice - minPrice || 1;
 
     // 绘制网格线
-    ctx.strokeStyle = '#e0e0e0';
+    ctx.strokeStyle = isDarkMode() ? '#475569' : '#e0e0e0';
     ctx.lineWidth = 1;
     for (let i = 0; i <= 4; i++) {
       const y = padding.top + (height - padding.top - padding.bottom) * i / 4;
@@ -812,7 +816,7 @@ class MarketDataUI {
 
       // Y轴标签
       const price = maxPrice - priceRange * i / 4;
-      ctx.fillStyle = '#666';
+      ctx.fillStyle = isDarkMode() ? '#94a3b8' : '#666';
       ctx.font = '11px sans-serif';
       ctx.textAlign = 'right';
       ctx.fillText(price.toFixed(2), padding.left - 5, y + 4);
@@ -852,7 +856,7 @@ class MarketDataUI {
 
     // 绘制X轴时间标签（只显示首尾）
     if (history.length > 0) {
-      ctx.fillStyle = '#666';
+      ctx.fillStyle = isDarkMode() ? '#94a3b8' : '#666';
       ctx.font = '10px sans-serif';
       ctx.textAlign = 'center';
 
@@ -864,7 +868,7 @@ class MarketDataUI {
     }
 
     // 绘制标题
-    ctx.fillStyle = '#333';
+    ctx.fillStyle = isDarkMode() ? '#f1f5f9' : '#333';
     ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('实时价格走势', width / 2, 15);
