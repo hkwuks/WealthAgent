@@ -444,3 +444,7 @@ server: {
 ## 免责声明
 
 本项目是一个个人科研项目，目的是为投资者提供理财决策参考服务。并不承诺数据的可靠性和准确性，用户在使用时请自行承担风险。估值数据和预测结果仅供参考，不构成任何投资建议。
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=hkwuks/Fund-Valuation-Framework&type=date&legend=top-left)](https://www.star-history.com/?repos=hkwuks%2FFund-Valuation-Framework&type=date&legend=top-left)
