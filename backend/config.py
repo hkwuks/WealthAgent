@@ -3,7 +3,7 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
-    APP_NAME: str = "基金估值系统"
+    APP_NAME: str = "智能理财Agent"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
     
@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     DATA_DIR: str = "data"
     
     TUSHARE_TOKEN: Optional[str] = None
+
+    FRED_API_KEY: Optional[str] = None
+
+    MODEL_DIR: str = "data/models"
+    MODEL_MAX_AGE_DAYS: int = 7
     
     class Config:
         env_file = ".env"
