@@ -640,4 +640,9 @@ def get_gold_training_data(symbol: str = 'GC', lookback_days: int = 2520) -> pd.
                 how='left'
             )
 
+    # FRED数据（TIPS/BREAKEVEN）非每个交易日更新，forward fill缺失值
+    macro_cols = [f'{ind}_value' for ind in ['DXY', 'VIX', 'US10Y', 'TIPS', 'BREAKEVEN']
+                  if f'{ind}_value' in gold_df.columns]
+    gold_df[macro_cols] = gold_df[macro_cols].ffill()
+
     return gold_df
