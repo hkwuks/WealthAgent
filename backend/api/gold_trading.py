@@ -1,16 +1,22 @@
 """
 黄金量化交易API路由
 
-Phase 3: 回测、策略列表、多策略对比、信号查询
+完整端点: 状态/策略/回测/对比/敏感性/验证/信号生成/风控/数据同步/配置
 """
 
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
+from pydantic import BaseModel
 from datetime import datetime
 
 from backend.gold.strategy.base import StrategyRegistry
 from backend.gold.backtest.engine import Backtester
+from backend.gold.backtest.sensitivity import SensitivityAnalyzer
+from backend.gold.backtest.validation import SampleSplitter, ScenarioValidator
+from backend.gold.risk.checks import RiskChecker
+from backend.gold.signal.output import SignalOutput
 from backend.gold.data.gateway import GoldDataGateway
+from backend.gold.data.storage import GoldDataStore
 from backend.gold.core.models import BacktestRequest, StrategyComparisonRequest
 from backend.gold.core.config import GoldSettings
 from loguru import logger
@@ -106,8 +112,8 @@ async def run_backtest(req: BacktestRequest):
             "signal_count": len(result["signals"]),
             "trade_count": len([t for t in result["trades"] if t.get("type") == "close"]),
             "report": result["report"],
-            "signals": result["signals"][-20:],  # 最近20条信号
-            "trades": result["trades"][-20:],     # 最近20条交易
+            "signals": result["signals"][-20:],
+            "trades": result["trades"][-20:],
         },
     }
 
@@ -119,9 +125,9 @@ async def compare_strategies(req: StrategyComparisonRequest):
     """
     多策略对比回测
 
-    同一数据集、同一资金，跑多个策略并排对比。
+    同一数据集、同一资金，跑多个策略并排对比，含排名。
     """
-    results = []
+    results = {}
     errors = []
 
     for name in req.strategy_names:
@@ -142,21 +148,190 @@ async def compare_strategies(req: StrategyComparisonRequest):
         backtester = Backtester()
         try:
             result = backtester.run(strategy, bars, capital=req.capital)
-            results.append({
-                "strategy": name,
-                "report": result["report"],
-                "signal_count": len(result["signals"]),
-            })
+            results[name] = result["report"]
         except Exception as e:
             errors.append(f"Strategy '{name}' failed: {str(e)}")
+
+    # 排名
+    comparison = {
+        "sharpe_ranking": sorted(
+            [(n, r["performance"]["sharpe_ratio"]) for n, r in results.items()],
+            key=lambda x: x[1], reverse=True
+        ),
+        "return_ranking": sorted(
+            [(n, r["performance"]["total_return"]) for n, r in results.items()],
+            key=lambda x: x[1], reverse=True
+        ),
+        "max_dd_ranking": sorted(
+            [(n, r["risk"]["max_drawdown"]) for n, r in results.items()],
+            key=lambda x: abs(x[1])
+        ),
+        "win_rate_ranking": sorted(
+            [(n, r["performance"]["win_rate"]) for n, r in results.items()],
+            key=lambda x: x[1], reverse=True
+        ),
+    }
 
     return {
         "success": True,
         "data": {
-            "comparison": results,
+            "strategies": results,
+            "comparison": comparison,
             "errors": errors,
         },
     }
+
+
+# ===== 参数敏感性分析 =====
+
+class SensitivityRequest(BaseModel):
+    strategy_name: str
+    symbol: str = "AU0"
+    period: str = "d"
+    start_date: str = "2024-01-01"
+    end_date: str = "2025-12-31"
+    capital: float = 1_000_000
+    param_ranges: Optional[dict] = None  # None → use strategy's param_ranges
+
+
+@router.post("/backtest/sensitivity")
+async def run_sensitivity(req: SensitivityRequest):
+    """参数敏感性分析 — 邻域扫描 + 稳健性评估"""
+    cls = StrategyRegistry.get(req.strategy_name)
+    if cls is None:
+        raise HTTPException(status_code=404, detail=f"Strategy '{req.strategy_name}' not found")
+
+    bars = await gateway.get_bars(
+        symbol=req.symbol, period=req.period,
+        start=req.start_date, end=req.end_date,
+    )
+    if not bars:
+        raise HTTPException(status_code=400, detail="No bar data available")
+
+    # 使用策略自带的param_ranges或用户自定义
+    param_ranges = req.param_ranges or cls.param_ranges
+    if not param_ranges:
+        raise HTTPException(status_code=400, detail="No param_ranges available for this strategy")
+
+    analyzer = SensitivityAnalyzer(capital=req.capital)
+    try:
+        result = analyzer.analyze(req.strategy_name, cls.default_params, param_ranges, bars)
+    except Exception as e:
+        logger.error(f"Sensitivity analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"success": True, "data": result}
+
+
+# ===== In/Out样本验证 + 场景验证 =====
+
+class ValidationRequest(BaseModel):
+    strategy_name: str
+    symbol: str = "AU0"
+    period: str = "d"
+    start_date: str = "2020-01-01"
+    end_date: str = "2025-12-31"
+    capital: float = 1_000_000
+    in_sample_ratio: float = 0.7
+    scenario_name: Optional[str] = None  # None → run all scenarios
+
+
+@router.post("/backtest/validation")
+async def run_validation(req: ValidationRequest):
+    """In/Out样本验证 + 场景验证"""
+    cls = StrategyRegistry.get(req.strategy_name)
+    if cls is None:
+        raise HTTPException(status_code=404, detail=f"Strategy '{req.strategy_name}' not found")
+
+    bars = await gateway.get_bars(
+        symbol=req.symbol, period=req.period,
+        start=req.start_date, end=req.end_date,
+    )
+    if not bars:
+        raise HTTPException(status_code=400, detail="No bar data available")
+
+    # In/Out样本验证
+    splitter = SampleSplitter()
+    strategy = cls()
+    split_result = splitter.validate(strategy, bars, capital=req.capital,
+                                      in_sample_ratio=req.in_sample_ratio)
+
+    # 场景验证
+    validator = ScenarioValidator()
+    scenario_result = validator.validate(
+        req.strategy_name, bars, capital=req.capital,
+        scenario_name=req.scenario_name,
+    )
+
+    return {
+        "success": True,
+        "data": {
+            "sample_validation": split_result,
+            "scenario_validation": scenario_result,
+        },
+    }
+
+
+# ===== 信号生成 =====
+
+@router.post("/signal/generate")
+async def generate_signal(
+    strategy_name: str = Query(..., description="策略名称"),
+    symbol: str = Query("AU0", description="合约代码"),
+):
+    """
+    手动触发信号生成
+
+    用最新行情数据驱动策略，输出交易建议。
+    不自动下单，仅返回建议。
+    """
+    cls = StrategyRegistry.get(strategy_name)
+    if cls is None:
+        raise HTTPException(status_code=404, detail=f"Strategy '{strategy_name}' not found")
+
+    # 获取最新行情
+    bars = await gateway.get_bars(symbol=symbol, period="d", limit=200)
+    if not bars or len(bars) < 30:
+        raise HTTPException(status_code=400, detail="Insufficient data for signal generation")
+
+    strategy = cls()
+    backtester = Backtester()
+
+    # 用最近bars运行策略获取信号
+    try:
+        result = backtester.run(strategy, bars, capital=1_000_000)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # 获取最新信号
+    signals = result.get("signals", [])
+    if not signals:
+        return {
+            "success": True,
+            "data": {
+                "signal": None,
+                "message": "当前无交易信号",
+                "strategy": strategy_name,
+            },
+        }
+
+    # 取最后一个信号作为建议
+    from backend.gold.core.models import GoldSignal
+    latest_signal_data = signals[-1]
+    signal = GoldSignal(**latest_signal_data) if isinstance(latest_signal_data, dict) else None
+
+    if signal is None:
+        return {"success": True, "data": {"signal": latest_signal_data, "strategy": strategy_name}}
+
+    # 风控检查
+    risk_checker = RiskChecker()
+    risk_result = risk_checker.check(signal)
+
+    # 输出交易建议
+    signal_output = SignalOutput()
+    advice = signal_output.output(signal, risk_result)
+
+    return {"success": True, "data": advice}
 
 
 # ===== 信号查询 =====
@@ -167,10 +342,33 @@ async def get_recent_signals(
     limit: int = Query(50, ge=1, le=200),
 ):
     """获取最近的交易信号（从数据库）"""
-    from backend.gold.data.storage import GoldDataStore
     store = GoldDataStore()
     signals = store.get_signals(strategy_id=strategy_name, limit=limit)
     return {"success": True, "data": signals}
+
+
+# ===== 风控 =====
+
+@router.get("/risk/status")
+async def get_risk_status():
+    """获取风控状态和配置"""
+    config = GoldSettings()
+    store = GoldDataStore()
+
+    # 获取最近信号统计
+    recent_signals = store.get_signals(limit=100)
+
+    return {
+        "success": True,
+        "data": {
+            "checks": [
+                {"name": "max_drawdown", "threshold": f"{config.max_drawdown_pct*100:.0f}%", "status": "active"},
+                {"name": "daily_loss", "threshold": f"{config.max_daily_loss_pct*100:.0f}%", "status": "active"},
+                {"name": "signal_frequency", "threshold": f"{config.max_daily_signals}/日", "status": "active"},
+            ],
+            "recent_signal_count": len(recent_signals),
+        },
+    }
 
 
 # ===== 数据管理 =====
@@ -218,5 +416,8 @@ async def get_gold_config():
             "backtest_commission_per_lot": config.backtest_commission_per_lot,
             "backtest_slippage_per_lot": config.backtest_slippage_per_lot,
             "risk_free_rate": config.risk_free_rate,
+            "max_drawdown_pct": config.max_drawdown_pct,
+            "max_daily_loss_pct": config.max_daily_loss_pct,
+            "max_daily_signals": config.max_daily_signals,
         },
     }

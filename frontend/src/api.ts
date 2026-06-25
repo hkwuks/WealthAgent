@@ -566,6 +566,94 @@ class ApiService {
   async getGoldTrendSignal(): Promise<{ success: boolean; data: any }> {
     return this.request<{ success: boolean; data: any }>('/gold/trend-signal?symbol=GC');
   }
+
+  // 黄金量化交易 API
+  async getTradingStatus(): Promise<{ status: string; mode: string; strategies: string[] }> {
+    return this.request<{ status: string; mode: string; strategies: string[] }>('/gold/trading/status');
+  }
+
+  async getTradingStrategies(): Promise<{ success: boolean; data: any[] }> {
+    return this.request<{ success: boolean; data: any[] }>('/gold/trading/strategies');
+  }
+
+  async getTradingStrategyDetail(name: string): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>(`/gold/trading/strategies/${name}`);
+  }
+
+  async runTradingBacktest(params: {
+    strategy_name: string; symbol?: string; period?: string;
+    start_date?: string; end_date?: string; capital?: number; params?: Record<string, any>;
+  }): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>('/gold/trading/backtest', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }, 120000);
+  }
+
+  async compareStrategies(params: {
+    strategy_names: string[]; symbol?: string; period?: string;
+    start_date?: string; end_date?: string; capital?: number;
+  }): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>('/gold/trading/compare', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }, 180000);
+  }
+
+  async getTradingSignals(strategyName?: string, limit?: number): Promise<{ success: boolean; data: any[] }> {
+    const params = new URLSearchParams();
+    if (strategyName) params.set('strategy_name', strategyName);
+    if (limit) params.set('limit', String(limit));
+    const qs = params.toString();
+    return this.request<{ success: boolean; data: any[] }>(`/gold/trading/signals${qs ? '?' + qs : ''}`);
+  }
+
+  async syncGoldBars(symbol?: string, period?: string, startDate?: string, endDate?: string): Promise<{ success: boolean; data: any }> {
+    const params = new URLSearchParams();
+    if (symbol) params.set('symbol', symbol);
+    if (period) params.set('period', period);
+    if (startDate) params.set('start_date', startDate);
+    if (endDate) params.set('end_date', endDate);
+    return this.request<{ success: boolean; data: any }>(`/gold/trading/sync-data?${params.toString()}`, {
+      method: 'POST',
+    }, 60000);
+  }
+
+  async getTradingConfig(): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>('/gold/trading/config');
+  }
+
+  async generateTradingSignal(strategyName: string, symbol?: string): Promise<{ success: boolean; data: any }> {
+    const params = new URLSearchParams({ strategy_name: strategyName, symbol: symbol || 'AU0' });
+    return this.request<{ success: boolean; data: any }>(`/gold/trading/signal/generate?${params.toString()}`, {
+      method: 'POST',
+    }, 60000);
+  }
+
+  async runSensitivity(params: {
+    strategy_name: string; symbol?: string; period?: string;
+    start_date?: string; end_date?: string; capital?: number; param_ranges?: Record<string, number[]>;
+  }): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>('/gold/trading/backtest/sensitivity', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }, 300000);
+  }
+
+  async runValidation(params: {
+    strategy_name: string; symbol?: string; period?: string;
+    start_date?: string; end_date?: string; capital?: number;
+    in_sample_ratio?: number; scenario_name?: string;
+  }): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>('/gold/trading/backtest/validation', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }, 300000);
+  }
+
+  async getRiskStatus(): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>('/gold/trading/risk/status');
+  }
 }
 
 export const api = new ApiService();
