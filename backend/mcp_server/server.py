@@ -259,6 +259,60 @@ def _register_tools(mcp: FastMCP):
         """
         return await tools.run_gold_trend_backtest(years, fast_ma, slow_ma, sl_multiplier)
 
+    # ===== 黄金量化交易 MCP Tools =====
+
+    @mcp.tool()
+    async def get_gold_strategies() -> dict:
+        """获取黄金量化策略列表及描述"""
+        return await tools.get_gold_strategies()
+
+    @mcp.tool()
+    async def get_gold_signals(strategy_name: str = None, limit: int = 20) -> dict:
+        """
+        获取最近黄金交易建议信号
+
+        Args:
+            strategy_name: 策略名称过滤（可选）
+            limit: 返回数量限制（默认20）
+        """
+        return await tools.get_gold_signals(strategy_name, limit)
+
+    @mcp.tool()
+    async def run_gold_strategy_backtest(strategy_name: str = "trend_following",
+                                          start_date: str = "2024-01-01",
+                                          end_date: str = "2024-12-31",
+                                          capital: float = 1000000) -> dict:
+        """
+        运行黄金量化策略回测（趋势跟踪/均值回归/ML预测）
+
+        Args:
+            strategy_name: 策略名称（trend_following/mean_reversion/ml_predictor）
+            start_date: 开始日期（默认2024-01-01）
+            end_date: 结束日期（默认2024-12-31）
+            capital: 回测资金（默认1000000）
+        """
+        return await tools.run_gold_strategy_backtest(strategy_name, start_date, end_date, capital)
+
+    @mcp.tool()
+    async def compare_gold_strategies(strategy_names: str = "trend_following,mean_reversion,ml_predictor",
+                                       start_date: str = "2024-01-01",
+                                       end_date: str = "2024-12-31") -> dict:
+        """
+        多策略对比回测
+
+        Args:
+            strategy_names: 策略名称，逗号分隔
+            start_date: 开始日期
+            end_date: 结束日期
+        """
+        names = [s.strip() for s in strategy_names.split(",")]
+        return await tools.compare_gold_strategies(names, start_date, end_date)
+
+    @mcp.tool()
+    async def get_gold_risk_status() -> dict:
+        """获取黄金交易风控状态"""
+        return await tools.get_gold_risk_status()
+
 
 def _register_resources(mcp: FastMCP):
     """注册所有 MCP Resources"""
