@@ -156,6 +156,11 @@ function setupTabSwitching() {
       targetContent.classList.add('active')
       targetContent.style.display = 'block'
 
+      // 通知黄金量化Tab初始化图表
+      if (tabId === 'gold-trading') {
+        goldTradingUI.onActivated()
+      }
+
       // 添加动画效果
       targetContent.style.animation = 'none'
       targetContent.offsetHeight // 触发重绘
