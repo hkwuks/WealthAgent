@@ -7,7 +7,7 @@ from backend.gold.data.storage import GoldDataStore
 
 
 class GoldDataGateway:
-    """黄金数据网关 — AkShare + yFinance + SQLite"""
+    """黄金数据网关 — AkShare(SHFE) → 直连新浪(SHFE) → yFinance(COMEX) 三级降级"""
 
     def __init__(self, db_path: str = "data/gold/gold.db"):
         self.db_path = db_path
@@ -15,23 +15,47 @@ class GoldDataGateway:
 
     async def get_bars(self, symbol: str = "AU0", period: str = "d",
                        start: str = None, end: str = None,
-                       limit: int = None) -> list[GoldBarData]:
-        """获取K线数据 — 优先SQLite，miss时从AkShare拉取"""
-        bars = self.store.get_bars(symbol, period, start, end, limit)
-        if bars:
-            return bars
+                       limit: int = None, refresh: bool = False) -> list[GoldBarData]:
+        """获取K线数据 — 优先SQLite，数据过期或refresh=True时从AkShare刷新"""
+        today = datetime.now().strftime("%Y-%m-%d")
 
-        bars = await self._fetch_from_akshare(symbol, period, start, end)
+        # 非强制刷新时先查缓存
+        if not refresh:
+            bars = self.store.get_bars(symbol, period, start, end, limit)
+            if bars:
+                latest = bars[-1].datetime  # ASC顺序，最新在末尾
+                age_days = (datetime.now() - latest).days
+                # 日线超过1天未更新，视为过期
+                if (period == "d" and age_days <= 1) or period != "d":
+                    return bars
+
+        # 缓存miss或过期，从外部源获取
+        fetch_start = start or "2025-01-01"
+        fetch_end = end or today
+        # 三级降级: AkShare → 直连新浪 → yFinance COMEX
+        bars = await self._fetch_from_akshare(symbol, period, fetch_start, fetch_end)
         if not bars:
-            bars = await self._fetch_from_yfinance(start, end, period)
+            bars = await self._fetch_from_sina_direct(symbol, period, fetch_start, fetch_end)
+            if bars:
+                logger.info(f"Sina直连补充数据: {len(bars)}条")
+        if not bars:
+            bars = await self._fetch_from_yfinance(fetch_start, fetch_end, period)
+            if bars:
+                logger.warning(f"使用yFinance COMEX黄金作为备选 ({len(bars)}条) — 美元价格，非SHFE")
 
         if bars:
             self.store.save_bars(bars, period)
-        return bars
+
+        # 重新从存储查询（含旧数据+新数据）
+        result = self.store.get_bars(symbol, period, start, end, limit)
+        return result if result else bars
 
     async def _fetch_from_akshare(self, symbol: str, period: str,
                                    start: str = None, end: str = None) -> list[GoldBarData]:
-        """从AkShare获取SHFE黄金数据"""
+        """从AkShare获取SHFE黄金数据
+
+        优先级: 日线→ futures_zh_daily_sina | 分钟线→ futures_zh_minute_sina
+        """
         try:
             import akshare as ak
         except ImportError:
@@ -40,10 +64,10 @@ class GoldDataGateway:
 
         try:
             if period == "d":
-                df = ak.futures_main_sina(symbol=symbol, start_date=start, end_date=end)
+                df = ak.futures_zh_daily_sina(symbol)
             else:
-                period_map = {"1m": "1", "5m": "5", "15m": "15", "60m": "60"}
-                ak_period = period_map.get(period, "1")
+                period_map = {"1": "1", "5": "5", "15": "15", "30": "30", "60": "60"}
+                ak_period = period_map.get(period, "5")
                 df = ak.futures_zh_minute_sina(symbol=symbol, period=ak_period)
 
             return self._df_to_bars(df, symbol, period)
@@ -51,9 +75,43 @@ class GoldDataGateway:
             logger.warning(f"AkShare数据获取失败: {symbol} {period}, {e}")
             return []
 
+    async def _fetch_from_sina_direct(self, symbol: str, period: str,
+                                       start: str = None, end: str = None) -> list[GoldBarData]:
+        """备选1: 直连新浪期货API（AkShare不可用时）"""
+        try:
+            import requests
+        except ImportError:
+            return []
+
+        try:
+            if period == "d":
+                url = f"https://stock.finance.sina.com.cn/futures/api/json_v2.php/IndexService.getInnerFuturesDailyKLine?symbol={symbol}"
+            else:
+                period_map = {"1": "1", "5": "5", "15": "15", "30": "30", "60": "60"}
+                ak_period = period_map.get(period, "5")
+                url = f"https://stock.finance.sina.com.cn/futures/api/json_v2.php/IndexService.getInnerFuturesMinKLine?symbol={symbol}&type={ak_period}"
+
+            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+            resp.encoding = "gbk"
+            rows = resp.json()
+
+            if not rows:
+                return []
+
+            import pandas as pd
+            df = pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "volume"])
+            df = df[(df["date"] >= (start or "2000")) & (df["date"] <= (end or "2030"))]
+            df = df.astype({"open": float, "high": float, "low": float, "close": float, "volume": float})
+            df.columns = ["日期", "开盘价", "最高价", "最低价", "收盘价", "成交量"]
+
+            return self._df_to_bars(df, symbol, period)
+        except Exception as e:
+            logger.warning(f"Sina直连获取失败: {e}")
+            return []
+
     async def _fetch_from_yfinance(self, start: str, end: str,
                                     period: str = "d") -> list[GoldBarData]:
-        """Fallback: yFinance COMEX黄金（GC=F）"""
+        """备选2: yFinance COMEX黄金（GC=F, 美元/盎司, 仅供参考）"""
         try:
             import yfinance as yf
         except ImportError:

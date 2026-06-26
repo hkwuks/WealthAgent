@@ -217,8 +217,9 @@ class MLPredictorStrategy(StrategyBase):
 
             # 无缓存 — 回测模式下用当前窗口数据训练
             # 注意：这有look-ahead bias，但V1先这样，V2做walk-forward
+            # 需要足够数据：技术指标预热约60bar + 最少50个训练样本
             df = self._bars_to_dataframe()
-            if df.empty or len(df) < 100:
+            if df.empty or len(df) < 150:
                 return None
 
             predictor = GoldPricePredictor()
@@ -279,11 +280,8 @@ class MLPredictorStrategy(StrategyBase):
             })
 
         df = pd.DataFrame(rows)
-        # 添加宏观数据列（如果有的话，没有就填NaN，FeatureEngineer会处理）
-        for col in ["DXY_value", "VIX_value", "US10Y_value", "TIPS_value", "BREAKEVEN_value"]:
-            if col not in df.columns:
-                df[col] = np.nan
-
+        # 不添加宏观数据列 — 让FeatureEngineer的create_macro_features跳过
+        # 如果填NaN列，宏观特征会全NaN导致dropna()清空所有行
         return df
 
     def _calc_atr(self):

@@ -1,170 +1,321 @@
 import { api } from './api'
 import { toast } from './toast'
+import {
+  createChart, ColorType,
+  CandlestickSeries, LineSeries, HistogramSeries,
+  type IChartApi, type ISeriesApi, type CandlestickData, type LineData, type HistogramData,
+  type Time,
+} from 'lightweight-charts'
 
-const STRATEGY_LABELS: Record<string, { name: string; icon: string; desc: string }> = {
-  trend_following: { name: '趋势跟踪', icon: '📈', desc: 'MA排列 + Donchian突破 + ATR止损' },
-  mean_reversion: { name: '均值回归', icon: '🔄', desc: 'BB下轨+RSI超卖做多 / BB上轨+RSI超买做空' },
-  ml_predictor: { name: 'ML预测', icon: '🤖', desc: 'LightGBM/XGBoost/Ridge滑动窗口预测' },
+// ===== 策略标签 =====
+const STRATEGY_LABELS: Record<string, { name: string; icon: string }> = {
+  trend_following: { name: '趋势跟踪', icon: '📈' },
+  mean_reversion: { name: '均值回归', icon: '🔄' },
+  ml_predictor: { name: 'ML预测', icon: '🤖' },
 }
 
+const DIR_LABEL: Record<string, string> = {
+  long: '做多', short: '做空', close_long: '平多', close_short: '平空',
+}
+
+const PERIOD_LABELS: Record<string, string> = {
+  'd': '日线', '60': '60分钟', '30': '30分钟', '15': '15分钟', '5': '5分钟', '1': '1分钟',
+}
+
+// K线周期列表
+const PERIODS = [
+  { value: 'd', label: '日线' },
+  { value: '60', label: '60分钟' },
+  { value: '30', label: '30分钟' },
+  { value: '15', label: '15分钟' },
+  { value: '5', label: '5分钟' },
+  { value: '1', label: '1分钟' },
+]
+
+// ===== 颜色常量 =====
+const COLORS = {
+  green: '#10b981',
+  red: '#ef4444',
+  orange: '#f59e0b',
+  blue: '#3b82f6',
+  purple: '#8b5cf6',
+  bg: { light: '#ffffff', dark: '#1e293b' },
+  grid: { light: '#e2e8f0', dark: '#334155' },
+  text: { light: '#0f172a', dark: '#e2e8f0' },
+}
+
+function isDark(): boolean {
+  return document.body.classList.contains('dark-mode') ||
+    window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
+function formatPrice(v: number | null | undefined): string {
+  if (v == null) return '--'
+  return v.toFixed(2)
+}
+
+function formatPct(v: number | null | undefined): string {
+  if (v == null) return '--'
+  const s = v >= 0 ? '+' : ''
+  return `${s}${v.toFixed(2)}%`
+}
+
+function fmtNum(v: number, decimals?: number): string {
+  if (v == null || isNaN(v)) return '--'
+  if (decimals != null) return v.toFixed(decimals)
+  if (Math.abs(v) >= 1000000) return (v / 1000000).toFixed(1) + 'M'
+  if (Math.abs(v) >= 1000) return (v / 1000).toFixed(1) + 'K'
+  return v.toFixed(2)
+}
+
+// ===== 主类 =====
 export class GoldTradingUI {
   private container: HTMLDivElement | null = null
+  private chart: IChartApi | null = null
+  private candlestickSeries: ISeriesApi<'Candlestick'> | null = null
+  private volumeSeries: ISeriesApi<'Histogram'> | null = null
+  private ma5Series: ISeriesApi<'Line'> | null = null
+  private ma10Series: ISeriesApi<'Line'> | null = null
+  private ma20Series: ISeriesApi<'Line'> | null = null
+  private ma60Series: ISeriesApi<'Line'> | null = null
+  private marketTimer: ReturnType<typeof setInterval> | null = null
+  private chartTimer: ReturnType<typeof setInterval> | null = null
+  private currentPeriod = 'd'
+  private currentBars: any[] = []
   private strategies: any[] = []
-  private isBacktesting = false
-  private isComparing = false
-  private isGeneratingSignal = false
-  private isRunningSensitivity = false
-  private isRunningValidation = false
+  private isWorking = false
+  private chartReady = false
+  private dark = false
 
   init(container: HTMLDivElement) {
     this.container = container
     this.render()
     this.bindEvents()
     this.loadStrategies()
+    this.loadMarketData()
+
+    // 市场数据 + K线 轮询刷新
+    this.marketTimer = setInterval(() => this.loadMarketData(), 30000)
+    this.chartTimer = setInterval(() => {
+      if (this.chart) this.loadKlineData()
+    }, 60000)
+    new MutationObserver(() => this.onThemeChange()).observe(document.body, { attributes: true, attributeFilter: ['class'] })
+    window.addEventListener('resize', () => this.onResize())
   }
 
+  /** 当tab切换到此页面时由 main.ts 调用 */
+  onActivated() {
+    // requestAnimationFrame 确保 display:block 后 DOM 已完成布局
+    requestAnimationFrame(() => {
+      if (!this.chart) {
+        this.loadKlineData()
+      }
+    })
+  }
+
+  private onResize() {
+    if (this.chart) {
+      const el = document.getElementById('kline-chart')
+      if (el) {
+        this.chart.applyOptions({ width: el.clientWidth, height: el.clientHeight })
+      }
+    }
+  }
+
+  /** 重建chart前清理所有旧引用 */
+  private destroyChart() {
+    if (this.chart) {
+      this.chart.remove()
+    }
+    this.chart = null
+    this.candlestickSeries = null
+    this.volumeSeries = null
+    this.ma5Series = null
+    this.ma10Series = null
+    this.ma20Series = null
+    this.ma60Series = null
+  }
+
+  destroy() {
+    if (this.marketTimer) clearInterval(this.marketTimer)
+    if (this.chartTimer) clearInterval(this.chartTimer)
+    this.destroyChart()
+  }
+
+  // ===== 渲染 =====
   private render() {
     if (!this.container) return
 
     this.container.innerHTML = `
-      <div class="gold-trading-page">
-        <div class="section-card">
-          <div class="section-header">
-            <h2>📊 黄金量化交易</h2>
+      <div class="quant-page">
+        <!-- 实时数据栏 -->
+        <div class="quant-ticker" id="quant-ticker">
+          <div class="ticker-item ticker-main">
+            <div class="ticker-label">AU0 主力</div>
+            <div class="ticker-price" id="ticker-price">--</div>
+            <div class="ticker-change" id="ticker-change">--</div>
           </div>
+          <div class="ticker-separator"></div>
+          <div class="ticker-item">
+            <div class="ticker-label">开盘</div>
+            <div class="ticker-value" id="ticker-open">--</div>
+          </div>
+          <div class="ticker-item">
+            <div class="ticker-label">最高</div>
+            <div class="ticker-value" id="ticker-high">--</div>
+          </div>
+          <div class="ticker-item">
+            <div class="ticker-label">最低</div>
+            <div class="ticker-value" id="ticker-low">--</div>
+          </div>
+          <div class="ticker-separator"></div>
+          <div class="ticker-item">
+            <div class="ticker-label">20日最高</div>
+            <div class="ticker-value" id="ticker-high20">--</div>
+          </div>
+          <div class="ticker-item">
+            <div class="ticker-label">20日最低</div>
+            <div class="ticker-value" id="ticker-low20">--</div>
+          </div>
+          <div class="ticker-separator"></div>
+          <div class="ticker-item">
+            <div class="ticker-label">成交量</div>
+            <div class="ticker-value" id="ticker-vol">--</div>
+          </div>
+          <div class="ticker-item">
+            <div class="ticker-label">量比(5/20)</div>
+            <div class="ticker-value" id="ticker-volratio">--</div>
+          </div>
+          <div class="ticker-item">
+            <div class="ticker-label">RSI(14)</div>
+            <div class="ticker-value" id="ticker-rsi">--</div>
+          </div>
+          <div class="ticker-item">
+            <div class="ticker-label">ATR(14)</div>
+            <div class="ticker-value" id="ticker-atr">--</div>
+          </div>
+          <div class="ticker-separator"></div>
+          <div class="ticker-item" style="flex:0 0 auto">
+            <span style="font-size:10px;color:var(--text-tertiary)" id="ticker-time">--</span>
+          </div>
+        </div>
 
-          <!-- 策略列表 -->
-          <div class="prediction-settings">
-            <h3>可用策略</h3>
-            <div id="strategy-cards" class="market-cards">
-              <div class="market-card" style="text-align:center;color:#888;">加载中...</div>
+        <!-- K线图 -->
+        <div class="quant-chart-section">
+          <div class="chart-toolbar">
+            <div class="chart-symbol-label">AU0 沪金主力</div>
+            <div class="chart-periods" id="chart-periods">
+              ${PERIODS.map(p => `<button class="chart-period-btn${p.value === 'd' ? ' active' : ''}" data-period="${p.value}">${p.label}</button>`).join('')}
+            </div>
+            <div class="chart-indicators">
+              <label class="indicator-toggle"><input type="checkbox" id="toggle-ma5" checked /> MA5</label>
+              <label class="indicator-toggle"><input type="checkbox" id="toggle-ma10" checked /> MA10</label>
+              <label class="indicator-toggle"><input type="checkbox" id="toggle-ma20" checked /> MA20</label>
+              <label class="indicator-toggle"><input type="checkbox" id="toggle-ma60" /> MA60</label>
+              <label class="indicator-toggle"><input type="checkbox" id="toggle-volume" checked /> 成交量</label>
+            </div>
+            <div class="chart-toolbar-right">
+              <span class="chart-update-time" id="chart-update-time"></span>
+              <button class="btn btn-ghost btn-sm" id="chart-refresh-btn" title="刷新K线">🔄</button>
+            </div>
+          </div>
+          <div class="chart-container" id="kline-chart"></div>
+        </div>
+
+        <!-- 信号 + 控制面板 -->
+        <div class="quant-panels">
+          <!-- 左侧：交易信号区 -->
+          <div class="quant-panel">
+            <div class="panel-header">
+              <h3>💡 交易信号生成</h3>
+            </div>
+            <div class="panel-body">
+              <div class="form-row">
+                <select id="sig-strategy-select">
+                  <option value="trend_following">趋势跟踪</option>
+                  <option value="mean_reversion">均值回归</option>
+                  <option value="ml_predictor">ML预测</option>
+                </select>
+                <button class="btn btn-primary btn-sm" id="sig-generate-btn">生成信号</button>
+              </div>
+              <div id="sig-result" class="panel-result"></div>
+            </div>
+
+            <div class="panel-header" style="margin-top:16px;">
+              <h3>📡 最近信号</h3>
+              <button class="btn btn-ghost btn-sm" id="signals-refresh-btn">刷新</button>
+            </div>
+            <div class="panel-body" id="signals-panel">
+              <div class="empty-text">点击刷新获取信号</div>
             </div>
           </div>
 
-          <!-- 信号生成 -->
-          <div class="prediction-settings">
-            <h3>交易建议生成</h3>
-            <div class="settings-row">
-              <label>策略:</label>
-              <select id="sig-strategy-select">
-                <option value="trend_following">趋势跟踪</option>
-                <option value="mean_reversion">均值回归</option>
-                <option value="ml_predictor">ML预测</option>
-              </select>
-              <button class="btn btn-primary" id="sig-generate-btn">生成交易建议</button>
+          <!-- 右侧：回测 + 对比 -->
+          <div class="quant-panel">
+            <div class="panel-header">
+              <h3>🔬 策略回测</h3>
             </div>
-            <div id="sig-result" style="display:none;margin-top:12px;"></div>
-          </div>
-
-          <!-- 单策略回测 -->
-          <div class="backtest-settings">
-            <h3>策略回测</h3>
-            <div class="settings-row">
-              <label>策略:</label>
-              <select id="bt-strategy-select">
-                <option value="trend_following">趋势跟踪</option>
-                <option value="mean_reversion">均值回归</option>
-                <option value="ml_predictor">ML预测</option>
-              </select>
-              <label>合约:</label>
-              <select id="bt-symbol-select">
-                <option value="AU0">AU0 (主力)</option>
-              </select>
-              <label>起始日:</label>
-              <input type="date" id="bt-start-date" value="2024-01-01" />
-              <label>截止日:</label>
-              <input type="date" id="bt-end-date" value="2025-12-31" />
-              <label>资金:</label>
-              <input type="number" id="bt-capital" value="1000000" min="100000" step="100000" style="width:120px" />
-              <button class="btn btn-primary" id="bt-run-btn">运行回测</button>
+            <div class="panel-body">
+              <div class="form-row">
+                <select id="bt-strategy-select">
+                  <option value="trend_following">趋势跟踪</option>
+                  <option value="mean_reversion">均值回归</option>
+                  <option value="ml_predictor">ML预测</option>
+                </select>
+                <input type="date" id="bt-start-date" value="2025-01-01" style="width:120px" />
+                <input type="date" id="bt-end-date" value="2026-06-26" style="width:120px" />
+                <input type="number" id="bt-capital" value="1000000" min="100000" step="100000" style="width:100px" placeholder="资金" />
+                <button class="btn btn-primary btn-sm" id="bt-run-btn">运行回测</button>
+              </div>
+              <div id="bt-params-container" class="form-row hidden" style="margin-top:8px;">
+                <div id="bt-params-row"></div>
+              </div>
+              <div id="bt-result" class="panel-result"></div>
             </div>
-            <div id="bt-params-container" style="margin-top:8px;display:none;">
-              <h4>策略参数</h4>
-              <div id="bt-params-row" class="settings-row"></div>
+
+            <div class="panel-header" style="margin-top:16px;">
+              <h3>⚖️ 多策略对比</h3>
+              <button class="btn btn-secondary btn-sm" id="cmp-run-btn">运行对比</button>
             </div>
-          </div>
-          <div class="backtest-results" id="bt-results" style="display:none;">
-            <h3>回测结果</h3>
-            <div id="bt-report"></div>
-          </div>
-
-          <!-- 多策略对比 -->
-          <div class="backtest-settings">
-            <h3>多策略对比</h3>
-            <div class="settings-row">
-              <label>起始日:</label>
-              <input type="date" id="cmp-start-date" value="2024-01-01" />
-              <label>截止日:</label>
-              <input type="date" id="cmp-end-date" value="2025-12-31" />
-              <button class="btn btn-secondary" id="cmp-run-btn">运行对比</button>
+            <div class="panel-body">
+              <div id="cmp-result" class="panel-result"></div>
             </div>
-          </div>
-          <div class="backtest-results" id="cmp-results" style="display:none;">
-            <h3>对比结果</h3>
-            <div id="cmp-report"></div>
-          </div>
 
-          <!-- 参数敏感性分析 -->
-          <div class="backtest-settings">
-            <h3>参数敏感性分析</h3>
-            <div class="settings-row">
-              <label>策略:</label>
-              <select id="sens-strategy-select">
-                <option value="trend_following">趋势跟踪</option>
-                <option value="mean_reversion">均值回归</option>
-              </select>
-              <label>起始日:</label>
-              <input type="date" id="sens-start-date" value="2024-01-01" />
-              <label>截止日:</label>
-              <input type="date" id="sens-end-date" value="2024-12-31" />
-              <button class="btn btn-secondary" id="sens-run-btn">运行敏感性分析</button>
+            <div class="panel-header" style="margin-top:16px;">
+              <h3>🛡️ 风控状态</h3>
+              <button class="btn btn-secondary btn-sm btn-ghost" id="risk-btn">查看</button>
             </div>
+            <div class="panel-body" id="risk-panel"></div>
           </div>
-          <div class="backtest-results" id="sens-results" style="display:none;">
-            <h3>敏感性分析结果</h3>
-            <div id="sens-report"></div>
-          </div>
+        </div>
 
-          <!-- In/Out样本验证 + 场景验证 -->
-          <div class="backtest-settings">
-            <h3>In/Out样本验证 + 场景验证</h3>
-            <div class="settings-row">
-              <label>策略:</label>
-              <select id="val-strategy-select">
-                <option value="trend_following">趋势跟踪</option>
-                <option value="mean_reversion">均值回归</option>
-              </select>
-              <label>起始日:</label>
-              <input type="date" id="val-start-date" value="2020-01-01" />
-              <label>截止日:</label>
-              <input type="date" id="val-end-date" value="2025-12-31" />
-              <button class="btn btn-secondary" id="val-run-btn">运行验证</button>
+        <!-- 高级分析 -->
+        <div class="quant-section">
+          <div class="section-title-bar">
+            <h3>📐 高级分析</h3>
+          </div>
+          <div class="quant-advanced">
+            <div class="advanced-block">
+              <h4>参数敏感性分析</h4>
+              <div class="form-row">
+                <select id="sens-strategy-select">
+                  <option value="trend_following">趋势跟踪</option>
+                  <option value="mean_reversion">均值回归</option>
+                </select>
+                <button class="btn btn-secondary btn-sm" id="sens-run-btn">运行</button>
+              </div>
+              <div id="sens-result" class="panel-result"></div>
             </div>
-          </div>
-          <div class="backtest-results" id="val-results" style="display:none;">
-            <h3>验证结果</h3>
-            <div id="val-report"></div>
-          </div>
-
-          <!-- 最近信号 -->
-          <div class="prediction-settings">
-            <h3>最近信号</h3>
-            <button class="btn btn-secondary" id="signals-btn">刷新信号</button>
-            <div id="signals-list" style="margin-top:12px;"></div>
-          </div>
-
-          <!-- 风控状态 -->
-          <div class="prediction-settings">
-            <h3>风控状态</h3>
-            <button class="btn btn-secondary" id="risk-btn">查看风控</button>
-            <div id="risk-status" style="margin-top:12px;"></div>
-          </div>
-
-          <!-- 数据同步 -->
-          <div class="prediction-settings">
-            <h3>数据同步</h3>
-            <div class="settings-row">
-              <button class="btn btn-secondary" id="sync-btn">同步K线数据</button>
+            <div class="advanced-block">
+              <h4>In/Out样本验证</h4>
+              <div class="form-row">
+                <select id="val-strategy-select">
+                  <option value="trend_following">趋势跟踪</option>
+                  <option value="mean_reversion">均值回归</option>
+                </select>
+                <button class="btn btn-secondary btn-sm" id="val-run-btn">运行</button>
+              </div>
+              <div id="val-result" class="panel-result"></div>
             </div>
           </div>
         </div>
@@ -172,80 +323,679 @@ export class GoldTradingUI {
     `
   }
 
+  // ===== 事件绑定 =====
   private bindEvents() {
+    // K线周期切换
+    document.querySelectorAll('.chart-period-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const period = (btn as HTMLElement).dataset.period!
+        if (period === this.currentPeriod) return
+        this.currentPeriod = period
+        document.querySelectorAll('.chart-period-btn').forEach(b => b.classList.remove('active'))
+        btn.classList.add('active')
+        // 切换周期时重建chart（不同周期时间格式不同，不能复用）
+        this.destroyChart()
+        this.loadKlineData()
+      })
+    })
+
+    // 指标开关
+    ;['ma5', 'ma10', 'ma20', 'ma60', 'volume'].forEach(id => {
+      document.getElementById(`toggle-${id}`)?.addEventListener('change', () => this.applyIndicatorVisibility())
+    })
+
+    // 图表刷新
+    document.getElementById('chart-refresh-btn')?.addEventListener('click', () => this.loadKlineData())
+
+    // 信号生成
+    document.getElementById('sig-generate-btn')?.addEventListener('click', () => this.generateSignal())
+    document.getElementById('signals-refresh-btn')?.addEventListener('click', () => this.loadSignals())
     document.getElementById('bt-run-btn')?.addEventListener('click', () => this.runBacktest())
     document.getElementById('cmp-run-btn')?.addEventListener('click', () => this.runCompare())
-    document.getElementById('sig-generate-btn')?.addEventListener('click', () => this.generateSignal())
+    document.getElementById('risk-btn')?.addEventListener('click', () => this.loadRisk())
     document.getElementById('sens-run-btn')?.addEventListener('click', () => this.runSensitivity())
     document.getElementById('val-run-btn')?.addEventListener('click', () => this.runValidation())
-    document.getElementById('signals-btn')?.addEventListener('click', () => this.loadSignals())
-    document.getElementById('risk-btn')?.addEventListener('click', () => this.loadRiskStatus())
-    document.getElementById('sync-btn')?.addEventListener('click', () => this.syncData())
-
     document.getElementById('bt-strategy-select')?.addEventListener('change', (e) => {
-      const name = (e.target as HTMLSelectElement).value
-      this.renderStrategyParams(name)
+      this.renderParams((e.target as HTMLSelectElement).value)
     })
   }
 
+  // ===== K线图 =====
+  private initChart() {
+    const container = document.getElementById('kline-chart')
+    if (!container) return
+
+    // 确保容器有尺寸
+    if (container.clientWidth === 0 || container.clientHeight === 0) {
+      console.warn('Chart container has 0 size, retrying...')
+      requestAnimationFrame(() => this.initChart())
+      return
+    }
+
+    const dark = isDark()
+
+    if (this.chart) {
+      this.chart.remove()
+      this.chart = null
+    }
+
+    this.chart = createChart(container, {
+      layout: {
+        background: { type: ColorType.Solid, color: dark ? '#1e293b' : '#ffffff' },
+        textColor: dark ? '#94a3b8' : '#475569',
+      },
+      grid: {
+        vertLines: { color: dark ? '#334155' : '#e2e8f0' },
+        horzLines: { color: dark ? '#334155' : '#e2e8f0' },
+      },
+      crosshair: {
+        mode: 0,
+        vertLine: {
+          color: dark ? '#64748b' : '#94a3b8',
+          style: 2, width: 1,
+          labelVisible: true,
+          labelBackgroundColor: dark ? '#475569' : '#94a3b8',
+        },
+        horzLine: {
+          color: dark ? '#64748b' : '#94a3b8',
+          style: 2, width: 1,
+          labelVisible: true,
+          labelBackgroundColor: dark ? '#475569' : '#94a3b8',
+        },
+      },
+      rightPriceScale: {
+        borderColor: dark ? '#475569' : '#cbd5e1',
+        scaleMargins: { top: 0.1, bottom: 0.25 },
+      },
+      timeScale: {
+        borderColor: dark ? '#475569' : '#cbd5e1',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      handleScroll: { vertTouchDrag: true },
+    })
+
+    // 主图 K 线
+    this.candlestickSeries = this.chart.addSeries(CandlestickSeries, {
+      upColor: '#ef4444', downColor: '#10b981',
+      borderUpColor: '#ef4444', borderDownColor: '#10b981',
+      wickUpColor: '#ef4444', wickDownColor: '#10b981',
+    })
+
+    // MA 线
+    const maColors: Record<string, string> = {
+      ma5: '#f59e0b', ma10: '#3b82f6', ma20: '#8b5cf6', ma60: '#ec4899',
+    }
+    ;['ma5', 'ma10', 'ma20', 'ma60'].forEach(key => {
+      (this as any)[`${key}Series`] = this.chart!.addSeries(LineSeries, {
+        color: maColors[key], lineWidth: 1, priceLineVisible: false,
+        lastValueVisible: false, crosshairMarkerVisible: false,
+      } as any)
+    })
+
+    // 副图成交量
+    this.volumeSeries = this.chart.addSeries(HistogramSeries, {
+      color: dark ? '#334155' : '#cbd5e1',
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'volume-scale',
+    } as any)
+    this.chart.priceScale('volume-scale').applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
+    })
+  }
+
+  private async loadKlineData() {
+    try {
+      const resp = await api.getGoldBars('AU0', this.currentPeriod, 300)
+      if (resp.success && resp.data) {
+        this.currentBars = resp.data.bars || []
+        this.updateKlineChart(resp.data)
+      }
+    } catch (e) {
+      console.error('Kline load failed:', e)
+    }
+  }
+
+  private updateKlineChart(data: any) {
+    if (!this.candlestickSeries) {
+      this.dark = isDark()
+      this.initChart()
+    }
+    if (!this.candlestickSeries || !this.chart) return
+
+    const bars: any[] = data.bars || []
+    const indicators = data.indicators || {}
+    const isDaily = this.currentPeriod === 'd'
+
+    // 记录更新时间
+    const timeEl = document.getElementById('chart-update-time')
+    if (timeEl) {
+      timeEl.textContent = '更新: ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    }
+
+    // 时间转换：日线→字符串, 分钟线→Unix秒戳
+    // 数据源为CST(北京时间)，用本地时间构造确保显示正确
+    const toChartTime = (t: string): Time => {
+      if (isDaily) return t as Time
+      // t = "2026-06-27T00:15:00"
+      const p = t.split(/[-T:]/)
+      return Math.floor(new Date(
+        Number(p[0]), Number(p[1]) - 1, Number(p[2]),
+        Number(p[3]), Number(p[4]), Number(p[5] || 0)
+      ).getTime() / 1000) as Time
+    }
+
+    // K线
+    const candleData: CandlestickData[] = bars.map(b => ({
+      time: toChartTime(b.time),
+      open: b.open, high: b.high, low: b.low, close: b.close,
+    }))
+    this.candlestickSeries.setData(candleData)
+
+    // MA指标
+    ;['ma5', 'ma10', 'ma20', 'ma60'].forEach(key => {
+      const series = (this as any)[`${key}Series`] as ISeriesApi<'Line'>
+      if (!series || !indicators[key]) return
+      const lineData: LineData[] = []
+      for (let i = 0; i < bars.length; i++) {
+        const v = indicators[key][i]
+        if (v != null) {
+          lineData.push({ time: toChartTime(bars[i].time), value: v })
+        }
+      }
+      series.setData(lineData)
+    })
+
+    // 成交量
+    if (this.volumeSeries && bars.length > 0) {
+      const volData: HistogramData[] = bars.map(b => {
+        const isUp = b.close >= b.open
+        return {
+          time: toChartTime(b.time),
+          value: b.volume,
+          color: isUp ? 'rgba(239,68,68,0.3)' : 'rgba(16,185,129,0.3)',
+        }
+      })
+      this.volumeSeries.setData(volData)
+    }
+
+    this.chart.timeScale().fitContent()
+
+    // 应用指标可见性
+    this.applyIndicatorVisibility()
+  }
+
+  private applyIndicatorVisibility() {
+    ;['ma5', 'ma10', 'ma20', 'ma60', 'volume'].forEach(key => {
+      const series = (this as any)[`${key}Series`] as ISeriesApi<any>
+      if (!series) return
+      const checked = (document.getElementById(`toggle-${key}`) as HTMLInputElement)?.checked ?? true
+      series.applyOptions({ visible: checked })
+    })
+  }
+
+  private onThemeChange() {
+    if (this.chart && this.candlestickSeries) {
+      this.destroyChart()
+      this.initChart()
+      if (this.currentBars.length > 0) {
+        this.updateKlineChart({ bars: this.currentBars, indicators: this.calcIndicatorsFromBars() })
+      }
+    }
+  }
+
+  private calcIndicatorsFromBars(): Record<string, (number | null)[]> {
+    const closes = this.currentBars.map(b => b.close)
+    const indicator = (n: number) => {
+      const r: (number | null)[] = []
+      let sum = 0
+      for (let i = 0; i < closes.length; i++) {
+        sum += closes[i]
+        if (i >= n) sum -= closes[i - n]
+        r.push(i >= n - 1 ? parseFloat((sum / n).toFixed(2)) : null)
+      }
+      return r
+    }
+    return {
+      ma5: indicator(5), ma10: indicator(10),
+      ma20: indicator(20), ma60: indicator(60),
+    }
+  }
+
+  // ===== 市场数据 =====
+  private async loadMarketData() {
+    try {
+      const resp = await api.getGoldMarketData()
+      if (resp.success && resp.data) {
+        this.updateTicker(resp.data)
+      }
+    } catch (e) {
+      // 静默失败，市场数据非关键
+    }
+  }
+
+  private updateTicker(data: any) {
+    const price = data.price
+    const changePct = data.change_pct
+
+    const set = (id: string, text: string, cls?: string) => {
+      const el = document.getElementById(id)
+      if (el) {
+        el.textContent = text
+        if (cls) { el.className = cls; return }
+      }
+    }
+
+    const now = new Date()
+    const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+
+    set('ticker-price', formatPrice(price))
+    const changeEl = document.getElementById('ticker-change')
+    const pctEl = document.getElementById('ticker-change')
+    if (changeEl) {
+      const isUp = changePct >= 0
+      changeEl.textContent = `${isUp ? '+' : ''}${data.change?.toFixed(2) ?? '--'} (${formatPct(changePct)})`
+      changeEl.className = isUp ? 'ticker-change up' : 'ticker-change down'
+    }
+    set('ticker-open', formatPrice(data.open))
+    set('ticker-high', formatPrice(data.high))
+    set('ticker-low', formatPrice(data.low))
+    set('ticker-high20', formatPrice(data.high_20))
+    set('ticker-low20', formatPrice(data.low_20))
+    set('ticker-vol', fmtNum(data.volume))
+    set('ticker-volratio', data.vol_ratio?.toFixed(2) ?? '--')
+    set('ticker-rsi', data.rsi_14?.toFixed(1) ?? '--')
+    set('ticker-atr', formatPrice(data.atr_14))
+
+    const timeEl = document.getElementById('ticker-time')
+    if (timeEl) timeEl.textContent = `${data.date} ${timeStr}`
+  }
+
+  // ===== 信号生成 =====
+  private async generateSignal() {
+    if (this.isWorking) return
+    const strategyName = (document.getElementById('sig-strategy-select') as HTMLSelectElement)?.value || 'trend_following'
+    this.isWorking = true
+    const btn = document.getElementById('sig-generate-btn') as HTMLButtonElement
+    if (btn) { btn.disabled = true; btn.textContent = '...' }
+
+    try {
+      const resp = await api.generateTradingSignal(strategyName)
+      if (resp.success && resp.data) {
+        this.displaySignal(resp.data)
+        toast.success('信号已生成')
+      } else {
+        toast.error('信号生成失败')
+      }
+    } catch (e) {
+      toast.error('信号生成出错')
+    } finally {
+      this.isWorking = false
+      if (btn) { btn.disabled = false; btn.textContent = '生成信号' }
+    }
+  }
+
+  private displaySignal(data: any) {
+    const container = document.getElementById('sig-result')
+    if (!container) return
+
+    if (!data.signal && !data.direction) {
+      container.innerHTML = '<div class="empty-text">当前无交易信号</div>'
+      return
+    }
+
+    const dir = data.direction || ''
+    const isBull = dir === 'long'
+    const isBear = dir === 'short'
+    const riskOK = data.risk_check?.passed !== false
+
+    container.innerHTML = `
+      <div class="signal-card ${isBull ? 'bullish' : isBear ? 'bearish' : ''}">
+        <div class="signal-header">
+          <div class="signal-dir">
+            <span class="signal-dir-badge ${isBull ? 'long' : isBear ? 'short' : ''}">${DIR_LABEL[dir] || dir}</span>
+            <span class="signal-symbol">${data.symbol || 'AU0'}</span>
+          </div>
+          <div class="signal-strategy">${STRATEGY_LABELS[data.strategy]?.icon || ''} ${STRATEGY_LABELS[data.strategy]?.name || data.strategy}</div>
+        </div>
+        <div class="signal-grid">
+          <div class="signal-item"><span class="s-label">入场价</span><span class="s-value price">¥${formatPrice(data.price)}</span></div>
+          <div class="signal-item"><span class="s-label">数量</span><span class="s-value">${data.volume ?? 1}手</span></div>
+          <div class="signal-item"><span class="s-label">止损</span><span class="s-value ${isBull ? '' : 'red'}">${data.stop_loss ? '¥' + formatPrice(data.stop_loss) : '--'}</span></div>
+          <div class="signal-item"><span class="s-label">置信度</span><span class="s-value">${data.confidence != null ? (data.confidence * 100).toFixed(0) + '%' : '--'}</span></div>
+          <div class="signal-item"><span class="s-label">风控</span><span class="s-value ${riskOK ? 'green' : 'red'}">${riskOK ? '✅ 通过' : '❌ ' + (data.risk_check?.reason || '未通过')}</span></div>
+        </div>
+        ${data.reason ? `<div class="signal-reason">${data.reason}</div>` : ''}
+      </div>
+    `
+  }
+
+  // ===== 回测 =====
+  private async runBacktest() {
+    if (this.isWorking) return
+    const strategyName = (document.getElementById('bt-strategy-select') as HTMLSelectElement)?.value || 'trend_following'
+    const startDate = (document.getElementById('bt-start-date') as HTMLInputElement)?.value || '2024-01-01'
+    const endDate = (document.getElementById('bt-end-date') as HTMLInputElement)?.value || '2024-12-31'
+    const capital = Number((document.getElementById('bt-capital') as HTMLInputElement)?.value || 1000000)
+    const params = this.collectParams(strategyName)
+
+    this.isWorking = true
+    const btn = document.getElementById('bt-run-btn') as HTMLButtonElement
+    if (btn) { btn.disabled = true; btn.textContent = '...' }
+
+    try {
+      const resp = await api.runTradingBacktest({
+        strategy_name: strategyName, symbol: 'AU0', period: 'd',
+        start_date: startDate, end_date: endDate, capital,
+        params: Object.keys(params).length > 0 ? params : undefined,
+      })
+      if (resp.success && resp.data) {
+        this.displayBacktest(resp.data)
+        toast.success('回测完成')
+      } else {
+        toast.error('回测失败')
+      }
+    } catch (e) {
+      toast.error('回测出错')
+    } finally {
+      this.isWorking = false
+      if (btn) { btn.disabled = false; btn.textContent = '运行回测' }
+    }
+  }
+
+  private displayBacktest(data: any) {
+    const container = document.getElementById('bt-result')
+    if (!container) return
+
+    const perf = data.report?.performance || {}
+    const risk = data.report?.risk || {}
+    const trades = data.report?.trades || {}
+    const cost = data.report?.cost || {}
+    const meta = data.report?.meta || {}
+    const ret = perf.total_return ?? 0
+    const retClass = ret >= 0 ? 'positive' : 'negative'
+
+    container.innerHTML = `
+      <div class="bt-report ${retClass}">
+        <div class="bt-metrics">
+          <div class="bt-metric"><span class="bt-label">总收益率</span><span class="bt-value ${retClass}">${formatPct(ret)}</span></div>
+          <div class="bt-metric"><span class="bt-label">年化收益</span><span class="bt-value">${formatPct(perf.annualized_return)}</span></div>
+          <div class="bt-metric"><span class="bt-label">夏普比率</span><span class="bt-value">${perf.sharpe_ratio?.toFixed(2) ?? '--'}</span></div>
+          <div class="bt-metric"><span class="bt-label">Sortino</span><span class="bt-value">${perf.sortino_ratio?.toFixed(2) ?? '--'}</span></div>
+          <div class="bt-metric"><span class="bt-label">Calmar</span><span class="bt-value">${perf.calmar_ratio?.toFixed(2) ?? '--'}</span></div>
+          <div class="bt-metric"><span class="bt-label">胜率</span><span class="bt-value">${formatPct(perf.win_rate)}</span></div>
+          <div class="bt-metric"><span class="bt-label">盈亏比</span><span class="bt-value">${perf.profit_factor?.toFixed(2) ?? '--'}</span></div>
+          <div class="bt-metric"><span class="bt-label">最大回撤</span><span class="bt-value negative">${formatPct(risk.max_drawdown)}</span></div>
+          <div class="bt-metric"><span class="bt-label">VaR(95%)</span><span class="bt-value">¥${fmtNum(risk.var_95 ?? 0)}</span></div>
+          <div class="bt-metric"><span class="bt-label">CVaR(95%)</span><span class="bt-value">¥${fmtNum(risk.cvar_95 ?? 0)}</span></div>
+          <div class="bt-metric"><span class="bt-label">波动率</span><span class="bt-value">${formatPct(risk.volatility)}</span></div>
+          <div class="bt-metric"><span class="bt-label">交易次数</span><span class="bt-value">${trades.total_count ?? 0}</span></div>
+          <div class="bt-metric"><span class="bt-label">净盈亏</span><span class="bt-value">¥${fmtNum(cost.net_pnl)}</span></div>
+          <div class="bt-metric"><span class="bt-label">手续费</span><span class="bt-value">¥${fmtNum(cost.total_commission)}</span></div>
+          <div class="bt-metric"><span class="bt-label">滑点成本</span><span class="bt-value">¥${fmtNum(cost.total_slippage)}</span></div>
+        </div>
+      </div>
+    `
+  }
+
+  // ===== 策略对比 =====
+  private async runCompare() {
+    if (this.isWorking) return
+    const startDate = (document.getElementById('bt-start-date') as HTMLInputElement)?.value || '2024-01-01'
+    const endDate = (document.getElementById('bt-end-date') as HTMLInputElement)?.value || '2024-12-31'
+    this.isWorking = true
+    const btn = document.getElementById('cmp-run-btn') as HTMLButtonElement
+    if (btn) { btn.disabled = true; btn.textContent = '...' }
+
+    try {
+      const resp = await api.compareStrategies({
+        strategy_names: ['trend_following', 'mean_reversion', 'ml_predictor'],
+        symbol: 'AU0', period: 'd',
+        start_date: startDate, end_date: endDate, capital: 1000000,
+      })
+      if (resp.success && resp.data) {
+        this.displayCompare(resp.data)
+      }
+    } finally {
+      this.isWorking = false
+      if (btn) { btn.disabled = false; btn.textContent = '运行对比' }
+    }
+  }
+
+  private displayCompare(data: any) {
+    const container = document.getElementById('cmp-result')
+    if (!container) return
+
+    const strategies = data.strategies || {}
+    const names = Object.keys(strategies)
+    if (names.length === 0) {
+      container.innerHTML = '<div class="empty-text">无数据</div>'
+      return
+    }
+
+    const metrics = [
+      { key: 'total_return', label: '总收益率', fmt: (v: any) => formatPct(v) },
+      { key: 'sharpe_ratio', label: '夏普', fmt: (v: any) => v?.toFixed(2) ?? '--' },
+      { key: 'max_drawdown', label: '最大回撤', fmt: (v: any) => formatPct(v) },
+      { key: 'win_rate', label: '胜率', fmt: (v: any) => formatPct(v) },
+      { key: 'profit_factor', label: '盈亏比', fmt: (v: any) => v?.toFixed(2) ?? '--' },
+    ]
+
+    let rows = ''
+    for (const m of metrics) {
+      rows += `<tr><td class="cmp-label">${m.label}</td>`
+      for (const n of names) {
+        const perf = strategies[n]?.performance || {}
+        const risk = strategies[n]?.risk || {}
+        const val = perf[m.key] ?? risk[m.key]
+        rows += `<td>${m.fmt(val)}</td>`
+      }
+      rows += `</tr>`
+    }
+
+    const ranking = data.comparison?.sharpe_ranking as any[][] | undefined
+    let rankingHtml = ''
+    if (ranking) {
+      rankingHtml = `<div class="cmp-ranking">🏆 夏普排名: ${ranking.map((r: any) => `${(STRATEGY_LABELS[r[0]] || { name: r[0] }).name}(${r[1]})`).join(' > ')}</div>`
+    }
+
+    container.innerHTML = `
+      <table class="cmp-table">
+        <thead><tr><th>指标</th>${names.map((n: string) => `<th>${(STRATEGY_LABELS[n] || { name: n }).icon} ${(STRATEGY_LABELS[n] || { name: n }).name}</th>`).join('')}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${rankingHtml}
+    `
+  }
+
+  // ===== 高级分析 =====
+  private async runSensitivity() {
+    if (this.isWorking) return
+    const strategyName = (document.getElementById('sens-strategy-select') as HTMLSelectElement)?.value || 'trend_following'
+    this.isWorking = true
+    const btn = document.getElementById('sens-run-btn') as HTMLButtonElement
+    if (btn) { btn.disabled = true; btn.textContent = '...' }
+
+    try {
+      const resp = await api.runSensitivity({
+        strategy_name: strategyName, symbol: 'AU0', period: 'd',
+        start_date: '2024-01-01', end_date: '2024-12-31', capital: 1000000,
+      })
+      if (resp.success && resp.data) {
+        this.displaySensitivity(resp.data, document.getElementById('sens-result'))
+      }
+    } catch (e) {
+      toast.error('分析失败')
+    } finally {
+      this.isWorking = false
+      if (btn) { btn.disabled = false; btn.textContent = '运行' }
+    }
+  }
+
+  private displaySensitivity(data: any, container: HTMLElement | null) {
+    if (!container) return
+    const items = data.sensitivity_data || []
+    const conclusion = data.conclusion || {}
+    const byParam: Record<string, any[]> = {}
+    for (const item of items) {
+      byParam[item.param_name] = byParam[item.param_name] || []
+      byParam[item.param_name].push(item)
+    }
+
+    let html = ''
+    for (const [param, values] of Object.entries(byParam)) {
+      const assessment = conclusion[param] || {}
+      const badgeCls = assessment.status === '稳健' ? 'robust' : assessment.status === '中等' ? 'moderate' : 'fragile'
+      html += `<div class="sens-group"><div class="sens-title">${this.getParamLabel(param)} <span class="sens-badge ${badgeCls}">${assessment.status || ''}</span></div>
+        <table class="cmp-table small"><thead><tr><th>值</th><th>Sharpe</th><th>MaxDD%</th><th>Return%</th></tr></thead><tbody>
+        ${values.map(v => `<tr><td>${v.param_value}</td><td>${v.sharpe ?? '--'}</td><td>${v.max_dd ?? '--'}</td><td>${v.total_return ?? '--'}</td></tr>`).join('')}
+        </tbody></table></div>`
+    }
+    container.innerHTML = html || '<div class="empty-text">无数据</div>'
+  }
+
+  private async runValidation() {
+    if (this.isWorking) return
+    const strategyName = (document.getElementById('val-strategy-select') as HTMLSelectElement)?.value || 'trend_following'
+    this.isWorking = true
+    const btn = document.getElementById('val-run-btn') as HTMLButtonElement
+    if (btn) { btn.disabled = true; btn.textContent = '...' }
+
+    try {
+      const resp = await api.runValidation({
+        strategy_name: strategyName, symbol: 'AU0', period: 'd',
+        start_date: '2020-01-01', end_date: '2025-12-31', capital: 1000000,
+      })
+      if (resp.success && resp.data) {
+        this.displayValidation(resp.data, document.getElementById('val-result'))
+      }
+    } catch (e) {
+      toast.error('验证失败')
+    } finally {
+      this.isWorking = false
+      if (btn) { btn.disabled = false; btn.textContent = '运行' }
+    }
+  }
+
+  private displayValidation(data: any, container: HTMLElement | null) {
+    if (!container) return
+    const sv = data.sample_validation || {}
+    const scv = data.scenario_validation || {}
+    let html = ''
+
+    if (sv.in_sample) {
+      const deg = sv.sharpe_degradation_pct ?? 0
+      html += `<div class="val-row"><strong>In/Out验证</strong> | In Sharpe: ${sv.in_sample.performance?.sharpe_ratio ?? '--'} | Out Sharpe: ${sv.out_sample?.performance?.sharpe_ratio ?? '--'} | 退化: ${deg}% | 过拟合风险: ${sv.overfitting_risk ?? '--'}</div>`
+    }
+
+    const scenarios = scv.results || []
+    if (scenarios.length > 0) {
+      html += `<div class="val-row"><strong>场景验证:</strong> ${scenarios.map(s => `${s.scenario}: ${s.status === '通过' ? '✅' : '❌'} (Sharpe=${s.report?.sharpe ?? '--'})`).join(' | ')}</div>`
+    }
+
+    container.innerHTML = html || '<div class="empty-text">无数据</div>'
+  }
+
+  // ===== 信号列表 =====
+  private async loadSignals() {
+    try {
+      const resp = await api.getTradingSignals(undefined, 10)
+      if (resp.success && resp.data) {
+        this.displaySignals(resp.data)
+      }
+    } catch (e) {
+      toast.error('获取信号失败')
+    }
+  }
+
+  private displaySignals(signals: any[]) {
+    const container = document.getElementById('signals-panel')
+    if (!container) return
+    if (!signals?.length) {
+      container.innerHTML = '<div class="empty-text">暂无信号</div>'
+      return
+    }
+    container.innerHTML = signals.map(s => {
+      const dir = s.direction || ''
+      const cls = dir.includes('long') && !dir.includes('close') ? 'long' : dir.includes('short') && !dir.includes('close') ? 'short' : ''
+      return `<div class="signal-mini ${cls}">
+        <span class="sig-dir ${cls}">${DIR_LABEL[dir] || dir}</span>
+        <span class="sig-price">@${s.price ?? '--'}</span>
+        <span class="sig-strategy">${STRATEGY_LABELS[s.strategy_id || s.strategy_name]?.name || s.strategy_id || s.strategy_name}</span>
+        <span class="sig-time">${s.created_at ? new Date(s.created_at).toLocaleDateString('zh-CN') : '--'}</span>
+      </div>`
+    }).join('')
+  }
+
+  // ===== 风控 =====
+  private async loadRisk() {
+    try {
+      const resp = await api.getRiskStatus()
+      if (resp.success && resp.data) {
+        const container = document.getElementById('risk-panel')
+        if (container) {
+          const checks = resp.data.checks || []
+          container.innerHTML = checks.map((c: any) =>
+            `<div class="risk-mini"><span>${c.name}</span><span>阈值: ${c.threshold}</span><span class="risk-active">${c.status}</span></div>`
+          ).join('') + `<div class="risk-mini" style="font-size:11px;color:var(--text-tertiary)">最近信号: ${resp.data.recent_signal_count ?? 0}</div>`
+        }
+      }
+    } catch (e) {
+      // 静默
+    }
+  }
+
+  // ===== 辅助方法 =====
   private async loadStrategies() {
     try {
       const resp = await api.getTradingStrategies()
       if (resp.success && resp.data) {
         this.strategies = resp.data
-        this.renderStrategyCards()
-        this.renderStrategyParams('trend_following')
+        this.renderParams('trend_following')
       }
-    } catch (e) {
-      console.error('Failed to load strategies:', e)
-    }
+    } catch (e) { /* ignore */ }
   }
 
-  private renderStrategyCards() {
-    const container = document.getElementById('strategy-cards')
-    if (!container) return
-
-    container.innerHTML = this.strategies.map(s => {
-      const label = STRATEGY_LABELS[s.strategy_id] || { name: s.strategy_name, icon: '📊', desc: s.description }
-      return `
-        <div class="market-card" style="cursor:default;">
-          <div class="market-card-title">${label.icon} ${label.name}</div>
-          <div style="font-size:12px;color:#888;margin-top:4px;">${label.desc}</div>
-        </div>
-      `
-    }).join('')
-  }
-
-  private renderStrategyParams(strategyName: string) {
+  private renderParams(strategyName: string) {
     const strategy = this.strategies.find(s => s.strategy_id === strategyName)
     const container = document.getElementById('bt-params-container')
     const row = document.getElementById('bt-params-row')
-    if (!container || !row || !strategy) {
-      if (container) container.style.display = 'none'
-      return
-    }
+    if (!container || !row) return
 
-    const ranges = strategy.param_ranges || {}
-    const defaults = strategy.default_params || {}
-    const paramKeys = Object.keys(ranges)
+    const ranges = strategy?.param_ranges || {}
+    const defaults = strategy?.default_params || {}
+    const keys = Object.keys(ranges)
+    if (keys.length === 0) { container.classList.add('hidden'); return }
+    container.classList.remove('hidden')
 
-    if (paramKeys.length === 0) {
-      container.style.display = 'none'
-      return
-    }
-
-    container.style.display = 'block'
-    row.innerHTML = paramKeys.map(key => {
+    row.innerHTML = keys.map(key => {
       const options = ranges[key] as number[]
-      const defaultVal = defaults[key]
-      const label = this.getParamLabel(key)
-      return `
-        <label>${label}:</label>
-        <select id="bt-param-${key}">
-          ${options.map(v => `<option value="${v}" ${v === defaultVal || String(v) === String(defaultVal) ? 'selected' : ''}>${v}</option>`).join('')}
-        </select>
-      `
+      const def = defaults[key]
+      return `<label>${this.getParamLabel(key)}:</label><select id="bt-param-${key}">
+        ${options.map(v => `<option value="${v}" ${v === def || String(v) === String(def) ? 'selected' : ''}>${v}</option>`).join('')}
+      </select>`
     }).join('')
+  }
+
+  private collectParams(strategyName: string): Record<string, any> {
+    const strategy = this.strategies.find(s => s.strategy_id === strategyName)
+    if (!strategy) return {}
+    const ranges = strategy.param_ranges || {}
+    const params: Record<string, any> = {}
+    const defaults = strategy.default_params || {}
+
+    for (const key of Object.keys(ranges)) {
+      const el = document.getElementById(`bt-param-${key}`) as HTMLSelectElement
+      if (el) {
+        const val = el.value
+        params[key] = key === 'ma_periods' ? val.split(',').map(Number) : Number(val)
+      }
+    }
+    const diff: Record<string, any> = {}
+    for (const [k, v] of Object.entries(params)) {
+      if (JSON.stringify(v) !== JSON.stringify(defaults[k])) diff[k] = v
+    }
+    return diff
   }
 
   private getParamLabel(key: string): string {
@@ -257,566 +1007,6 @@ export class GoldTradingUI {
       predict_interval: '预测间隔', change_threshold: '涨跌阈值', max_holding_bars: '最大持仓',
     }
     return labels[key] || key
-  }
-
-  // ===== 信号生成 =====
-
-  private async generateSignal() {
-    if (this.isGeneratingSignal) return
-
-    const strategyName = (document.getElementById('sig-strategy-select') as HTMLSelectElement)?.value || 'trend_following'
-    this.isGeneratingSignal = true
-    const btn = document.getElementById('sig-generate-btn') as HTMLButtonElement
-    if (btn) { btn.disabled = true; btn.textContent = '生成中...' }
-
-    try {
-      const resp = await api.generateTradingSignal(strategyName)
-      if (resp.success && resp.data) {
-        this.displaySignalResult(resp.data)
-        toast.success('交易建议已生成')
-      } else {
-        toast.error('信号生成失败')
-      }
-    } catch (e) {
-      console.error('Signal generation failed:', e)
-      toast.error('信号生成失败')
-    } finally {
-      this.isGeneratingSignal = false
-      if (btn) { btn.disabled = false; btn.textContent = '生成交易建议' }
-    }
-  }
-
-  private displaySignalResult(data: any) {
-    const container = document.getElementById('sig-result')
-    if (!container) return
-    container.style.display = 'block'
-
-    if (!data.signal && !data.direction) {
-      container.innerHTML = '<p style="color:#888;">当前无交易信号</p>'
-      return
-    }
-
-    const dir = data.direction || ''
-    const dirLabel: Record<string, string> = { long: '做多', short: '做空', close_long: '平多', close_short: '平空' }
-    const isBullish = dir === 'long'
-    const cls = isBullish ? 'positive' : dir === 'short' ? 'negative' : ''
-    const riskPassed = data.risk_check?.passed !== false
-
-    container.innerHTML = `
-      <div class="prediction-card ${cls}">
-        <div class="prediction-model">${data.strategy || '--'} 交易建议</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px;">
-          ${this.cell('方向', dirLabel[dir] || dir, cls)}
-          ${this.cell('合约', data.symbol || '--')}
-          ${this.cell('价格', data.price ? `¥${data.price}` : '--')}
-          ${this.cell('数量', `${data.volume ?? 1}手`)}
-          ${this.cell('止损', data.stop_loss ? `¥${data.stop_loss}` : '--')}
-          ${this.cell('止盈', data.take_profit ? `¥${data.take_profit}` : '--')}
-          ${this.cell('置信度', data.confidence != null ? `${(data.confidence * 100).toFixed(0)}%` : '--')}
-          ${this.cell('风控', riskPassed ? '✅ 通过' : `⚠️ ${data.risk_check?.reason || '未通过'}`, riskPassed ? '' : 'negative')}
-        </div>
-        <div style="margin-top:8px;font-size:12px;color:#888;">${data.reason || ''}</div>
-      </div>
-    `
-  }
-
-  private cell(label: string, value: string, cls?: string): string {
-    return `<div style="padding:4px 6px;background:rgba(0,0,0,0.03);border-radius:4px;">
-      <div style="font-size:10px;color:#888;">${label}</div>
-      <div style="font-size:13px;font-weight:600;${cls === 'positive' ? 'color:#22c55e' : cls === 'negative' ? 'color:#ef4444' : ''}">${value}</div>
-    </div>`
-  }
-
-  // ===== 回测 =====
-
-  private async runBacktest() {
-    if (this.isBacktesting) return
-
-    const strategyName = (document.getElementById('bt-strategy-select') as HTMLSelectElement)?.value || 'trend_following'
-    const symbol = (document.getElementById('bt-symbol-select') as HTMLSelectElement)?.value || 'AU0'
-    const startDate = (document.getElementById('bt-start-date') as HTMLInputElement)?.value || '2024-01-01'
-    const endDate = (document.getElementById('bt-end-date') as HTMLInputElement)?.value || '2025-12-31'
-    const capital = Number((document.getElementById('bt-capital') as HTMLInputElement)?.value || 1000000)
-    const params = this.collectParams(strategyName)
-
-    this.isBacktesting = true
-    const btn = document.getElementById('bt-run-btn') as HTMLButtonElement
-    if (btn) { btn.disabled = true; btn.textContent = '回测中...' }
-
-    try {
-      const resp = await api.runTradingBacktest({
-        strategy_name: strategyName, symbol, period: 'd',
-        start_date: startDate, end_date: endDate,
-        capital, params: Object.keys(params).length > 0 ? params : undefined,
-      })
-      if (resp.success && resp.data) {
-        this.displayBacktestReport(resp.data)
-        toast.success('回测完成')
-      } else {
-        toast.error('回测失败')
-      }
-    } catch (e) {
-      console.error('Backtest failed:', e)
-      toast.error('回测失败')
-    } finally {
-      this.isBacktesting = false
-      if (btn) { btn.disabled = false; btn.textContent = '运行回测' }
-    }
-  }
-
-  private collectParams(strategyName: string): Record<string, any> {
-    const strategy = this.strategies.find(s => s.strategy_id === strategyName)
-    if (!strategy) return {}
-
-    const ranges = strategy.param_ranges || {}
-    const defaults = strategy.default_params || {}
-    const params: Record<string, any> = {}
-
-    for (const key of Object.keys(ranges)) {
-      const el = document.getElementById(`bt-param-${key}`) as HTMLSelectElement
-      if (el) {
-        const val = el.value
-        if (key === 'ma_periods') {
-          params[key] = val.split(',').map(Number)
-        } else {
-          params[key] = Number(val)
-        }
-      }
-    }
-
-    const diff: Record<string, any> = {}
-    for (const [k, v] of Object.entries(params)) {
-      const def = defaults[k]
-      if (JSON.stringify(v) !== JSON.stringify(def)) {
-        diff[k] = v
-      }
-    }
-    return diff
-  }
-
-  private displayBacktestReport(data: any) {
-    const container = document.getElementById('bt-results')
-    const report = document.getElementById('bt-report')
-    if (!container || !report) return
-
-    container.style.display = 'block'
-    const perf = data.report?.performance || {}
-    const risk = data.report?.risk || {}
-    const trades = data.report?.trades || {}
-    const cost = data.report?.cost || {}
-    const meta = data.report?.meta || {}
-
-    const label = STRATEGY_LABELS[data.strategy] || { name: data.strategy, icon: '📊' }
-    const ret = perf.total_return ?? 0
-    const retClass = ret >= 0 ? 'positive' : 'negative'
-
-    report.innerHTML = `
-      <div class="prediction-card ${retClass}">
-        <div class="prediction-model">${label.icon} ${label.name} 回测报告</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-top:12px;">
-          ${this.reportCell('总收益率', `${ret >= 0 ? '+' : ''}${ret}%`, retClass)}
-          ${this.reportCell('年化收益', `${perf.annualized_return ?? 0}%`, (perf.annualized_return ?? 0) >= 0 ? 'positive' : 'negative')}
-          ${this.reportCell('夏普比率', `${perf.sharpe_ratio ?? 0}`)}
-          ${this.reportCell('Sortino', `${perf.sortino_ratio ?? 0}`)}
-          ${this.reportCell('Calmar', `${perf.calmar_ratio ?? 0}`)}
-          ${this.reportCell('胜率', `${perf.win_rate ?? 0}%`)}
-          ${this.reportCell('盈亏比', perf.profit_factor != null ? `${perf.profit_factor}` : '--')}
-          ${this.reportCell('最大回撤', `${risk.max_drawdown ?? 0}%`, 'negative')}
-          ${this.reportCell('VaR(95%)', `¥${risk.var_95 ?? 0}`)}
-          ${this.reportCell('CVaR(95%)', `¥${risk.cvar_95 ?? 0}`)}
-          ${this.reportCell('波动率', `${risk.volatility ?? 0}%`)}
-          ${this.reportCell('交易次数', `${trades.total_count ?? 0}`)}
-          ${this.reportCell('平均持仓', `${trades.avg_holding_bars ?? 0} bar`)}
-          ${this.reportCell('总手续费', `¥${cost.total_commission ?? 0}`)}
-          ${this.reportCell('净盈亏', `¥${cost.net_pnl ?? 0}`)}
-        </div>
-        <div style="margin-top:12px;font-size:12px;color:#888;">
-          资金: ¥${(meta.capital ?? 0).toLocaleString()} | ${meta.start_date ?? ''} ~ ${meta.end_date ?? ''} | ${meta.total_days ?? 0}天 | 信号:${data.signal_count ?? 0} 成交:${data.trade_count ?? 0}
-        </div>
-      </div>
-    `
-  }
-
-  private reportCell(label: string, value: string, cls?: string): string {
-    return `<div style="padding:6px 8px;background:rgba(0,0,0,0.03);border-radius:4px;">
-      <div style="font-size:11px;color:#888;">${label}</div>
-      <div style="font-size:14px;font-weight:600;${cls === 'positive' ? 'color:#22c55e' : cls === 'negative' ? 'color:#ef4444' : ''}">${value}</div>
-    </div>`
-  }
-
-  // ===== 多策略对比 =====
-
-  private async runCompare() {
-    if (this.isComparing) return
-
-    const startDate = (document.getElementById('cmp-start-date') as HTMLInputElement)?.value || '2024-01-01'
-    const endDate = (document.getElementById('cmp-end-date') as HTMLInputElement)?.value || '2025-12-31'
-
-    this.isComparing = true
-    const btn = document.getElementById('cmp-run-btn') as HTMLButtonElement
-    if (btn) { btn.disabled = true; btn.textContent = '对比中...' }
-
-    try {
-      const resp = await api.compareStrategies({
-        strategy_names: ['trend_following', 'mean_reversion', 'ml_predictor'],
-        symbol: 'AU0', period: 'd',
-        start_date: startDate, end_date: endDate, capital: 1000000,
-      })
-      if (resp.success && resp.data) {
-        this.displayCompareReport(resp.data)
-        toast.success('对比完成')
-      } else {
-        toast.error('对比失败')
-      }
-    } catch (e) {
-      console.error('Compare failed:', e)
-      toast.error('对比失败')
-    } finally {
-      this.isComparing = false
-      if (btn) { btn.disabled = false; btn.textContent = '运行对比' }
-    }
-  }
-
-  private displayCompareReport(data: any) {
-    const container = document.getElementById('cmp-results')
-    const report = document.getElementById('cmp-report')
-    if (!container || !report) return
-
-    container.style.display = 'block'
-    const strategies = data.strategies || {}
-    const comparison = data.comparison || {}
-    const errors = data.errors || []
-    const names = Object.keys(strategies)
-
-    if (names.length === 0) {
-      report.innerHTML = '<p style="color:#888;">无对比数据</p>'
-      return
-    }
-
-    const metrics = [
-      { key: 'total_return', label: '总收益率', suffix: '%' },
-      { key: 'annualized_return', label: '年化收益', suffix: '%' },
-      { key: 'sharpe_ratio', label: '夏普', suffix: '' },
-      { key: 'sortino_ratio', label: 'Sortino', suffix: '' },
-      { key: 'max_drawdown', label: '最大回撤', suffix: '%' },
-      { key: 'win_rate', label: '胜率', suffix: '%' },
-      { key: 'profit_factor', label: '盈亏比', suffix: '' },
-    ]
-
-    report.innerHTML = `
-      <div class="metrics-table-container">
-        <table class="metrics-table">
-          <thead>
-            <tr>
-              <th>指标</th>
-              ${names.map((n: string) => `<th>${(STRATEGY_LABELS[n] || { name: n }).name}</th>`).join('')}
-            </tr>
-          </thead>
-          <tbody>
-            ${metrics.map(m => `
-              <tr>
-                <td>${m.label}</td>
-                ${names.map((n: string) => {
-                  const perf = strategies[n]?.performance || {}
-                  const risk = strategies[n]?.risk || {}
-                  const val = perf[m.key] ?? risk[m.key] ?? '--'
-                  return `<td>${val !== '--' ? val + m.suffix : '--'}</td>`
-                }).join('')}
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-      ${comparison.sharpe_ranking ? `
-        <div style="margin-top:12px;font-size:12px;color:#888;">
-          夏普排名: ${comparison.sharpe_ranking.map((r: any) => `${(STRATEGY_LABELS[r[0]] || {name: r[0]}).name}(${r[1]})`).join(' > ')}
-        </div>
-      ` : ''}
-      ${errors.length > 0 ? `<div style="margin-top:8px;color:#ef4444;font-size:12px;">错误: ${errors.join('; ')}</div>` : ''}
-    `
-  }
-
-  // ===== 参数敏感性分析 =====
-
-  private async runSensitivity() {
-    if (this.isRunningSensitivity) return
-
-    const strategyName = (document.getElementById('sens-strategy-select') as HTMLSelectElement)?.value || 'trend_following'
-    const startDate = (document.getElementById('sens-start-date') as HTMLInputElement)?.value || '2024-01-01'
-    const endDate = (document.getElementById('sens-end-date') as HTMLInputElement)?.value || '2024-12-31'
-
-    this.isRunningSensitivity = true
-    const btn = document.getElementById('sens-run-btn') as HTMLButtonElement
-    if (btn) { btn.disabled = true; btn.textContent = '分析中...' }
-
-    try {
-      const resp = await api.runSensitivity({
-        strategy_name: strategyName, symbol: 'AU0', period: 'd',
-        start_date: startDate, end_date: endDate, capital: 1000000,
-      })
-      if (resp.success && resp.data) {
-        this.displaySensitivityReport(resp.data)
-        toast.success('敏感性分析完成')
-      } else {
-        toast.error('敏感性分析失败')
-      }
-    } catch (e) {
-      console.error('Sensitivity failed:', e)
-      toast.error('敏感性分析失败')
-    } finally {
-      this.isRunningSensitivity = false
-      if (btn) { btn.disabled = false; btn.textContent = '运行敏感性分析' }
-    }
-  }
-
-  private displaySensitivityReport(data: any) {
-    const container = document.getElementById('sens-results')
-    const report = document.getElementById('sens-report')
-    if (!container || !report) return
-
-    container.style.display = 'block'
-    const items = data.sensitivity_data || []
-    const conclusion = data.conclusion || {}
-
-    // 按参数分组展示
-    const byParam: Record<string, any[]> = {}
-    for (const item of items) {
-      byParam[item.param_name] = byParam[item.param_name] || []
-      byParam[item.param_name].push(item)
-    }
-
-    let html = ''
-    for (const [param, values] of Object.entries(byParam)) {
-      const assessment = conclusion[param] || {}
-      html += `
-        <div style="margin-bottom:16px;">
-          <h4>${this.getParamLabel(param)} ${assessment.status ? `— ${assessment.status}` : ''}</h4>
-          <table class="metrics-table" style="font-size:12px;">
-            <thead><tr><th>参数值</th><th>Sharpe</th><th>MaxDD%</th><th>收益率%</th><th>胜率%</th></tr></thead>
-            <tbody>
-              ${values.map((v: any) => `<tr>
-                <td>${v.param_value}</td>
-                <td>${v.sharpe ?? '--'}</td>
-                <td>${v.max_dd ?? '--'}</td>
-                <td>${v.total_return ?? '--'}</td>
-                <td>${v.win_rate ?? '--'}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-          ${assessment.detail ? `<div style="font-size:11px;color:#888;margin-top:4px;">${assessment.detail}</div>` : ''}
-        </div>
-      `
-    }
-
-    report.innerHTML = html || '<p style="color:#888;">无敏感性数据</p>'
-  }
-
-  // ===== In/Out样本验证 + 场景验证 =====
-
-  private async runValidation() {
-    if (this.isRunningValidation) return
-
-    const strategyName = (document.getElementById('val-strategy-select') as HTMLSelectElement)?.value || 'trend_following'
-    const startDate = (document.getElementById('val-start-date') as HTMLInputElement)?.value || '2020-01-01'
-    const endDate = (document.getElementById('val-end-date') as HTMLInputElement)?.value || '2025-12-31'
-
-    this.isRunningValidation = true
-    const btn = document.getElementById('val-run-btn') as HTMLButtonElement
-    if (btn) { btn.disabled = true; btn.textContent = '验证中...' }
-
-    try {
-      const resp = await api.runValidation({
-        strategy_name: strategyName, symbol: 'AU0', period: 'd',
-        start_date: startDate, end_date: endDate, capital: 1000000,
-      })
-      if (resp.success && resp.data) {
-        this.displayValidationReport(resp.data)
-        toast.success('验证完成')
-      } else {
-        toast.error('验证失败')
-      }
-    } catch (e) {
-      console.error('Validation failed:', e)
-      toast.error('验证失败')
-    } finally {
-      this.isRunningValidation = false
-      if (btn) { btn.disabled = false; btn.textContent = '运行验证' }
-    }
-  }
-
-  private displayValidationReport(data: any) {
-    const container = document.getElementById('val-results')
-    const report = document.getElementById('val-report')
-    if (!container || !report) return
-
-    container.style.display = 'block'
-
-    const sampleVal = data.sample_validation || {}
-    const scenarioVal = data.scenario_validation || {}
-
-    let html = ''
-
-    // In/Out样本
-    if (sampleVal.in_sample && sampleVal.out_sample) {
-      const deg = sampleVal.sharpe_degradation_pct ?? 0
-      const risk = sampleVal.overfitting_risk ?? '--'
-      const riskColor = risk === '低' ? '#22c55e' : risk === '中' ? '#f59e0b' : '#ef4444'
-
-      html += `
-        <div style="margin-bottom:16px;">
-          <h4>In/Out样本验证</h4>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div>
-              <div style="font-size:12px;color:#888;">In-sample (${sampleVal.in_bars ?? 0} bars)</div>
-              <div>Sharpe: ${sampleVal.in_sample.performance?.sharpe_ratio ?? '--'} | Return: ${sampleVal.in_sample.performance?.total_return ?? '--'}%</div>
-            </div>
-            <div>
-              <div style="font-size:12px;color:#888;">Out-sample (${sampleVal.out_bars ?? 0} bars)</div>
-              <div>Sharpe: ${sampleVal.out_sample.performance?.sharpe_ratio ?? '--'} | Return: ${sampleVal.out_sample.performance?.total_return ?? '--'}%</div>
-            </div>
-          </div>
-          <div style="margin-top:8px;">
-            Sharpe退化: <strong>${deg}%</strong> |
-            过拟合风险: <strong style="color:${riskColor}">${risk}</strong>
-          </div>
-        </div>
-      `
-    }
-
-    // 场景验证
-    const scenarios = scenarioVal.results || []
-    if (scenarios.length > 0) {
-      html += `
-        <div>
-          <h4>场景验证</h4>
-          <table class="metrics-table" style="font-size:12px;">
-            <thead><tr><th>场景</th><th>描述</th><th>期望</th><th>状态</th><th>Sharpe</th><th>Return%</th><th>MaxDD%</th></tr></thead>
-            <tbody>
-              ${scenarios.map((s: any) => `<tr>
-                <td>${s.scenario}</td>
-                <td>${s.description}</td>
-                <td style="font-size:11px;">${s.expected}</td>
-                <td style="color:${s.status === '通过' ? '#22c55e' : '#ef4444'}">${s.status}</td>
-                <td>${s.report?.sharpe ?? '--'}</td>
-                <td>${s.report?.total_return ?? '--'}</td>
-                <td>${s.report?.max_drawdown ?? '--'}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-          <div style="margin-top:8px;font-size:12px;color:#888;">
-            全部通过: ${scenarioVal.all_passed ? '✅ 是' : '❌ 否'}
-          </div>
-        </div>
-      `
-    }
-
-    report.innerHTML = html || '<p style="color:#888;">无验证数据</p>'
-  }
-
-  // ===== 信号 =====
-
-  private async loadSignals() {
-    try {
-      const resp = await api.getTradingSignals(undefined, 20)
-      if (resp.success && resp.data) {
-        this.displaySignals(resp.data)
-        toast.success('信号已刷新')
-      } else {
-        toast.error('获取信号失败')
-      }
-    } catch (e) {
-      console.error('Signals failed:', e)
-      toast.error('获取信号失败')
-    }
-  }
-
-  private displaySignals(signals: any[]) {
-    const container = document.getElementById('signals-list')
-    if (!container) return
-
-    if (!signals || signals.length === 0) {
-      container.innerHTML = '<p style="color:#888;font-size:13px;">暂无信号记录</p>'
-      return
-    }
-
-    const dirLabel: Record<string, string> = { long: '做多', short: '做空', close_long: '平多', close_short: '平空' }
-
-    container.innerHTML = `
-      <table class="metrics-table" style="font-size:12px;">
-        <thead><tr><th>时间</th><th>策略</th><th>方向</th><th>价格</th><th>数量</th><th>置信度</th><th>原因</th></tr></thead>
-        <tbody>
-          ${signals.map(s => {
-            const dir = s.direction || ''
-            const dirClass = dir.includes('long') && !dir.includes('close') ? 'positive' :
-                             dir.includes('short') && !dir.includes('close') ? 'negative' : ''
-            return `<tr>
-              <td>${s.created_at ? new Date(s.created_at).toLocaleString('zh-CN') : '--'}</td>
-              <td>${s.strategy_name || s.strategy_id || '--'}</td>
-              <td class="${dirClass}">${dirLabel[dir] || dir}</td>
-              <td>${s.price ?? '--'}</td>
-              <td>${s.volume ?? 1}</td>
-              <td>${s.confidence != null ? (s.confidence * 100).toFixed(0) + '%' : '--'}</td>
-              <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${s.reason || ''}">${s.reason || '--'}</td>
-            </tr>`
-          }).join('')}
-        </tbody>
-      </table>
-    `
-  }
-
-  // ===== 风控状态 =====
-
-  private async loadRiskStatus() {
-    try {
-      const resp = await api.getRiskStatus()
-      if (resp.success && resp.data) {
-        this.displayRiskStatus(resp.data)
-      } else {
-        toast.error('获取风控状态失败')
-      }
-    } catch (e) {
-      console.error('Risk status failed:', e)
-      toast.error('获取风控状态失败')
-    }
-  }
-
-  private displayRiskStatus(data: any) {
-    const container = document.getElementById('risk-status')
-    if (!container) return
-
-    const checks = data.checks || []
-    container.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;">
-        ${checks.map((c: any) => `
-          <div style="padding:8px;background:rgba(0,0,0,0.03);border-radius:4px;">
-            <div style="font-size:11px;color:#888;">${c.name}</div>
-            <div>阈值: ${c.threshold} | 状态: <span style="color:#22c55e;">${c.status}</span></div>
-          </div>
-        `).join('')}
-      </div>
-      <div style="margin-top:8px;font-size:12px;color:#888;">最近信号数: ${data.recent_signal_count ?? 0}</div>
-    `
-  }
-
-  // ===== 数据同步 =====
-
-  private async syncData() {
-    const btn = document.getElementById('sync-btn') as HTMLButtonElement
-    if (btn) { btn.disabled = true; btn.textContent = '同步中...' }
-
-    try {
-      const resp = await api.syncGoldBars('AU0', 'd')
-      if (resp.success && resp.data) {
-        toast.success(`同步完成: ${resp.data.bars_synced} 条K线`)
-      } else {
-        toast.error('同步失败')
-      }
-    } catch (e) {
-      console.error('Sync failed:', e)
-      toast.error('同步失败')
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '同步K线数据' }
-    }
   }
 }
 
