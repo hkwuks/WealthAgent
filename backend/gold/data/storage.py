@@ -121,11 +121,13 @@ class GoldDataStore:
             if end:
                 query += " AND datetime <= ?"
                 params.append(end)
-            query += " ORDER BY datetime ASC"
+            query += " ORDER BY datetime DESC"  # 最新的在前
             if limit:
                 query += f" LIMIT {limit}"
             rows = conn.execute(query, params).fetchall()
 
+        # 反转回正序（ASC），供回测引擎顺序消费
+        rows = list(reversed(rows))
         bars = []
         for row in rows:
             bars.append(GoldBarData(

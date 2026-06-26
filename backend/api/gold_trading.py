@@ -92,7 +92,7 @@ async def run_backtest(req: BacktestRequest):
 
     bars = await gateway.get_bars(
         symbol=req.symbol, period=req.period,
-        start=req.start_date, end=req.end_date,
+        start=req.start_date, end=req.end_date, refresh=True,
     )
     if not bars:
         raise HTTPException(status_code=400, detail="No bar data available for the given parameters")
@@ -203,7 +203,7 @@ async def run_sensitivity(req: SensitivityRequest):
 
     bars = await gateway.get_bars(
         symbol=req.symbol, period=req.period,
-        start=req.start_date, end=req.end_date,
+        start=req.start_date, end=req.end_date, refresh=True,
     )
     if not bars:
         raise HTTPException(status_code=400, detail="No bar data available")
@@ -245,7 +245,7 @@ async def run_validation(req: ValidationRequest):
 
     bars = await gateway.get_bars(
         symbol=req.symbol, period=req.period,
-        start=req.start_date, end=req.end_date,
+        start=req.start_date, end=req.end_date, refresh=True,
     )
     if not bars:
         raise HTTPException(status_code=400, detail="No bar data available")
@@ -289,8 +289,8 @@ async def generate_signal(
     if cls is None:
         raise HTTPException(status_code=404, detail=f"Strategy '{strategy_name}' not found")
 
-    # 获取最新行情
-    bars = await gateway.get_bars(symbol=symbol, period="d", limit=200)
+    # 获取最新行情 — ML策略需要足够数据训练模型
+    bars = await gateway.get_bars(symbol=symbol, period="d", start="2020-01-01", refresh=True)
     if not bars or len(bars) < 30:
         raise HTTPException(status_code=400, detail="Insufficient data for signal generation")
 
@@ -397,6 +397,160 @@ async def sync_gold_bars(
             } if bars else None,
         },
     }
+
+
+# ===== K线数据（图表用） =====
+
+@router.get("/bars")
+async def get_bars_for_chart(
+    symbol: str = Query("AU0", description="合约代码"),
+    period: str = Query("d", description="K线周期: d=日线, 1=1分钟, 5=5分钟, 30=30分钟"),
+    start_date: str = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: str = Query(None, description="结束日期 YYYY-MM-DD"),
+    limit: int = Query(200, ge=1, le=2000, description="返回根数"),
+):
+    """返回K线数据用于图表展示（OHLCV + 技术指标）"""
+    bars = await gateway.get_bars(
+        symbol=symbol, period=period,
+        start=start_date, end=end_date,
+        limit=limit, refresh=True,
+    )
+    if not bars:
+        raise HTTPException(status_code=404, detail="No bar data available")
+
+    # 计算MA指标用于图表
+    closes = [b.close for b in bars]
+    def ma(arr, n):
+        if len(arr) < n:
+            return [None] * len(arr)
+        result = [None] * (n - 1)
+        for i in range(n - 1, len(arr)):
+            result.append(round(sum(arr[i-n+1:i+1]) / n, 2))
+        return result
+
+    return {
+        "success": True,
+        "data": {
+            "symbol": symbol,
+            "period": period,
+            "bars": [
+                {
+                    "time": b.datetime.strftime("%Y-%m-%d") if period == "d" else b.datetime.isoformat(),
+                    "open": b.open,
+                    "high": b.high,
+                    "low": b.low,
+                    "close": b.close,
+                    "volume": b.volume,
+                }
+                for b in bars
+            ],
+            "indicators": {
+                "ma5": ma(closes, 5),
+                "ma10": ma(closes, 10),
+                "ma20": ma(closes, 20),
+                "ma60": ma(closes, 60),
+            },
+            "count": len(bars),
+        },
+    }
+
+
+# ===== 市场数据仪表盘（实时用） =====
+
+@router.get("/market-data")
+async def get_market_data():
+    """获取黄金实时市场数据仪表盘"""
+    try:
+        from backend.gold.core.config import GoldSettings
+        from backend.gold.data.storage import GoldDataStore
+
+        config = GoldSettings()
+        store = GoldDataStore()
+
+        bars = await gateway.get_bars(symbol="AU0", period="d", limit=300, refresh=True)
+        if not bars:
+            raise HTTPException(status_code=404, detail="No market data")
+
+        latest = bars[-1]
+        prev = bars[-2] if len(bars) > 1 else latest
+
+        price = latest.close
+        prev_price = prev.close
+        change = price - prev_price
+        change_pct = (change / prev_price * 100) if prev_price > 0 else 0
+
+        high_20 = max(b.high for b in bars[-20:])
+        low_20 = min(b.low for b in bars[-20:])
+        high_60 = max(b.high for b in bars[-60:]) if len(bars) >= 60 else high_20
+        low_60 = min(b.low for b in bars[-60:]) if len(bars) >= 60 else low_20
+
+        # 计算简单技术指标
+        closes = [b.close for b in bars]
+        rsi = _calc_rsi(closes, 14)
+        atr = _calc_atr(bars, 14)
+        vol_avg5 = sum(b.volume for b in bars[-5:]) / 5
+        vol_avg20 = sum(b.volume for b in bars[-20:]) / 20
+        vol_ratio = vol_avg5 / vol_avg20 if vol_avg20 > 0 else 1
+
+        recent_signals = store.get_signals(limit=10)
+
+        return {
+            "success": True,
+            "data": {
+                "price": round(price, 2),
+                "change": round(change, 2),
+                "change_pct": round(change_pct, 2),
+                "high": round(latest.high, 2),
+                "low": round(latest.low, 2),
+                "open": round(latest.open, 2),
+                "volume": latest.volume,
+                "high_20": round(high_20, 2),
+                "low_20": round(low_20, 2),
+                "high_60": round(high_60, 2),
+                "low_60": round(low_60, 2),
+                "rsi_14": round(rsi, 1) if rsi is not None else None,
+                "atr_14": round(atr, 2) if atr is not None else None,
+                "vol_ratio": round(vol_ratio, 2),
+                "timestamp": latest.datetime.isoformat() if hasattr(latest.datetime, 'isoformat') else str(latest.datetime),
+                "date": latest.datetime.strftime("%Y-%m-%d") if hasattr(latest.datetime, 'strftime') else str(latest.datetime),
+                "recent_signals": recent_signals,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Market data error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _calc_rsi(closes: list, period: int = 14):
+    if len(closes) < period + 1:
+        return None
+    gains = []
+    losses = []
+    for i in range(1, len(closes)):
+        diff = closes[i] - closes[i-1]
+        if diff >= 0:
+            gains.append(diff); losses.append(0)
+        else:
+            gains.append(0); losses.append(abs(diff))
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+    if avg_loss == 0:
+        return 100
+    rs = avg_gain / avg_loss
+    return round(100 - (100 / (1 + rs)), 1)
+
+
+def _calc_atr(bars: list, period: int = 14):
+    if len(bars) < period + 1:
+        return None
+    trs = []
+    for i in range(1, len(bars)):
+        b, p = bars[i], bars[i-1]
+        tr = max(b.high - b.low, abs(b.high - p.close), abs(b.low - p.close))
+        trs.append(tr)
+    return round(sum(trs[-period:]) / period, 2)
 
 
 # ===== 配置 =====

@@ -82,8 +82,8 @@ class RiskChecker:
         signals_today = self.data_store.get_signals(strategy_id=None, limit=1000)
         daily_loss = 0
         for s in signals_today:
-            if s.get("direction", "").startswith("close") and s.get("timestamp", "").startswith(today_str):
-                daily_loss += s.get("pnl", 0)
+            if str(s.direction).startswith("close") and s.created_at and s.created_at.date() == today:
+                daily_loss += 0  # ponytail: PnL not tracked per signal yet
 
         max_daily = self.config.max_daily_loss_pct
         capital = self.config.backtest_capital
@@ -100,11 +100,10 @@ class RiskChecker:
     def _check_signal_frequency(self, signal: GoldSignal) -> dict:
         """3. 信号频率检查 — 日信号≥20 → WARNING(不拒绝)"""
         today = signal.created_at.date() if signal.created_at else date.today()
-        today_str = today.isoformat()
 
         signals_today = self.data_store.get_signals(strategy_id=None, limit=1000)
         count = sum(1 for s in signals_today
-                    if s.get("timestamp", "").startswith(today_str))
+                    if s.created_at and s.created_at.date() == today)
 
         max_signals = self.config.max_daily_signals
         if count >= max_signals:

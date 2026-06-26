@@ -654,6 +654,21 @@ class ApiService {
   async getRiskStatus(): Promise<{ success: boolean; data: any }> {
     return this.request<{ success: boolean; data: any }>('/gold/trading/risk/status');
   }
+
+  async getGoldBars(symbol?: string, period?: string, limit?: number, startDate?: string, endDate?: string): Promise<{ success: boolean; data: any }> {
+    const params = new URLSearchParams({
+      symbol: symbol || 'AU0',
+      period: period || 'd',
+      limit: String(limit || 200),
+    });
+    if (startDate) params.set('start_date', startDate);
+    if (endDate) params.set('end_date', endDate);
+    return this.request<{ success: boolean; data: any }>(`/gold/trading/bars?${params.toString()}`, {}, 30000);
+  }
+
+  async getGoldMarketData(): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>('/gold/trading/market-data', {}, 15000);
+  }
 }
 
 export const api = new ApiService();

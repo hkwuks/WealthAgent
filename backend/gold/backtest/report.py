@@ -2,6 +2,19 @@ import numpy as np
 from loguru import logger
 
 
+def _safe_round(val, digits: int = 2):
+    """round that converts NaN/Inf to None for JSON serialization"""
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        if np.isnan(f) or np.isinf(f):
+            return None
+        return round(f, digits)
+    except (TypeError, ValueError):
+        return None
+
+
 class BacktestReport:
     """回测报告生成器"""
 
@@ -63,35 +76,35 @@ class BacktestReport:
 
         return {
             "performance": {
-                "total_return": round(total_return * 100, 2),
-                "annualized_return": round(annualized_return * 100, 2),
-                "sharpe_ratio": round(sharpe, 2),
-                "sortino_ratio": round(sortino, 2),
-                "calmar_ratio": round(calmar, 2),
-                "win_rate": round(win_rate * 100, 2),
-                "profit_factor": round(profit_factor, 2) if profit_factor else None,
+                "total_return": _safe_round(total_return * 100, 2),
+                "annualized_return": _safe_round(annualized_return * 100, 2),
+                "sharpe_ratio": _safe_round(sharpe, 2),
+                "sortino_ratio": _safe_round(sortino, 2),
+                "calmar_ratio": _safe_round(calmar, 2),
+                "win_rate": _safe_round(win_rate * 100, 2),
+                "profit_factor": _safe_round(profit_factor, 2) if profit_factor else None,
             },
             "risk": {
-                "max_drawdown": round(max_dd * 100, 2),
-                "var_95": round(var_95, 2),
-                "cvar_95": round(cvar_95, 2),
-                "volatility": round(volatility * 100, 2),
-                "downside_deviation": round(downside_dev * 100, 2),
-                "skewness": round(sk, 4),
-                "kurtosis": round(ku, 4),
+                "max_drawdown": _safe_round(max_dd * 100, 2),
+                "var_95": _safe_round(var_95, 2),
+                "cvar_95": _safe_round(cvar_95, 2),
+                "volatility": _safe_round(volatility * 100, 2),
+                "downside_deviation": _safe_round(downside_dev * 100, 2),
+                "skewness": _safe_round(sk, 4),
+                "kurtosis": _safe_round(ku, 4),
             },
             "trades": {
                 "total_count": len(close_trades),
-                "avg_holding_bars": round(np.mean([t.get("holding_bars", 0) for t in close_trades]), 1) if close_trades else 0,
-                "avg_profit": round(np.mean([r for r in trade_returns if r > 0]) * 100, 2) if wins > 0 else 0,
-                "avg_loss": round(np.mean([r for r in trade_returns if r < 0]) * 100, 2) if (len(trade_returns) - wins) > 0 else 0,
-                "max_single_loss": round(min(trade_returns) * 100, 2) if trade_returns else 0,
+                "avg_holding_bars": _safe_round(np.mean([t.get("holding_bars", 0) for t in close_trades]), 1) if close_trades else 0,
+                "avg_profit": _safe_round(np.mean([r for r in trade_returns if r > 0]) * 100, 2) if wins > 0 else 0,
+                "avg_loss": _safe_round(np.mean([r for r in trade_returns if r < 0]) * 100, 2) if (len(trade_returns) - wins) > 0 else 0,
+                "max_single_loss": _safe_round(min(trade_returns) * 100, 2) if trade_returns else 0,
             },
             "cost": {
-                "total_commission": round(total_commission, 2),
-                "total_slippage": round(total_slippage, 2),
-                "gross_pnl": round(gross_pnl, 2),
-                "net_pnl": round(net_pnl, 2),
+                "total_commission": _safe_round(total_commission, 2),
+                "total_slippage": _safe_round(total_slippage, 2),
+                "gross_pnl": _safe_round(gross_pnl, 2),
+                "net_pnl": _safe_round(net_pnl, 2),
             },
             "meta": {
                 "capital": capital,
