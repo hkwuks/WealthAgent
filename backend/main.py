@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from backend.config import settings
-from backend.api import funds, market, valuation, gold
+from backend.api import funds, market, valuation, gold, gold_trading
 from loguru import logger
 
 
@@ -184,6 +184,7 @@ app.include_router(funds.router, prefix=settings.API_PREFIX)
 app.include_router(market.router, prefix=settings.API_PREFIX)
 app.include_router(valuation.router, prefix=settings.API_PREFIX)
 app.include_router(gold.router, prefix=settings.API_PREFIX)
+app.include_router(gold_trading.router, prefix=settings.API_PREFIX)
 
 
 @app.get("/", tags=["系统"])
