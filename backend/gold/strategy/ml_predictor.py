@@ -50,9 +50,10 @@ class MLPredictorStrategy(StrategyBase):
         self._entry_bar: int = 0
         self._bar_count: int = 0
         self._predictor = None
-        self._predictor_failed: bool = False  # 初始化失败标记，避免重复重试
+        self._predictor_failed: bool = False
         self._atr_value: float = 0
-        self._last_predict_bar: int = -999  # 上次预测的bar序号
+        self._last_predict_bar: int = -999
+        # _macro_df 由外部注入，不在此重置
 
     def on_bar(self, bar: GoldBarData):
         self._bars.append(bar)
@@ -247,6 +248,9 @@ class MLPredictorStrategy(StrategyBase):
 
             result = predictor.predict(df, mt, horizon, use_last_known_price=True)
             return result.predicted_change_percent / 100  # 转为小数
+        except (ValueError, KeyError) as e:
+            logger.debug(f"ML predict feature mismatch ({e}), retraining with available features...")
+            return self._retrain_and_predict(df)
         except Exception as e:
             logger.debug(f"Regression predict failed: {e}")
             return None
@@ -259,8 +263,40 @@ class MLPredictorStrategy(StrategyBase):
             mt = ModelType(self.model_type)
             result = predictor.predict_tb(df, mt)
             return result.direction
+        except (ValueError, KeyError) as e:
+            logger.debug(f"ML TB predict feature mismatch ({e}), retraining with available features...")
+            return self._retrain_and_predict_tb(df)
         except Exception as e:
             logger.debug(f"TB predict failed: {e}")
+            return None
+
+    def _retrain_and_predict(self, df: pd.DataFrame) -> Optional[float]:
+        """特征不匹配时：用当前可用数据重新训练，再做预测"""
+        try:
+            from backend.gold_prediction import GoldPricePredictor, ModelType, PredictionHorizon
+            mt = ModelType(self.model_type)
+            horizon = PredictionHorizon.SHORT
+            predictor = GoldPricePredictor()
+            predictor.train(df, mt, horizon)
+            self._predictor = predictor
+            result = predictor.predict(df, mt, horizon, use_last_known_price=True)
+            return result.predicted_change_percent / 100
+        except Exception as e:
+            logger.debug(f"Retrain+regression failed: {e}")
+            return None
+
+    def _retrain_and_predict_tb(self, df: pd.DataFrame) -> Optional[int]:
+        """特征不匹配时：用当前可用数据重新训练TB，再做预测"""
+        try:
+            from backend.gold_prediction import GoldPricePredictor, ModelType
+            mt = ModelType(self.model_type)
+            predictor = GoldPricePredictor()
+            predictor.train_tb(df, mt)
+            self._predictor = predictor
+            result = predictor.predict_tb(df, mt)
+            return result.direction
+        except Exception as e:
+            logger.debug(f"Retrain+TB failed: {e}")
             return None
 
     def _bars_to_dataframe(self) -> pd.DataFrame:
@@ -280,8 +316,25 @@ class MLPredictorStrategy(StrategyBase):
             })
 
         df = pd.DataFrame(rows)
-        # 不添加宏观数据列 — 让FeatureEngineer的create_macro_features跳过
-        # 如果填NaN列，宏观特征会全NaN导致dropna()清空所有行
+
+        # 合并宏观因子数据（如果有），让ML使用完整特征集
+        if hasattr(self, '_macro_df') and self._macro_df is not None and not self._macro_df.empty:
+            try:
+                macro = self._macro_df.copy()
+                macro['date'] = macro['date'].astype(str)
+                df['date'] = df['date'].astype(str)
+                before = len(df.columns)
+                df = df.merge(macro, on='date', how='left')
+                # 向前填充宏观数据（非交易日沿用最近值）
+                macro_cols = [c for c in macro.columns if c != 'date']
+                for col in macro_cols:
+                    if col in df.columns:
+                        df[col] = df[col].ffill().bfill().fillna(0)
+                after = len(df.columns)
+                logger.debug(f"Merged macro data: {before} -> {after} columns ({after - before} macro cols)")
+            except Exception as e:
+                logger.debug(f"Failed to merge macro data: {e}")
+
         return df
 
     def _calc_atr(self):
