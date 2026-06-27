@@ -86,6 +86,7 @@ export class GoldTradingUI {
   private isWorking = false
   private chartReady = false
   private dark = false
+  private signalTimer: ReturnType<typeof setInterval> | null = null
 
   init(container: HTMLDivElement) {
     this.container = container
@@ -95,6 +96,9 @@ export class GoldTradingUI {
     this.loadMarketData()
     this.loadStrategyComparison()
 
+    // 加载最近信号
+    this.loadSignals()
+
     // 市场数据 + K线 轮询刷新
     this.marketTimer = setInterval(() => this.loadMarketData(), 30000)
     this.chartTimer = setInterval(() => {
@@ -102,6 +106,14 @@ export class GoldTradingUI {
     }, 60000)
     new MutationObserver(() => this.onThemeChange()).observe(document.body, { attributes: true, attributeFilter: ['class'] })
     window.addEventListener('resize', () => this.onResize())
+
+    // 恢复自动信号定时器设置
+    const savedInterval = localStorage.getItem('gold_signal_auto_interval')
+    if (savedInterval) {
+      const sel = document.getElementById('sig-auto-select') as HTMLSelectElement
+      if (sel) { sel.value = savedInterval }
+    }
+    this.restartSignalTimer()
   }
 
   /** 当tab切换到此页面时由 main.ts 调用 */
@@ -140,6 +152,7 @@ export class GoldTradingUI {
   destroy() {
     if (this.marketTimer) clearInterval(this.marketTimer)
     if (this.chartTimer) clearInterval(this.chartTimer)
+    if (this.signalTimer) clearInterval(this.signalTimer)
     this.destroyChart()
   }
 
@@ -151,54 +164,74 @@ export class GoldTradingUI {
       <div class="quant-page">
         <!-- 实时数据栏 -->
         <div class="quant-ticker" id="quant-ticker">
-          <div class="ticker-item ticker-main">
-            <div class="ticker-label">AU0 主力</div>
-            <div class="ticker-price" id="ticker-price">--</div>
-            <div class="ticker-change" id="ticker-change">--</div>
+          <div style="display:flex;align-items:center;gap:0;overflow-x:auto;flex:1">
+            <div class="ticker-item ticker-main">
+              <div class="ticker-label">AU0 主力</div>
+              <div class="ticker-price" id="ticker-price">--</div>
+              <div class="ticker-change" id="ticker-change">--</div>
+            </div>
+            <div class="ticker-separator"></div>
+            <div class="ticker-item">
+              <div class="ticker-label">开盘</div>
+              <div class="ticker-value" id="ticker-open">--</div>
+            </div>
+            <div class="ticker-item">
+              <div class="ticker-label">最高</div>
+              <div class="ticker-value" id="ticker-high">--</div>
+            </div>
+            <div class="ticker-item">
+              <div class="ticker-label">最低</div>
+              <div class="ticker-value" id="ticker-low">--</div>
+            </div>
+            <div class="ticker-separator"></div>
+            <div class="ticker-item">
+              <div class="ticker-label">20日最高</div>
+              <div class="ticker-value" id="ticker-high20">--</div>
+            </div>
+            <div class="ticker-item">
+              <div class="ticker-label">20日最低</div>
+              <div class="ticker-value" id="ticker-low20">--</div>
+            </div>
+            <div class="ticker-separator"></div>
+            <div class="ticker-item">
+              <div class="ticker-label">成交量</div>
+              <div class="ticker-value" id="ticker-vol">--</div>
+            </div>
+            <div class="ticker-item">
+              <div class="ticker-label">量比(5/20)</div>
+              <div class="ticker-value" id="ticker-volratio">--</div>
+            </div>
+            <div class="ticker-item">
+              <div class="ticker-label">RSI(14)</div>
+              <div class="ticker-value" id="ticker-rsi">--</div>
+            </div>
+            <div class="ticker-item">
+              <div class="ticker-label">ATR(14)</div>
+              <div class="ticker-value" id="ticker-atr">--</div>
+            </div>
+            <div class="ticker-separator"></div>
+            <div class="ticker-item">
+              <div class="ticker-label">美元指数</div>
+              <div class="ticker-value" id="macro-dxy">--</div>
+            </div>
+            <div class="ticker-item">
+              <div class="ticker-label">VIX恐慌</div>
+              <div class="ticker-value" id="macro-vix">--</div>
+            </div>
+            <div class="ticker-item">
+              <div class="ticker-label">美债10Y</div>
+              <div class="ticker-value" id="macro-us10y">--</div>
+            </div>
+            <div class="ticker-item">
+              <div class="ticker-label">TIPS利率</div>
+              <div class="ticker-value" id="macro-tips">--</div>
+            </div>
+            <div class="ticker-item">
+              <div class="ticker-label">通胀预期</div>
+              <div class="ticker-value" id="macro-breakeven">--</div>
+            </div>
           </div>
-          <div class="ticker-separator"></div>
-          <div class="ticker-item">
-            <div class="ticker-label">开盘</div>
-            <div class="ticker-value" id="ticker-open">--</div>
-          </div>
-          <div class="ticker-item">
-            <div class="ticker-label">最高</div>
-            <div class="ticker-value" id="ticker-high">--</div>
-          </div>
-          <div class="ticker-item">
-            <div class="ticker-label">最低</div>
-            <div class="ticker-value" id="ticker-low">--</div>
-          </div>
-          <div class="ticker-separator"></div>
-          <div class="ticker-item">
-            <div class="ticker-label">20日最高</div>
-            <div class="ticker-value" id="ticker-high20">--</div>
-          </div>
-          <div class="ticker-item">
-            <div class="ticker-label">20日最低</div>
-            <div class="ticker-value" id="ticker-low20">--</div>
-          </div>
-          <div class="ticker-separator"></div>
-          <div class="ticker-item">
-            <div class="ticker-label">成交量</div>
-            <div class="ticker-value" id="ticker-vol">--</div>
-          </div>
-          <div class="ticker-item">
-            <div class="ticker-label">量比(5/20)</div>
-            <div class="ticker-value" id="ticker-volratio">--</div>
-          </div>
-          <div class="ticker-item">
-            <div class="ticker-label">RSI(14)</div>
-            <div class="ticker-value" id="ticker-rsi">--</div>
-          </div>
-          <div class="ticker-item">
-            <div class="ticker-label">ATR(14)</div>
-            <div class="ticker-value" id="ticker-atr">--</div>
-          </div>
-          <div class="ticker-separator"></div>
-          <div class="ticker-item" style="flex:0 0 auto">
-            <span style="font-size:10px;color:var(--text-tertiary)" id="ticker-time">--</span>
-          </div>
+          <div style="text-align:right;font-size:12px;color:var(--text-tertiary);padding-top:4px" id="ticker-time">--</div>
         </div>
 
         <!-- K线图 -->
@@ -260,16 +293,24 @@ export class GoldTradingUI {
                   <option value="ml_predictor">ML预测</option>
                 </select>
                 <button class="btn btn-primary btn-sm" id="sig-generate-btn">生成信号</button>
+                <select id="sig-auto-select" style="width:90px">
+                  <option value="0">⏱ 关闭</option>
+                  <option value="60">⏱ 1分钟</option>
+                  <option value="300">⏱ 5分钟</option>
+                  <option value="600">⏱ 10分钟</option>
+                  <option value="1800">⏱ 30分钟</option>
+                  <option value="3600">⏱ 1小时</option>
+                </select>
+                <span class="auto-indicator" id="sig-auto-indicator" style="display:none;font-size:10px;color:#10b981;white-space:nowrap">●</span>
               </div>
               <div id="sig-result" class="panel-result"></div>
             </div>
 
             <div class="panel-header" style="margin-top:16px;">
               <h3>📡 最近信号</h3>
-              <button class="btn btn-ghost btn-sm" id="signals-refresh-btn">刷新</button>
             </div>
             <div class="panel-body" id="signals-panel">
-              <div class="empty-text">点击刷新获取信号</div>
+              <div class="empty-text">暂无信号</div>
             </div>
           </div>
 
@@ -371,8 +412,16 @@ export class GoldTradingUI {
     document.getElementById('chart-refresh-btn')?.addEventListener('click', () => this.loadKlineData())
 
     // 信号生成
-    document.getElementById('sig-generate-btn')?.addEventListener('click', () => this.generateSignal())
-    document.getElementById('signals-refresh-btn')?.addEventListener('click', () => this.loadSignals())
+    document.getElementById('sig-generate-btn')?.addEventListener('click', () => {
+      this.generateSignal()
+      // 生成后自动刷新信号列表
+      setTimeout(() => this.loadSignals(), 500)
+    })
+    document.getElementById('sig-auto-select')?.addEventListener('change', (e) => {
+      const val = (e.target as HTMLSelectElement).value
+      localStorage.setItem('gold_signal_auto_interval', val)
+      this.restartSignalTimer()
+    })
     document.getElementById('bt-run-btn')?.addEventListener('click', () => this.runBacktest())
     document.getElementById('cmp-run-btn')?.addEventListener('click', () => this.runCompare())
     document.getElementById('risk-btn')?.addEventListener('click', () => this.loadRisk())
@@ -817,11 +866,37 @@ export class GoldTradingUI {
     set('ticker-rsi', data.rsi_14?.toFixed(1) ?? '--')
     set('ticker-atr', formatPrice(data.atr_14))
 
+    // 宏观指标
+    set('macro-dxy', data.dxy != null ? data.dxy.toFixed(2) : '--')
+    set('macro-vix', data.vix != null ? data.vix.toFixed(2) : '--')
+    set('macro-us10y', data.us10y != null ? data.us10y.toFixed(2) + '%' : '--')
+    set('macro-tips', data.tips != null ? data.tips.toFixed(2) + '%' : '--')
+    set('macro-breakeven', data.breakeven != null ? data.breakeven.toFixed(2) + '%' : '--')
+
     const timeEl = document.getElementById('ticker-time')
     if (timeEl) timeEl.textContent = `${data.date} ${timeStr}`
   }
 
   // ===== 信号生成 =====
+
+  /** 重启信号自动生成定时器 */
+  private restartSignalTimer() {
+    if (this.signalTimer) {
+      clearInterval(this.signalTimer)
+      this.signalTimer = null
+    }
+    const sel = document.getElementById('sig-auto-select') as HTMLSelectElement
+    const indicator = document.getElementById('sig-auto-indicator')
+    if (!sel) return
+    const intervalSec = parseInt(sel.value, 10)
+    if (!intervalSec || intervalSec <= 0) {
+      if (indicator) indicator.style.display = 'none'
+      return
+    }
+    if (indicator) indicator.style.display = 'inline'
+    this.signalTimer = setInterval(() => this.generateSignal(), intervalSec * 1000)
+  }
+
   private async generateSignal() {
     if (this.isWorking) return
     const strategyName = (document.getElementById('sig-strategy-select') as HTMLSelectElement)?.value || 'trend_following'
@@ -860,22 +935,17 @@ export class GoldTradingUI {
     const riskOK = data.risk_check?.passed !== false
 
     container.innerHTML = `
-      <div class="signal-card ${isBull ? 'bullish' : isBear ? 'bearish' : ''}">
-        <div class="signal-header">
-          <div class="signal-dir">
-            <span class="signal-dir-badge ${isBull ? 'long' : isBear ? 'short' : ''}">${DIR_LABEL[dir] || dir}</span>
-            <span class="signal-symbol">${data.symbol || 'AU0'}</span>
-          </div>
-          <div class="signal-strategy">${STRATEGY_LABELS[data.strategy]?.icon || ''} ${STRATEGY_LABELS[data.strategy]?.name || data.strategy}</div>
+      <div class="signal-card-compact ${isBull ? 'bullish' : isBear ? 'bearish' : ''}">
+        <div class="scc-row">
+          <span class="signal-dir-badge ${isBull ? 'long' : isBear ? 'short' : ''}">${DIR_LABEL[dir] || dir}</span>
+          <span class="scc-price">¥${formatPrice(data.price)}</span>
+          <span class="scc-item">${data.volume ?? 1}手</span>
+          <span class="scc-item">止损 ${data.stop_loss ? '¥' + formatPrice(data.stop_loss) : '--'}</span>
+          <span class="scc-item">${data.confidence != null ? (data.confidence * 100).toFixed(0) + '%' : '--'}</span>
+          <span class="scc-item">${riskOK ? '✅' : '❌'}</span>
+          <span class="scc-strategy">${STRATEGY_LABELS[data.strategy]?.icon || ''} ${STRATEGY_LABELS[data.strategy]?.name || data.strategy}</span>
         </div>
-        <div class="signal-grid">
-          <div class="signal-item"><span class="s-label">入场价</span><span class="s-value price">¥${formatPrice(data.price)}</span></div>
-          <div class="signal-item"><span class="s-label">数量</span><span class="s-value">${data.volume ?? 1}手</span></div>
-          <div class="signal-item"><span class="s-label">止损</span><span class="s-value ${isBull ? '' : 'red'}">${data.stop_loss ? '¥' + formatPrice(data.stop_loss) : '--'}</span></div>
-          <div class="signal-item"><span class="s-label">置信度</span><span class="s-value">${data.confidence != null ? (data.confidence * 100).toFixed(0) + '%' : '--'}</span></div>
-          <div class="signal-item"><span class="s-label">风控</span><span class="s-value ${riskOK ? 'green' : 'red'}">${riskOK ? '✅ 通过' : '❌ ' + (data.risk_check?.reason || '未通过')}</span></div>
-        </div>
-        ${data.reason ? `<div class="signal-reason">${data.reason}</div>` : ''}
+        ${data.reason ? `<div class="scc-reason">${data.reason}</div>` : ''}
       </div>
     `
   }
@@ -1125,16 +1195,22 @@ export class GoldTradingUI {
       container.innerHTML = '<div class="empty-text">暂无信号</div>'
       return
     }
-    container.innerHTML = signals.map(s => {
+    container.innerHTML = '<div class="signal-grid">' + signals.map(s => {
       const dir = s.direction || ''
       const cls = dir.includes('long') && !dir.includes('close') ? 'long' : dir.includes('short') && !dir.includes('close') ? 'short' : ''
+      const t = s.created_at ? new Date(s.created_at) : null
+      const timeStr = t ? t.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) + ' ' + t.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--'
       return `<div class="signal-mini ${cls}">
-        <span class="sig-dir ${cls}">${DIR_LABEL[dir] || dir}</span>
-        <span class="sig-price">@${s.price ?? '--'}</span>
-        <span class="sig-strategy">${STRATEGY_LABELS[s.strategy_id || s.strategy_name]?.name || s.strategy_id || s.strategy_name}</span>
-        <span class="sig-time">${s.created_at ? new Date(s.created_at).toLocaleDateString('zh-CN') : '--'}</span>
+        <div class="sm-row1">
+          <span class="sig-dir ${cls}">${DIR_LABEL[dir] || dir}</span>
+          <span class="sig-price">@${s.price ?? '--'}</span>
+        </div>
+        <div class="sm-row2">
+          <span class="sig-strategy">${STRATEGY_LABELS[s.strategy_id || s.strategy_name]?.name || s.strategy_id || s.strategy_name}</span>
+          <span class="sig-time">${timeStr}</span>
+        </div>
       </div>`
-    }).join('')
+    }).join('') + '</div>'
   }
 
   // ===== 风控 =====
