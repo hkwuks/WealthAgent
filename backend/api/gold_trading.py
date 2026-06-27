@@ -106,7 +106,8 @@ async def run_backtest(req: BacktestRequest):
     strategy = cls()
     backtester = Backtester()
     try:
-        result = backtester.run(strategy, bars, capital=req.capital, params=req.params)
+        result = backtester.run(strategy, bars, capital=req.capital,
+                                params=req.params, method=req.method)
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -115,11 +116,14 @@ async def run_backtest(req: BacktestRequest):
         "success": True,
         "data": {
             "strategy": result["strategy"],
+            "method": req.method,
+            "effective_method": "walk_forward" if "walk_forward" in result else "simple",
             "signal_count": len(result["signals"]),
             "trade_count": len([t for t in result["trades"] if t.get("type") == "close"]),
             "report": result["report"],
             "signals": result["signals"][-20:],
             "trades": result["trades"][-20:],
+            "walk_forward": result.get("walk_forward"),
         },
     }
 
@@ -153,7 +157,8 @@ async def compare_strategies(req: StrategyComparisonRequest):
         strategy = cls()
         backtester = Backtester()
         try:
-            result = backtester.run(strategy, bars, capital=req.capital)
+            # 统一使用与单策略回测相同的 method
+            result = backtester.run(strategy, bars, capital=req.capital, method=req.method)
             results[name] = result["report"]
         except Exception as e:
             errors.append(f"Strategy '{name}' failed: {str(e)}")
@@ -416,6 +421,45 @@ async def get_ml_feature_importance():
     }
 
 
+# ===== Monte Carlo 模拟 =====
+
+@router.post("/backtest/monte-carlo")
+async def monte_carlo_simulation(
+    strategy_name: str = "trend_following",
+    n_simulations: int = Query(200, ge=10, le=5000, description="模拟路径数"),
+    capital: float = Query(1_000_000, ge=10_000),
+):
+    """Monte Carlo 模拟 — 对回测交易序列 bootstrap 重采样"""
+    cls = StrategyRegistry.get(strategy_name)
+    if not cls:
+        raise HTTPException(status_code=404, detail=f"策略不存在: {strategy_name}")
+
+    bars = await gateway.get_bars("AU0", period="d")
+    if not bars or len(bars) < 50:
+        raise HTTPException(status_code=400, detail="K线数据不足")
+
+    strategy = cls()
+    backtester = Backtester()
+    result = backtester.run(strategy, bars, capital=capital)
+
+    trades = result.get("trades", [])
+    close_trades = [t for t in trades if t.get("type") == "close"]
+    if not close_trades:
+        return {"success": True, "data": {"error": "无平仓交易，无法模拟"}}
+
+    from backend.gold.backtest.monte_carlo import MonteCarloSimulator
+    simulator = MonteCarloSimulator(n_simulations=n_simulations)
+    mc_result = simulator.simulate(trades, capital, len(bars))
+
+    return {
+        "success": True,
+        "data": {
+            "strategy": strategy_name,
+            **mc_result,
+        },
+    }
+
+
 def _get_macro_df():
     """获取宏观因子DataFrame（供ML策略注入）"""
     try:
@@ -650,6 +694,21 @@ async def get_risk_status():
 
     # 获取最近信号统计
     recent_signals = store.get_signals(limit=100)
+    today_signal_count = sum(1 for s in recent_signals
+                             if s.created_at and s.created_at.date() == __import__('datetime').date.today())
+
+    # 读取历史风控日志
+    risk_logs = []
+    try:
+        rows = store.db.execute(
+            "SELECT level, reason, created_at FROM risk_log ORDER BY id DESC LIMIT 20"
+        ).fetchall()
+        for row in rows:
+            risk_logs.append({
+                "level": row[0], "reason": row[1], "created_at": row[2],
+            })
+    except Exception:
+        pass
 
     return {
         "success": True,
@@ -658,8 +717,12 @@ async def get_risk_status():
                 {"name": "max_drawdown", "threshold": f"{config.max_drawdown_pct*100:.0f}%", "status": "active"},
                 {"name": "daily_loss", "threshold": f"{config.max_daily_loss_pct*100:.0f}%", "status": "active"},
                 {"name": "signal_frequency", "threshold": f"{config.max_daily_signals}/日", "status": "active"},
+                {"name": "var_95", "threshold": "10%", "status": "active"},
+                {"name": "volatility", "threshold": "10%", "status": "active"},
             ],
+            "today_signal_count": today_signal_count,
             "recent_signal_count": len(recent_signals),
+            "risk_logs": risk_logs[-10:],
         },
     }
 

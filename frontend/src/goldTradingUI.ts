@@ -280,7 +280,7 @@ export class GoldTradingUI {
 
         <!-- 信号 + 控制面板 -->
         <div class="quant-panels">
-          <!-- 左侧：交易信号区 -->
+          <!-- 左侧：交易信号区 + 风控 -->
           <div class="quant-panel">
             <div class="panel-header">
               <h3>💡 交易信号生成</h3>
@@ -312,6 +312,12 @@ export class GoldTradingUI {
             <div class="panel-body" id="signals-panel">
               <div class="empty-text">暂无信号</div>
             </div>
+
+            <div class="panel-header" style="margin-top:16px;">
+              <h3>🛡️ 风控状态</h3>
+              <button class="btn btn-secondary btn-sm btn-ghost" id="risk-btn">查看</button>
+            </div>
+            <div class="panel-body" id="risk-panel"></div>
           </div>
 
           <!-- 右侧：回测 + 对比 -->
@@ -344,12 +350,6 @@ export class GoldTradingUI {
             <div class="panel-body">
               <div id="cmp-result" class="panel-result"></div>
             </div>
-
-            <div class="panel-header" style="margin-top:16px;">
-              <h3>🛡️ 风控状态</h3>
-              <button class="btn btn-secondary btn-sm btn-ghost" id="risk-btn">查看</button>
-            </div>
-            <div class="panel-body" id="risk-panel"></div>
           </div>
         </div>
 
