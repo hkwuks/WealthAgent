@@ -1,5 +1,5 @@
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from loguru import logger
 
 from backend.gold.core.models import GoldBarData
@@ -170,6 +170,41 @@ class GoldDataGateway:
         """获取黄金ETF实时价格 — 复用现有market_data.py"""
         from backend.market_data import market_data_service
         return await market_data_service.get_etf_price(code)
+
+    async def get_macro_data(self, start: str = "2024-01-01", end: str = None) -> pd.DataFrame:
+        """获取宏观指标数据（DXY, VIX, US10Y）用于ML预测
+
+        返回每日DataFrame，含 date, DXY_value, VIX_value, US10Y_value 列
+        """
+        try:
+            import yfinance as yf
+        except ImportError:
+            logger.warning("yfinance not installed, skip macro data fetch")
+            return pd.DataFrame()
+
+        end = end or datetime.now().strftime("%Y-%m-%d")
+        indicators = {
+            "DXY_value": "DX-Y.NYB",
+            "VIX_value": "^VIX",
+            "US10Y_value": "^TNX",
+        }
+
+        dfs = {}
+        for col, ticker in indicators.items():
+            try:
+                t = yf.Ticker(ticker)
+                hist = t.history(start=start, end=end)
+                if not hist.empty:
+                    dfs[col] = hist["Close"].rename(col)
+            except Exception as e:
+                logger.warning(f"Failed to fetch {ticker}: {e}")
+
+        if not dfs:
+            return pd.DataFrame()
+
+        result = pd.concat(dfs, axis=1).reset_index()
+        result["date"] = result["Date"].dt.strftime("%Y-%m-%d") if hasattr(result["Date"], "dt") else result["Date"]
+        return result[["date"] + list(indicators.keys())]
 
     async def get_training_data(self, symbol: str = 'GC',
                                  lookback_days: int = 2520) -> pd.DataFrame:

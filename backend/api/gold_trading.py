@@ -7,7 +7,8 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timedelta
+import pandas as pd
 
 from backend.gold.strategy.base import StrategyRegistry
 from backend.gold.backtest.engine import Backtester
@@ -19,6 +20,7 @@ from backend.gold.data.gateway import GoldDataGateway
 from backend.gold.data.storage import GoldDataStore
 from backend.gold.core.models import BacktestRequest, StrategyComparisonRequest
 from backend.gold.core.config import GoldSettings
+from backend.data_sync import get_gold_training_data
 from loguru import logger
 
 router = APIRouter(prefix="/gold/trading", tags=["黄金量化交易"])
@@ -289,22 +291,27 @@ async def generate_signal(
     if cls is None:
         raise HTTPException(status_code=404, detail=f"Strategy '{strategy_name}' not found")
 
-    # 获取最新行情 — ML策略需要足够数据训练模型
-    bars = await gateway.get_bars(symbol=symbol, period="d", start="2020-01-01", refresh=True)
-    if not bars or len(bars) < 30:
+    # 获取行情数据（需要足够的历史让策略积累状态）
+    bars = await gateway.get_bars(symbol=symbol, period="d", start="2024-01-01", refresh=True)
+    if not bars or len(bars) < 60:
         raise HTTPException(status_code=400, detail="Insufficient data for signal generation")
+
+    from backend.gold.core.models import SignalDirection
+    from backend.gold.backtest.engine import Backtester
+
+    # ML策略走直接预测路径（不用全量回测，避免宏观特征NaN问题）
+    if strategy_name == "ml_predictor":
+        return await _generate_ml_signal(strategy_name, bars, gateway, cls)
 
     strategy = cls()
     backtester = Backtester()
+    capital = GoldSettings().backtest_capital
 
-    # 用最近bars运行策略获取信号
-    try:
-        result = backtester.run(strategy, bars, capital=1_000_000)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    # 获取最新信号
+    # 用回测引擎完整跑一遍（策略状态机需要全量历史构建）
+    result = backtester.run(strategy, bars, capital=capital)
     signals = result.get("signals", [])
+    current_price = bars[-1].close
+
     if not signals:
         return {
             "success": True,
@@ -312,25 +319,157 @@ async def generate_signal(
                 "signal": None,
                 "message": "当前无交易信号",
                 "strategy": strategy_name,
+                "price": round(current_price, 2),
             },
         }
 
-    # 取最后一个信号作为建议
+    signal_data = signals[-1]
+    # 复原为 GoldSignal 对象
     from backend.gold.core.models import GoldSignal
-    latest_signal_data = signals[-1]
-    signal = GoldSignal(**latest_signal_data) if isinstance(latest_signal_data, dict) else None
+    if isinstance(signal_data, dict):
+        signal_data = GoldSignal(**signal_data)
 
-    if signal is None:
-        return {"success": True, "data": {"signal": latest_signal_data, "strategy": strategy_name}}
+    # 止损偏移量（基于原始信号，不是覆盖后的价格）
+    orig_price = signal_data.price
+    orig_stop_loss = signal_data.stop_loss
+
+    # 用当前最新价格覆盖
+    signal_data.price = round(current_price, 2)
+    # 止损按比例偏移
+    if orig_stop_loss:
+        offset = abs(orig_stop_loss - orig_price)
+        if signal_data.direction == SignalDirection.LONG:
+            signal_data.stop_loss = round(current_price - offset, 2)
+        else:
+            signal_data.stop_loss = round(current_price + offset, 2)
+
+    # 用当前时间覆盖
+    now = datetime.now()
+    signal_data.created_at = now
+    signal_data.signal_id = f"{strategy_name}_{now.strftime('%Y%m%d%H%M%S')}_gen"
+
+    # 存入数据库
+    try:
+        store = GoldDataStore()
+        store.save_signal(signal_data)
+    except Exception as e:
+        logger.warning(f"保存信号失败: {e}")
 
     # 风控检查
     risk_checker = RiskChecker()
-    risk_result = risk_checker.check(signal)
+    risk_result = risk_checker.check(signal_data)
 
     # 输出交易建议
     signal_output = SignalOutput()
-    advice = signal_output.output(signal, risk_result)
+    advice = signal_output.output(signal_data, risk_result)
 
+    return {"success": True, "data": advice}
+
+
+async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> dict:
+    """ML策略信号生成 — 直接预测路径，绕过全量回测"""
+    from backend.gold.core.models import GoldSignal, SignalDirection
+    from backend.gold_prediction import GoldPricePredictor, FeatureEngineer, ModelType, PredictionHorizon
+    from loguru import logger
+
+    current_price = bars[-1].close
+
+    # 获取宏观数据
+    macro_df = await gateway.get_macro_data(start="2024-01-01")
+    has_macro = not macro_df.empty
+
+    # 准备特征数据
+    rows = []
+    for b in bars:
+        rows.append({
+            "date": b.datetime.strftime("%Y-%m-%d"),
+            "open": b.open, "high": b.high, "low": b.low,
+            "close": b.close, "volume": b.volume,
+        })
+    df = __import__("pandas").DataFrame(rows)
+
+    # 合并宏观因子
+    if has_macro:
+        macro = macro_df.copy()
+        macro["date"] = macro["date"].astype(str)
+        df["date"] = df["date"].astype(str)
+        df = df.merge(macro, on="date", how="left")
+        for col in [c for c in macro.columns if c != "date"]:
+            if col in df.columns:
+                df[col] = df[col].ffill().bfill().fillna(0)
+        logger.info(f"Merged macro data for ML prediction: {list(macro.columns)}")
+
+    # 特征工程
+    fe = FeatureEngineer()
+    X = fe.prepare_features_for_prediction(df)
+    if len(X) < 10:
+        logger.warning(f"Insufficient feature samples: {len(X)}")
+        return {"success": True, "data": {"signal": None, "message": "特征数据不足", "strategy": strategy_name, "price": round(current_price, 2)}}
+
+    # 用全部数据训练一个小模型（Ridge，小样本稳定）
+    full_X, y = fe.prepare_features(df)
+    if len(full_X) < 20:
+        logger.warning(f"Insufficient training samples: {len(full_X)}")
+        return {"success": True, "data": {"signal": None, "message": "训练数据不足", "strategy": strategy_name, "price": round(current_price, 2)}}
+
+    from sklearn.linear_model import Ridge
+    from sklearn.preprocessing import StandardScaler
+    import numpy as np
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(full_X)
+    model = Ridge(alpha=1.0)
+    model.fit(X_scaled, y)
+
+    # 预测最新数据
+    X_latest = X.iloc[-1:]
+    X_latest_scaled = scaler.transform(X_latest)
+    predicted_change = float(model.predict(X_latest_scaled)[0])
+
+    # 生成信号
+    threshold = 0.002  # 0.2%
+    confidence = min(0.9, abs(predicted_change) / 0.02)
+
+    signal = None
+    if predicted_change > threshold:
+        sl = round(current_price * 0.97, 2)  # -3%止损
+        signal = GoldSignal(
+            signal_id=f"ml_{datetime.now().strftime('%Y%m%d%H%M%S')}_signal",
+            strategy_id=strategy_name, strategy_name=strategy_name,
+            symbol="AU0", direction=SignalDirection.LONG,
+            price=round(current_price, 2), volume=1, stop_loss=sl,
+            confidence=round(confidence, 2),
+            reason=f"ML预测涨{predicted_change*100:.2f}% (Ridge+{'宏观' if has_macro else '技术'}因子)",
+            created_at=datetime.now(),
+        )
+    elif predicted_change < -threshold:
+        sl = round(current_price * 1.03, 2)  # +3%止损
+        signal = GoldSignal(
+            signal_id=f"ml_{datetime.now().strftime('%Y%m%d%H%M%S')}_signal",
+            strategy_id=strategy_name, strategy_name=strategy_name,
+            symbol="AU0", direction=SignalDirection.SHORT,
+            price=round(current_price, 2), volume=1, stop_loss=sl,
+            confidence=round(confidence, 2),
+            reason=f"ML预测跌{predicted_change*100:.2f}% (Ridge+{'宏观' if has_macro else '技术'}因子)",
+            created_at=datetime.now(),
+        )
+
+    if signal is None:
+        return {"success": True, "data": {"signal": None, "message": f"ML预测{predicted_change*100:.2f}%，未达阈值", "strategy": strategy_name, "price": round(current_price, 2)}}
+
+    # 保存、风控、输出
+    from backend.gold.data.storage import GoldDataStore
+    from backend.gold.risk.checks import RiskChecker
+    from backend.gold.signal.output import SignalOutput
+
+    store = GoldDataStore()
+    store.save_signal(signal)
+
+    risk_checker = RiskChecker()
+    risk_result = risk_checker.check(signal)
+
+    signal_output = SignalOutput()
+    advice = signal_output.output(signal, risk_result)
     return {"success": True, "data": advice}
 
 
@@ -341,9 +480,12 @@ async def get_recent_signals(
     strategy_name: Optional[str] = Query(None, description="策略名称过滤"),
     limit: int = Query(50, ge=1, le=200),
 ):
-    """获取最近的交易信号（从数据库）"""
+    """获取最近的交易信号（从数据库，仅返回近48小时内的）"""
     store = GoldDataStore()
     signals = store.get_signals(strategy_id=strategy_name, limit=limit)
+    # 只保留48小时内的信号（旧信号是历史回测留下的）
+    cutoff = datetime.now() - timedelta(hours=48)
+    signals = [s for s in signals if s.created_at and s.created_at >= cutoff]
     return {"success": True, "data": signals}
 
 
@@ -494,6 +636,22 @@ async def get_market_data():
 
         recent_signals = store.get_signals(limit=10)
 
+        # ===== 宏观指标数据 (DXY, VIX, US10Y, TIPS, Breakeven) =====
+        macro = {}
+        try:
+            df = get_gold_training_data("GC", lookback_days=500)
+            if not df.empty:
+                row = df.iloc[-1]
+                macro = {
+                    "dxy": round(row["DXY_value"], 2) if "DXY_value" in row and pd.notna(row["DXY_value"]) else None,
+                    "vix": round(row["VIX_value"], 2) if "VIX_value" in row and pd.notna(row["VIX_value"]) else None,
+                    "us10y": round(row["US10Y_value"], 2) if "US10Y_value" in row and pd.notna(row["US10Y_value"]) else None,
+                    "tips": round(row["TIPS_value"], 2) if "TIPS_value" in row and pd.notna(row["TIPS_value"]) else None,
+                    "breakeven": round(row["BREAKEVEN_level"], 2) if "BREAKEVEN_level" in row and pd.notna(row["BREAKEVEN_level"]) else None,
+                }
+        except Exception as e:
+            logger.warning(f"Macro data fetch failed: {e}")
+
         return {
             "success": True,
             "data": {
@@ -514,6 +672,8 @@ async def get_market_data():
                 "timestamp": latest.datetime.isoformat() if hasattr(latest.datetime, 'isoformat') else str(latest.datetime),
                 "date": latest.datetime.strftime("%Y-%m-%d") if hasattr(latest.datetime, 'strftime') else str(latest.datetime),
                 "recent_signals": recent_signals,
+                # 宏观指标
+                **macro,
             },
         }
     except HTTPException:
