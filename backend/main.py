@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from backend.config import settings
 from backend.api import funds, market, valuation, gold, gold_trading
+from backend.gold.core.errors import GoldTradingError
 from loguru import logger
 
 
@@ -268,6 +269,15 @@ async def mcp_info():
             ],
         }
     }
+
+
+@app.exception_handler(GoldTradingError)
+async def gold_trading_error_handler(request: Request, exc: GoldTradingError):
+    logger.warning(f"GoldTradingError: {exc}")
+    return JSONResponse(
+        status_code=400,
+        content={"success": False, **exc.to_dict()},
+    )
 
 
 @app.exception_handler(Exception)

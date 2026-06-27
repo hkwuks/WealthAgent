@@ -39,6 +39,7 @@ class StrategyBase(ABC):
 
     子类可调用:
     - emit_signal(): 输出交易信号
+    - calc_position_size(): 波动率平价仓位
     - get_position(): 查询当前持仓
     """
 
@@ -47,6 +48,9 @@ class StrategyBase(ABC):
     description: str = ""
     default_params: dict = {}
     param_ranges: dict = {}
+
+    # 策略级别手续费（元/手）：None 则使用系统默认
+    commission_per_lot: Optional[float] = None
 
     def __init__(self, **kwargs):
         for key, value in {**self.default_params, **kwargs}.items():
@@ -98,6 +102,36 @@ class StrategyBase(ABC):
         if self._context:
             return self._context.get_position(symbol)
         return None
+
+    def calc_position_size(self, price: float, atr_value: float = None,
+                           capital: float = None, multiplier: int = 1000) -> int:
+        """
+        波动率平价仓位计算
+
+        目标波动率 = target_vol_pct (默认 10%)
+        每手风险价值 = ATR × 合约乘数
+        仓位 = (capital × 目标波动率比例) / 每手风险价值
+
+        Args:
+            price: 当前价格
+            atr_value: ATR值（元/克），None则用固定position_size
+            capital: 可用资金，None则用默认值
+
+        Returns:
+            建议手数 (int)
+        """
+        if atr_value is None or atr_value <= 0:
+            return self.position_size
+
+        target_vol = getattr(self, 'target_vol_pct', 0.10)
+        cap = capital or 1_000_000
+
+        risk_per_lot = atr_value * multiplier
+        if risk_per_lot <= 0:
+            return 1
+
+        raw_size = int((cap * target_vol) / risk_per_lot)
+        return max(1, min(raw_size, 10))  # 最多10手防过度集中
 
     def _validate_signal(self, signal: GoldSignal) -> bool:
         if signal.volume <= 0:

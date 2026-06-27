@@ -1,28 +1,38 @@
 """
-交易建议输出 — 结构化信号 + 持久化
+交易建议输出 — 信号 + 订单 + 成交链路
 """
 
 from backend.gold.core.models import GoldSignal, RiskCheckResult
 from backend.gold.data.storage import GoldDataStore
+from backend.gold.risk.order_manager import OrderManager
 from loguru import logger
 
 
 class SignalOutput:
-    """交易建议输出 — 结构化信号 + API返回"""
+    """交易建议输出 — 信号→订单→成交"""
 
     def __init__(self, data_store: GoldDataStore = None):
         self.data_store = data_store or GoldDataStore()
+        self.order_manager = OrderManager(data_store)
 
     def output(self, signal: GoldSignal, risk_result: RiskCheckResult = None) -> dict:
         """
         输出交易建议
 
-        保存信号到SQLite，返回结构化建议。
+        1. 保存信号到 SQLite
+        2. 创建订单（含风控结果）
+        3. 返回结构化建议
         """
         self.data_store.save_signal(signal)
 
+        # 信号→订单
+        risk_reason = None if (risk_result and risk_result.passed) else (risk_result.reason if risk_result else None)
+        order = self.order_manager.create_from_signal(signal, risk_reason=risk_reason)
+
         advice = {
             "signal_id": signal.signal_id,
+            "order_id": order.order_id,
+            "order_status": order.status.value,
             "strategy": signal.strategy_name,
             "symbol": signal.symbol,
             "direction": signal.direction.value,
@@ -43,6 +53,7 @@ class SignalOutput:
         logger.info(f"交易建议: {signal.direction.value} {signal.symbol} "
                     f"@{signal.price} sl={signal.stop_loss} "
                     f"conf={signal.confidence:.2f} "
+                    f"order={order.status.value} "
                     f"risk={'PASS' if (risk_result and risk_result.passed) else 'WARN'}")
 
         return advice
@@ -50,5 +61,4 @@ class SignalOutput:
     def get_recent_signals(self, strategy_id: str = None,
                            limit: int = 50) -> list[dict]:
         """获取最近交易建议"""
-        signals = self.data_store.get_signals(strategy_id, limit)
-        return signals
+        return self.data_store.get_signals(strategy_id, limit)

@@ -16,6 +16,7 @@ class TrendFollowingStrategy(StrategyBase):
         "donchian_entry": 20,
         "donchian_exit": 10,
         "position_size": 1,
+        "target_vol_pct": 0.10,
     }
     param_ranges = {
         "atr_stop_multiplier": [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0],
