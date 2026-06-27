@@ -13,7 +13,11 @@ import pandas as pd
 from backend.gold.strategy.base import StrategyRegistry
 from backend.gold.backtest.engine import Backtester
 from backend.gold.backtest.sensitivity import SensitivityAnalyzer
-from backend.gold.backtest.validation import SampleSplitter, ScenarioValidator
+from backend.gold.backtest.validation import (
+    SampleSplitter, ScenarioValidator,
+    WalkForwardValidatorAdapter, CPCVValidatorAdapter,
+)
+from backend.gold.data.labeling import TripleBarrierLabeler
 from backend.gold.risk.checks import RiskChecker
 from backend.gold.signal.output import SignalOutput
 from backend.gold.data.gateway import GoldDataGateway
@@ -102,7 +106,8 @@ async def run_backtest(req: BacktestRequest):
     strategy = cls()
     backtester = Backtester()
     try:
-        result = backtester.run(strategy, bars, capital=req.capital, params=req.params)
+        result = backtester.run(strategy, bars, capital=req.capital,
+                                params=req.params, method=req.method)
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -111,11 +116,14 @@ async def run_backtest(req: BacktestRequest):
         "success": True,
         "data": {
             "strategy": result["strategy"],
+            "method": req.method,
+            "effective_method": "walk_forward" if "walk_forward" in result else "simple",
             "signal_count": len(result["signals"]),
             "trade_count": len([t for t in result["trades"] if t.get("type") == "close"]),
             "report": result["report"],
             "signals": result["signals"][-20:],
             "trades": result["trades"][-20:],
+            "walk_forward": result.get("walk_forward"),
         },
     }
 
@@ -149,7 +157,8 @@ async def compare_strategies(req: StrategyComparisonRequest):
         strategy = cls()
         backtester = Backtester()
         try:
-            result = backtester.run(strategy, bars, capital=req.capital)
+            # 统一使用与单策略回测相同的 method
+            result = backtester.run(strategy, bars, capital=req.capital, method=req.method)
             results[name] = result["report"]
         except Exception as e:
             errors.append(f"Strategy '{name}' failed: {str(e)}")
@@ -274,6 +283,192 @@ async def run_validation(req: ValidationRequest):
     }
 
 
+# ===== Walk-Forward 回测 =====
+
+@router.post("/backtest/walk-forward")
+async def walk_forward_backtest(
+    strategy_name: str = "trend_following",
+    train_window: int = Query(252, ge=60, le=500),
+    test_window: int = Query(20, ge=5, le=60),
+    embargo_days: int = Query(20, ge=0, le=100),
+    capital: float = Query(1_000_000, ge=10_000),
+):
+    """Walk-Forward 滚动窗口回测 (Purging + Embargo)"""
+    cls = StrategyRegistry.get(strategy_name)
+    if not cls:
+        raise HTTPException(status_code=404, detail=f"策略不存在: {strategy_name}")
+
+    bars = gateway.get_bars("AU0", period="d")
+    if not bars or len(bars) < train_window + 30:
+        raise HTTPException(status_code=400, detail=f"K线数据不足 {len(bars or [])} 根")
+
+    import copy
+    validator = WalkForwardValidatorAdapter(
+        train_window=train_window, test_window=test_window,
+        embargo_days=embargo_days, capital=capital,
+    )
+    result = validator.validate(strategy_name, copy.deepcopy(bars))
+
+    return {"success": True, "data": result}
+
+
+# ===== CPCV 回测 =====
+
+@router.post("/backtest/cpcv")
+async def cpcv_backtest(
+    strategy_name: str = "trend_following",
+    n_groups: int = Query(6, ge=3, le=10),
+    k_test: int = Query(2, ge=1, le=5),
+    capital: float = Query(1_000_000, ge=10_000),
+):
+    """CPCV (Combinatorial Purged Cross-Validation) 回测 + PBO"""
+    cls = StrategyRegistry.get(strategy_name)
+    if not cls:
+        raise HTTPException(status_code=404, detail=f"策略不存在: {strategy_name}")
+
+    bars = gateway.get_bars("AU0", period="d")
+    if not bars or len(bars) < 200:
+        raise HTTPException(status_code=400, detail=f"K线数据不足 {len(bars or [])} 根")
+
+    import copy
+    validator = CPCVValidatorAdapter(
+        n_groups=n_groups, k_test=k_test,
+        capital=capital,
+    )
+    result = validator.validate(strategy_name, copy.deepcopy(bars))
+
+    return {"success": True, "data": result}
+
+
+# ===== Triple-Barrier 标注 =====
+
+@router.post("/label/triple-barrier")
+async def triple_barrier_label(
+    atr_window: int = Query(20, ge=5, le=60),
+    tp_multiplier: float = Query(1.5, ge=0.5, le=5.0),
+    sl_multiplier: float = Query(1.0, ge=0.5, le=5.0),
+    max_holding_days: int = Query(5, ge=1, le=30),
+):
+    """对当前K线进行 Triple-Barrier 标注，返回标签分布和明细"""
+    bars = gateway.get_bars("AU0", period="d")
+    if not bars or len(bars) < 50:
+        raise HTTPException(status_code=400, detail=f"K线数据不足 {len(bars or [])} 根")
+
+    labeler = TripleBarrierLabeler(
+        atr_window=atr_window, tp_multiplier=tp_multiplier,
+        sl_multiplier=sl_multiplier, max_holding_days=max_holding_days,
+    )
+    labels = labeler.label_bars(bars)
+    distribution = labeler.label_distribution(labels)
+
+    return {
+        "success": True,
+        "data": {
+            "total_bars": len(bars),
+            "labeled": len([l for l in labels if l["label"] != 0]),
+            "config": {
+                "atr_window": atr_window,
+                "tp_multiplier": tp_multiplier,
+                "sl_multiplier": sl_multiplier,
+                "max_holding_days": max_holding_days,
+            },
+            "distribution": distribution,
+            "labels": labels[-50:],
+        },
+    }
+
+
+# ===== 特征重要性（ML策略） =====
+
+@router.get("/feature-importance")
+async def get_ml_feature_importance():
+    """返回 ML 预测器最近一次训练的特征重要性"""
+    cls = StrategyRegistry.get("ml_predictor")
+    if not cls:
+        raise HTTPException(status_code=404, detail="ML 策略未注册")
+
+    import copy
+    bars = gateway.get_bars("AU0", period="d")
+    if not bars or len(bars) < 150:
+        raise HTTPException(status_code=400, detail="K线数据不足")
+
+    strategy = cls()
+    from backend.gold.backtest.engine import BacktestStrategyContext
+    from backend.gold.backtest.cost_model import CostModel
+    from backend.gold.core.config import gold_settings
+
+    ctx = BacktestStrategyContext(
+        capital=1_000_000,
+        cost_model=CostModel(),
+        multiplier=gold_settings.au_multiplier,
+        margin_rate=gold_settings.au_margin_rate,
+    )
+    strategy._macro_df = _get_macro_df()
+    strategy.set_context(ctx)
+    strategy.on_init(ctx)
+    for b in bars[-200:]:
+        strategy.on_bar(b)
+
+    importance = strategy.get_feature_importance()
+    tb_dist = strategy.get_tb_label_distribution()
+
+    return {
+        "success": True,
+        "data": {
+            "feature_importance": importance,
+            "tb_label_distribution": tb_dist if tb_dist else None,
+        },
+    }
+
+
+# ===== Monte Carlo 模拟 =====
+
+@router.post("/backtest/monte-carlo")
+async def monte_carlo_simulation(
+    strategy_name: str = "trend_following",
+    n_simulations: int = Query(200, ge=10, le=5000, description="模拟路径数"),
+    capital: float = Query(1_000_000, ge=10_000),
+):
+    """Monte Carlo 模拟 — 对回测交易序列 bootstrap 重采样"""
+    cls = StrategyRegistry.get(strategy_name)
+    if not cls:
+        raise HTTPException(status_code=404, detail=f"策略不存在: {strategy_name}")
+
+    bars = await gateway.get_bars("AU0", period="d")
+    if not bars or len(bars) < 50:
+        raise HTTPException(status_code=400, detail="K线数据不足")
+
+    strategy = cls()
+    backtester = Backtester()
+    result = backtester.run(strategy, bars, capital=capital)
+
+    trades = result.get("trades", [])
+    close_trades = [t for t in trades if t.get("type") == "close"]
+    if not close_trades:
+        return {"success": True, "data": {"error": "无平仓交易，无法模拟"}}
+
+    from backend.gold.backtest.monte_carlo import MonteCarloSimulator
+    simulator = MonteCarloSimulator(n_simulations=n_simulations)
+    mc_result = simulator.simulate(trades, capital, len(bars))
+
+    return {
+        "success": True,
+        "data": {
+            "strategy": strategy_name,
+            **mc_result,
+        },
+    }
+
+
+def _get_macro_df():
+    """获取宏观因子DataFrame（供ML策略注入）"""
+    try:
+        df = get_gold_training_data("GC", lookback_days=500)
+        return df if not df.empty else None
+    except Exception:
+        return None
+
+
 # ===== 信号生成 =====
 
 @router.post("/signal/generate")
@@ -369,7 +564,7 @@ async def generate_signal(
 async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> dict:
     """ML策略信号生成 — 直接预测路径，绕过全量回测"""
     from backend.gold.core.models import GoldSignal, SignalDirection
-    from backend.gold_prediction import GoldPricePredictor, FeatureEngineer, ModelType, PredictionHorizon
+    from backend.gold.ml import GoldPricePredictor, FeatureEngineer, ModelType, PredictionHorizon
     from loguru import logger
 
     current_price = bars[-1].close
@@ -499,6 +694,21 @@ async def get_risk_status():
 
     # 获取最近信号统计
     recent_signals = store.get_signals(limit=100)
+    today_signal_count = sum(1 for s in recent_signals
+                             if s.created_at and s.created_at.date() == __import__('datetime').date.today())
+
+    # 读取历史风控日志
+    risk_logs = []
+    try:
+        rows = store.db.execute(
+            "SELECT level, reason, created_at FROM risk_log ORDER BY id DESC LIMIT 20"
+        ).fetchall()
+        for row in rows:
+            risk_logs.append({
+                "level": row[0], "reason": row[1], "created_at": row[2],
+            })
+    except Exception:
+        pass
 
     return {
         "success": True,
@@ -507,8 +717,12 @@ async def get_risk_status():
                 {"name": "max_drawdown", "threshold": f"{config.max_drawdown_pct*100:.0f}%", "status": "active"},
                 {"name": "daily_loss", "threshold": f"{config.max_daily_loss_pct*100:.0f}%", "status": "active"},
                 {"name": "signal_frequency", "threshold": f"{config.max_daily_signals}/日", "status": "active"},
+                {"name": "var_95", "threshold": "10%", "status": "active"},
+                {"name": "volatility", "threshold": "10%", "status": "active"},
             ],
+            "today_signal_count": today_signal_count,
             "recent_signal_count": len(recent_signals),
+            "risk_logs": risk_logs[-10:],
         },
     }
 
