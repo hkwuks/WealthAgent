@@ -6,7 +6,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from backend.config import settings
-from backend.api import funds, market, valuation, gold, gold_trading
+from backend.api import funds, market, valuation, gold_trading
+from backend.gold.core.errors import GoldTradingError
 from loguru import logger
 
 
@@ -138,13 +139,12 @@ app = FastAPI(
     description="""
 ## 智能理财Agent API
 
-提供基金信息查询、实时估值、黄金预测、市场数据等功能。
+提供基金信息查询、实时估值、市场数据等功能。
 
 ### 主要功能
 
 * **基金信息**: 获取基金基本信息、持仓、净值历史
 * **基金估值**: 实时估算基金净值涨跌
-* **黄金预测**: 机器学习预测黄金价格走势
 * **市场数据**: 获取股票、ETF、指数实时行情
 
 ### MCP (Model Context Protocol) 支持
@@ -183,7 +183,6 @@ app.add_middleware(
 app.include_router(funds.router, prefix=settings.API_PREFIX)
 app.include_router(market.router, prefix=settings.API_PREFIX)
 app.include_router(valuation.router, prefix=settings.API_PREFIX)
-app.include_router(gold.router, prefix=settings.API_PREFIX)
 app.include_router(gold_trading.router, prefix=settings.API_PREFIX)
 
 
@@ -232,21 +231,6 @@ async def mcp_info():
                 "get_index_price",
                 "get_global_index_price",
                 "get_supported_indices",
-                # 黄金预测
-                "predict_gold_price",
-                "predict_gold_tb",
-                "retrain_gold_model",
-                "get_gold_history",
-                "sync_gold_data",
-                "get_gold_current",
-                "get_gold_factors",
-                "get_gold_drift_status",
-                "record_gold_actual",
-                "get_gold_factor_importance",
-                "get_gold_coverage",
-                "run_gold_backtest",
-                "run_gold_backtest_trend",
-                "get_gold_trend_signal",
             ],
             "resources": [
                 # 基金/市场
@@ -256,10 +240,6 @@ async def mcp_info():
                 "market://etf/{etf_code}",
                 "market://index/{index_code}",
                 "market://global-index/{index_code}",
-                # 黄金
-                "gold://current",
-                "gold://signal",
-                "gold://factors",
             ],
             "prompts": [
                 "analyze_fund",
@@ -268,6 +248,15 @@ async def mcp_info():
             ],
         }
     }
+
+
+@app.exception_handler(GoldTradingError)
+async def gold_trading_error_handler(request: Request, exc: GoldTradingError):
+    logger.warning(f"GoldTradingError: {exc}")
+    return JSONResponse(
+        status_code=400,
+        content={"success": False, **exc.to_dict()},
+    )
 
 
 @app.exception_handler(Exception)
