@@ -523,6 +523,230 @@ async def get_market_data():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ===== K线技术分析 =====
+
+@router.get("/analysis")
+async def get_kline_analysis(
+    symbol: str = Query("AU0", description="合约代码"),
+    period: str = Query("d", description="K线周期"),
+    limit: int = Query(500, ge=60, le=2000),
+):
+    """K线技术分析解读 — 趋势/指标/价位/综合研判"""
+    bars = await gateway.get_bars(symbol=symbol, period=period, limit=limit, refresh=False)
+    if not bars:
+        raise HTTPException(status_code=404, detail="No data for analysis")
+
+    closes = [b.close for b in bars]
+    opens = [b.open for b in bars]
+    highs = [b.high for b in bars]
+    lows = [b.low for b in bars]
+    vols = [b.volume for b in bars]
+    latest = bars[-1]
+    price = latest.close
+
+    # --- 移动均线 ---
+    def ma(n):
+        if len(closes) < n: return None
+        return round(sum(closes[-n:]) / n, 2)
+
+    ma5, ma10, ma20, ma60, ma120, ma250 = [ma(n) for n in [5, 10, 20, 60, 120, 250]]
+    mas = {"ma5": ma5, "ma10": ma10, "ma20": ma20, "ma60": ma60, "ma120": ma120, "ma250": ma250}
+
+    # 均线排列
+    short = [ma5, ma10, ma20]
+    short_valid = all(v is not None for v in short)
+    if short_valid and all(short[i] > short[i + 1] for i in range(2)):
+        ma_alignment = "多头排列"
+    elif short_valid and all(short[i] < short[i + 1] for i in range(2)):
+        ma_alignment = "空头排列"
+    else:
+        ma_alignment = "交织盘整"
+
+    # 价格相对均线位置
+    above_ma_count = sum(1 for m in [ma5, ma10, ma20, ma60] if m is not None and price > m)
+    below_ma_count = sum(1 for m in [ma5, ma10, ma20, ma60] if m is not None and price < m)
+    ma_position = "均线上方" if above_ma_count >= 3 else "均线下方" if below_ma_count >= 3 else "均线附近"
+
+    # --- RSI ---
+    rsi14 = _calc_rsi(closes, 14)
+    rsi_signal = "超卖" if rsi14 and rsi14 < 30 else "超买" if rsi14 and rsi14 > 70 else "中性"
+
+    # --- 布林带 (20,2) ---
+    import statistics
+    bb_ma = ma(20)
+    bb_std = statistics.stdev(closes[-20:]) if len(closes) >= 20 else 0
+    bb_upper = round(bb_ma + 2 * bb_std, 2) if bb_ma else None
+    bb_lower = round(bb_ma - 2 * bb_std, 2) if bb_ma else None
+    bb_width = round((bb_upper - bb_lower) / bb_ma * 100, 2) if bb_ma and bb_upper and bb_lower else None
+    if bb_lower and bb_upper:
+        bb_position = round((price - bb_lower) / (bb_upper - bb_lower) * 100, 1)
+        bb_signal = "下轨附近" if bb_position < 20 else "上轨附近" if bb_position > 80 else "中轨附近"
+    else:
+        bb_position, bb_signal = None, "--"
+
+    # --- 关键价位 ---
+    lookback = min(60, len(bars))
+    recent_high = max(highs[-lookback:])
+    recent_low = min(lows[-lookback:])
+    recent_high_idx = highs[-lookback:].index(recent_high)
+    recent_low_idx = lows[-lookback:].index(recent_low)
+
+    # 近52周高/低（仅日线有意义）
+    yearly = min(252, len(bars))
+    high_52w = max(highs[-yearly:])
+    low_52w = min(lows[-yearly:])
+
+    # 斐波那契
+    fib_diff = recent_high - recent_low
+    fib_levels = {
+        "0.236": round(recent_high - fib_diff * 0.236, 2),
+        "0.382": round(recent_high - fib_diff * 0.382, 2),
+        "0.500": round(recent_high - fib_diff * 0.500, 2),
+        "0.618": round(recent_high - fib_diff * 0.618, 2),
+        "0.786": round(recent_high - fib_diff * 0.786, 2),
+    }
+
+    # --- 成交量分析 ---
+    vol_avg_60 = sum(vols[-60:]) / 60 if len(vols) >= 60 else sum(vols) / len(vols)
+    vol_avg_20 = sum(vols[-20:]) / 20
+    vol_avg_5 = sum(vols[-5:]) / 5
+    vol_ratio_20_60 = round(vol_avg_20 / vol_avg_60, 2) if vol_avg_60 else 1
+    vol_trend = "缩量" if vol_ratio_20_60 < 0.8 else "放量" if vol_ratio_20_60 > 1.3 else "正常"
+    latest_vol_ratio = round(vols[-1] / vol_avg_20, 1) if vol_avg_20 else 1
+
+    # --- 特殊K线形态（近30根） ---
+    patterns = []
+    for i in range(-min(30, len(bars)), 0):
+        b = bars[i]
+        body = abs(b.close - b.open)
+        total_range = b.high - b.low
+        if total_range == 0:
+            continue
+        body_ratio = body / total_range
+
+        # 十字星
+        if body_ratio < 0.1 and total_range / b.open * 100 > 1.0:
+            patterns.append({
+                "date": b.datetime.strftime("%Y-%m-%d") if period == "d" else b.datetime.isoformat(),
+                "type": "十字星",
+                "detail": f"上下影线明显，多空博弈激烈" if b.high - max(b.close, b.open) > body and min(b.close, b.open) - b.low > body else "纺锤线，趋势犹豫",
+                "signal": "反转预警" if i == -1 else "分歧信号",
+            })
+
+        # 大阳/大阴
+        range_pct = (b.high - b.low) / b.open * 100
+        if b.close > b.open and range_pct > 2.5:
+            direction = "大阳线"
+            signal_text = "多头强势" if i >= -5 else "多方占优"
+            patterns.append({"date": b.datetime.isoformat(), "type": direction, "detail": f"涨幅{(b.close-b.open)/b.open*100:.1f}%", "signal": signal_text})
+        elif b.close < b.open and range_pct > 2.5:
+            direction = "大阴线"
+            signal_text = "空头打压" if i >= -5 else "空方占优"
+            patterns.append({"date": b.datetime.isoformat(), "type": direction, "detail": f"跌幅{(b.close-b.open)/b.open*100:.1f}%", "signal": signal_text})
+
+    patterns = patterns[:8]  # 最多8个
+
+    # --- 趋势强度 ---
+    # 计算斜率（最近20根收盘价的线性回归）
+    if len(closes) >= 20:
+        n = 20
+        x_avg = (n - 1) / 2
+        y_avg = sum(closes[-n:]) / n
+        num = sum((i - x_avg) * (closes[-n + i] - y_avg) for i in range(n))
+        den = sum((i - x_avg) ** 2 for i in range(n))
+        slope = num / den if den != 0 else 0
+        trend_strength = "强势" if abs(slope) > 2 else "温和" if abs(slope) > 0.5 else "弱势"
+    else:
+        slope, trend_strength = 0, "--"
+
+    # 近10日涨跌天数
+    up_days = sum(1 for i in range(-10, 0) if closes[i] > closes[i - 1])
+    down_days = 10 - up_days
+
+    # 连续涨跌
+    streak = 0
+    for i in range(-1, -min(20, len(closes)), -1):
+        if closes[i] > closes[i - 1]:
+            if streak >= 0: streak += 1
+            else: break
+        else:
+            if streak <= 0: streak -= 1
+            else: break
+    streak_dir = f"连涨{streak}天" if streak > 0 else f"连跌{abs(streak)}天" if streak < 0 else "平盘"
+
+    # --- 综合研判 ---
+    judgments = []
+    if rsi14 and rsi14 < 35:
+        judgments.append("RSI进入超卖区，短期技术性反弹需求上升")
+    if bb_position is not None and bb_position < 20:
+        judgments.append(f"价格处于布林下轨附近（{bb_position}%），偏低估区域")
+    if ma_alignment == "空头排列":
+        judgments.append("均线系统空头排列，中期趋势偏空")
+    if above_ma_count == 0:
+        judgments.append(f"价格运行于所有均线之下，空头主导市场")
+    if vol_ratio_20_60 and vol_ratio_20_60 < 0.8:
+        judgments.append("近期持续缩量，下跌动能衰减，关注企稳信号")
+    if slope and slope < -3:
+        judgments.append(f"近期斜率较陡（{slope:.1f}），下跌速度偏快，注意加速赶底可能")
+    elif slope and slope > 3:
+        judgments.append(f"近期斜率较陡（{slope:.1f}），上涨加速，关注超买风险")
+    if streak <= -3:
+        judgments.append(f"连续{abs(streak)}日下跌，短期乖离较大")
+    if streak >= 3:
+        judgments.append(f"连续{streak}日上涨，短期过热需注意回调")
+
+    if not judgments:
+        judgments.append("各指标信号不明确，建议结合更大周期趋势判断")
+
+    r = {
+        "trend": {
+            "direction": "上涨" if slope > 0.5 else "下跌" if slope < -0.5 else "震荡",
+            "ma_alignment": ma_alignment,
+            "ma_position": ma_position,
+            "slope": round(slope, 2) if slope != 0 else None,
+            "strength": trend_strength,
+            "up_days": up_days,
+            "down_days": down_days,
+            "streak": streak_dir,
+            # 最近涨跌幅（从当前周期视角）
+            "change_1w": round((price - closes[-6]) / closes[-6] * 100, 2) if len(closes) >= 6 else None,
+            "change_1m": round((price - closes[-22]) / closes[-22] * 100, 2) if len(closes) >= 22 else None,
+            "change_3m": round((price - closes[-66]) / closes[-66] * 100, 2) if len(closes) >= 66 else None,
+        },
+        "indicators": {
+            "rsi14": rsi14,
+            "rsi_signal": rsi_signal,
+            "bb_upper": bb_upper,
+            "bb_mid": bb_ma,
+            "bb_lower": bb_lower,
+            "bb_width": bb_width,
+            "bb_position": bb_position,
+            "bb_signal": bb_signal,
+            "atr14": _calc_atr(bars, 14),
+        },
+        "mas": mas,
+        "levels": {
+            "recent_high": round(recent_high, 2),
+            "recent_low": round(recent_low, 2),
+            "high_52w": round(high_52w, 2),
+            "low_52w": round(low_52w, 2),
+            "price_position_52w": round((price - low_52w) / (high_52w - low_52w) * 100, 1) if high_52w != low_52w else None,
+            "fib": fib_levels,
+        },
+        "volume": {
+            "latest": vols[-1],
+            "avg_20": round(vol_avg_20, 0),
+            "avg_60": round(vol_avg_60, 0),
+            "ratio_20_60": vol_ratio_20_60,
+            "trend": vol_trend,
+            "recent_vol_ratio": latest_vol_ratio,
+        },
+        "patterns": patterns,
+        "judgment": "；".join(judgments),
+    }
+    return {"success": True, "data": r, "symbol": symbol, "period": period}
+
+
 def _calc_rsi(closes: list, period: int = 14):
     if len(closes) < period + 1:
         return None

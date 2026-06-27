@@ -222,6 +222,17 @@ export class GoldTradingUI {
           <div class="chart-container" id="kline-chart"></div>
         </div>
 
+        <!-- K线技术解读 -->
+        <div class="quant-analysis" id="kline-analysis">
+          <div class="analysis-header">
+            <h3>📊 K线技术解读</h3>
+            <span class="analysis-period-label" id="analysis-period-label">日线</span>
+          </div>
+          <div class="analysis-body" id="analysis-body">
+            <div class="analysis-loading">加载分析中...</div>
+          </div>
+        </div>
+
         <!-- 信号 + 控制面板 -->
         <div class="quant-panels">
           <!-- 左侧：交易信号区 -->
@@ -454,6 +465,116 @@ export class GoldTradingUI {
     } catch (e) {
       console.error('Kline load failed:', e)
     }
+    // 加载技术分析
+    this.loadKlineAnalysis()
+  }
+
+  /** 加载K线技术解读 */
+  private async loadKlineAnalysis() {
+    try {
+      const resp = await api.getGoldAnalysis('AU0', this.currentPeriod, 500)
+      if (resp.success && resp.data) {
+        this.renderAnalysis(resp.data)
+      }
+    } catch (e) {
+      console.error('Kline analysis load failed:', e)
+    }
+  }
+
+  private renderAnalysis(d: any) {
+    const body = document.getElementById('analysis-body')
+    const label = document.getElementById('analysis-period-label')
+    if (!body) return
+    if (label) {
+      const p = this.currentPeriod
+      label.textContent = PERIOD_LABELS[p] || (p === 'd' ? '日线' : p + '分钟')
+    }
+
+    const trend = d.trend || {}
+    const ind = d.indicators || {}
+    const mas = d.mas || {}
+    const levels = d.levels || {}
+    const vol = d.volume || {}
+    const patterns = d.patterns || []
+    const judgment = d.judgment || ''
+
+    const dirClass = trend.direction === '上涨' ? 'bullish' : trend.direction === '下跌' ? 'bearish' : 'neutral'
+    const maClass = trend.ma_alignment === '多头排列' ? 'bullish' : trend.ma_alignment === '空头排列' ? 'bearish' : ''
+
+    // 简化fib显示 — 只看0.618和0.786
+    const fib = levels.fib || {}
+    const fib618 = fib['0.618']
+    const fib786 = fib['0.786']
+
+    // 生成形态标签
+    const patternHtml = patterns.length > 0
+      ? patterns.slice(-4).map((p: any) =>
+          `<span class="analysis-pattern-tag pattern-${p.type === '大阳线' ? 'bull' : p.type === '大阴线' ? 'bear' : 'doji'}">${p.type}</span>`
+        ).join('')
+      : '<span class="analysis-pattern-tag pattern-none">无明显形态</span>'
+
+    body.innerHTML = `
+      <div class="analysis-grid">
+        <div class="analysis-card">
+          <div class="analysis-card-title">📈 趋势研判</div>
+          <table class="analysis-table">
+            <tr><td>方向</td><td class="${dirClass}"><b>${trend.direction || '--'}</b></td></tr>
+            <tr><td>均线排列</td><td class="${maClass}">${trend.ma_alignment || '--'}</td></tr>
+            <tr><td>均线位置</td><td class="${dirClass}">${trend.ma_position || '--'}</td></tr>
+            <tr><td>斜率</td><td>${trend.slope != null ? trend.slope.toFixed(1) : '--'}</td></tr>
+            <tr><td>近1周</td><td class="${(trend.change_1w||0) >= 0 ? 'bullish' : 'bearish'}">${trend.change_1w != null ? trend.change_1w.toFixed(1) + '%' : '--'}</td></tr>
+            <tr><td>近1月</td><td class="${(trend.change_1m||0) >= 0 ? 'bullish' : 'bearish'}">${trend.change_1m != null ? trend.change_1m.toFixed(1) + '%' : '--'}</td></tr>
+            <tr><td>近3月</td><td class="${(trend.change_3m||0) >= 0 ? 'bullish' : 'bearish'}">${trend.change_3m != null ? trend.change_3m.toFixed(1) + '%' : '--'}</td></tr>
+            <tr><td>连涨跌</td><td>${trend.streak || '--'}</td></tr>
+          </table>
+        </div>
+
+        <div class="analysis-card">
+          <div class="analysis-card-title">🔧 技术指标</div>
+          <table class="analysis-table">
+            <tr><td>RSI(14)</td><td class="${(ind.rsi_signal||'') === '超卖' ? 'bearish' : (ind.rsi_signal||'') === '超买' ? 'bullish' : ''}"><b>${ind.rsi14 != null ? ind.rsi14 : '--'}</b> <span class="signal-tag ${ind.rsi_signal === '超卖' ? 'tag-oversold' : ind.rsi_signal === '超买' ? 'tag-overbought' : 'tag-neutral'}">${ind.rsi_signal || '--'}</span></td></tr>
+            <tr><td>布林上轨</td><td>${ind.bb_upper != null ? ind.bb_upper.toFixed(1) : '--'}</td></tr>
+            <tr><td>布林中轨</td><td>${ind.bb_mid != null ? ind.bb_mid.toFixed(1) : '--'}</td></tr>
+            <tr><td>布林下轨</td><td>${ind.bb_lower != null ? ind.bb_lower.toFixed(1) : '--'}</td></tr>
+            <tr><td>布林带宽</td><td>${ind.bb_width != null ? ind.bb_width.toFixed(1) + '%' : '--'}</td></tr>
+            <tr><td>价格位置</td><td class="${(ind.bb_position||0) < 20 ? 'bearish' : (ind.bb_position||0) > 80 ? 'bullish' : ''}">${ind.bb_position != null ? ind.bb_position.toFixed(1) + '%' : '--'} <span class="signal-tag tag-neutral">${ind.bb_signal||'--'}</span></td></tr>
+            <tr><td>ATR(14)</td><td>${ind.atr14 != null ? ind.atr14.toFixed(1) : '--'}</td></tr>
+          </table>
+        </div>
+
+        <div class="analysis-card">
+          <div class="analysis-card-title">💰 关键价位</div>
+          <table class="analysis-table">
+            <tr><td>近60日高</td><td class="bearish">${levels.recent_high != null ? levels.recent_high.toFixed(1) : '--'}</td></tr>
+            <tr><td>近60日低</td><td class="bullish">${levels.recent_low != null ? levels.recent_low.toFixed(1) : '--'}</td></tr>
+            <tr><td>52周高</td><td class="bearish">${levels.high_52w != null ? levels.high_52w.toFixed(1) : '--'}</td></tr>
+            <tr><td>52周低</td><td class="bullish">${levels.low_52w != null ? levels.low_52w.toFixed(1) : '--'}</td></tr>
+            <tr><td>价格分位</td><td>${levels.price_position_52w != null ? levels.price_position_52w.toFixed(0) + '%' : '--'}</td></tr>
+            <tr><td>FIB 61.8%</td><td class="bearish">${fib618 != null ? fib618.toFixed(1) : '--'}</td></tr>
+            <tr><td>FIB 78.6%</td><td class="bearish">${fib786 != null ? fib786.toFixed(1) : '--'}</td></tr>
+          </table>
+        </div>
+
+        <div class="analysis-card">
+          <div class="analysis-card-title">📊 量能形态</div>
+          <table class="analysis-table">
+            <tr><td>当日量</td><td>${fmtNum(vol.latest)}</td></tr>
+            <tr><td>20日均量</td><td>${fmtNum(vol.avg_20)}</td></tr>
+            <tr><td>量比(20/60)</td><td>${vol.ratio_20_60 != null ? vol.ratio_20_60.toFixed(2) : '--'} <span class="signal-tag ${vol.trend === '缩量' ? 'tag-oversold' : vol.trend === '放量' ? 'tag-overbought' : 'tag-neutral'}">${vol.trend||'--'}</span></td></tr>
+            <tr><td>近期量比</td><td>${vol.recent_vol_ratio != null ? vol.recent_vol_ratio.toFixed(1) + 'x' : '--'}</td></tr>
+            <tr><td>K线形态</td><td class="pattern-cell">${patternHtml}</td></tr>
+            <tr><td>均线MA5</td><td>${mas.ma5 != null ? mas.ma5.toFixed(1) : '--'}</td></tr>
+            <tr><td>均线MA10</td><td>${mas.ma10 != null ? mas.ma10.toFixed(1) : '--'}</td></tr>
+            <tr><td>均线MA60</td><td>${mas.ma60 != null ? mas.ma60.toFixed(1) : '--'}</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="analysis-judgment">
+        <div class="judgment-icon">💡</div>
+        <div class="judgment-text">${judgment}</div>
+      </div>
+    `
   }
 
   private updateKlineChart(data: any) {

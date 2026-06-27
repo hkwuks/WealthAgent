@@ -3771,6 +3771,9 @@ body::after {
   .chart-toolbar {
     gap: 8px;
   }
+  .analysis-grid {
+    grid-template-columns: 1fr 1fr;
+  }
   .bt-metrics {
     grid-template-columns: repeat(3, 1fr);
   }
@@ -3794,3 +3797,141 @@ body::after {
 .gold-trading-page .section-header {
   display: none;
 }
+
+/* ===== K线技术解读 ===== */
+.quant-analysis {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-sm);
+  margin-top: 16px;
+}
+.analysis-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-light);
+}
+.analysis-header h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+.analysis-period-label {
+  font-size: 11px;
+  padding: 2px 8px;
+  background: var(--bg-tertiary, #e2e8f0);
+  border-radius: 10px;
+  color: var(--text-secondary);
+}
+.analysis-loading {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  padding: 12px 0;
+  text-align: center;
+}
+.analysis-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 12px;
+}
+.analysis-card {
+  background: var(--bg-secondary, #f8fafc);
+  border: 1px solid var(--border-light, #e2e8f0);
+  border-radius: 8px;
+  padding: 12px;
+}
+.analysis-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-light, #e2e8f0);
+}
+.analysis-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.analysis-table tr + tr {
+  border-top: 1px solid var(--border-color);
+}
+.analysis-table td {
+  padding: 4px 0;
+  color: var(--text-secondary, #64748b);
+}
+.analysis-table td:last-child {
+  text-align: right;
+  font-weight: 500;
+  color: var(--text-primary, #0f172a);
+  white-space: nowrap;
+}
+/* 涨跌颜色 */
+.bullish { color: #ef4444 !important; }
+.bearish { color: #10b981 !important; }
+.neutral { color: var(--text-primary) !important; }
+.analysis-table td.bullish b,
+.analysis-table td.bearish b {
+  font-weight: 700;
+}
+/* 信号标签 */
+.signal-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 3px;
+  font-weight: 500;
+}
+.tag-oversold { background: rgba(16,185,129,0.15); color: #10b981; }
+.tag-overbought { background: rgba(239,68,68,0.15); color: #ef4444; }
+.tag-neutral { background: rgba(100,116,139,0.12); color: #64748b; }
+/* 形态标签 */
+.pattern-cell {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.analysis-pattern-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pattern-bull { background: rgba(239,68,68,0.12); color: #ef4444; }
+.pattern-bear { background: rgba(16,185,129,0.12); color: #10b981; }
+.pattern-doji { background: rgba(245,158,11,0.12); color: #f59e0b; }
+.pattern-none { color: var(--text-tertiary); background: transparent; font-size: 11px; }
+/* 综合研判 */
+.analysis-judgment {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, rgba(59,130,246,0.06), rgba(139,92,246,0.06));
+  border: 1px solid rgba(59,130,246,0.12);
+  border-radius: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.judgment-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.judgment-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+/* 暗色适配 */
+.dark-mode .analysis-card { background: rgba(51,65,85,0.3); border-color: var(--border-color); }
+.dark-mode .analysis-judgment { background: linear-gradient(135deg, rgba(59,130,246,0.08), rgba(139,92,246,0.08)); }
+.dark-mode .tag-neutral { background: rgba(148,163,184,0.15); color: #94a3b8; }
+
