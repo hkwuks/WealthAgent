@@ -33,8 +33,8 @@ class RiskChecker:
             self._check_signal_frequency(signal),
         ]
 
-        failures = [c for c in checks if not c["passed"]]
-        if not failures:
+        non_pass = [c for c in checks if c.get("level") != RiskLevel.PASS]
+        if not non_pass:
             return RiskCheckResult(
                 passed=True,
                 risk_level=RiskLevel.PASS,
@@ -43,12 +43,13 @@ class RiskChecker:
 
         # 按严重程度排序: REJECT > WARNING > PASS
         level_order = {RiskLevel.REJECT: 3, RiskLevel.WARNING: 2, RiskLevel.PASS: 1}
-        worst = max(failures, key=lambda c: level_order.get(c["level"], 0))
+        worst = max(non_pass, key=lambda c: level_order.get(c["level"], 0))
+        failures = [c for c in non_pass if not c["passed"]]
 
         return RiskCheckResult(
             passed=worst["level"] != RiskLevel.REJECT,
             risk_level=worst["level"],
-            reason="; ".join(f["reason"] for f in failures if f["reason"]),
+            reason="; ".join(c["reason"] for c in non_pass if c.get("reason")),
         )
 
     def _check_drawdown(self, signal: GoldSignal, current_equity: float = None,

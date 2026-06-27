@@ -28,6 +28,10 @@ class BacktestStrategyContext(StrategyContext):
         self._max_capital: float = capital
         self._current_prices: dict[str, float] = {}
         self._bar_count: int = 0
+        # {symbol: open_bar_index} 用于平今判断
+        self._open_bars: dict[str, int] = {}
+        # 当前 bar ATR 值（由引擎设置）
+        self.current_atr: float = 0.0
 
     @property
     def mode(self) -> str:
@@ -43,7 +47,7 @@ class BacktestStrategyContext(StrategyContext):
     def _open_position(self, signal: GoldSignal):
         notional = signal.price * self.multiplier * signal.volume
         margin = notional * self.margin_rate
-        cost = self.cost_model.open_cost(signal.volume)
+        cost = self.cost_model.open_cost(signal.volume, atr_value=self.current_atr)
 
         if margin + cost > self.capital:
             logger.debug(f"资金不足，跳过开仓: margin={margin}, cost={cost}, capital={self.capital}")
@@ -56,12 +60,13 @@ class BacktestStrategyContext(StrategyContext):
         )
         self._positions[signal.symbol] = pos
         self.capital -= cost
+        self._open_bars[signal.symbol] = self._bar_count
 
         self._trades.append({
             "type": "open", "direction": direction,
             "symbol": signal.symbol, "price": signal.price,
             "volume": signal.volume, "commission": self.cost_model.open_commission_per_lot * signal.volume,
-            "slippage": self.cost_model.slippage_per_lot * signal.volume,
+            "slippage": self.cost_model._slippage(signal.volume, atr_value=self.current_atr),
             "open_bar": self._bar_count,
             "timestamp": signal.created_at.isoformat() if signal.created_at else "",
         })
@@ -71,33 +76,37 @@ class BacktestStrategyContext(StrategyContext):
         if not pos:
             return
 
+        # 判断是否平今
+        open_bar = self._open_bars.get(signal.symbol, -999)
+        is_close_today = open_bar == self._bar_count
+
         if pos.direction == "long":
             pnl = (signal.price - pos.avg_price) * self.multiplier * pos.volume
         else:
             pnl = (pos.avg_price - signal.price) * self.multiplier * pos.volume
 
-        cost = self.cost_model.close_cost(pos.volume)
+        cost = self.cost_model.close_cost(pos.volume, is_close_today=is_close_today,
+                                          atr_value=self.current_atr)
         net_pnl = pnl - cost
         self.capital += pos.margin + net_pnl
 
         # 找对应的open trade算holding_bars
-        open_bar = 0
-        for t in reversed(self._trades):
-            if t["type"] == "open" and t["symbol"] == signal.symbol:
-                open_bar = t.get("open_bar", 0)
-                break
+        holding_bars = self._bar_count - open_bar if open_bar >= 0 else 0
 
         self._trades.append({
             "type": "close", "direction": pos.direction,
             "symbol": signal.symbol, "price": signal.price,
             "volume": pos.volume, "pnl": net_pnl,
-            "commission": self.cost_model.close_commission_per_lot * pos.volume,
-            "slippage": self.cost_model.slippage_per_lot * pos.volume,
-            "holding_bars": self._bar_count - open_bar,
+            "commission": self.cost_model.close_commission_per_lot * pos.volume if not is_close_today
+                          else self.cost_model.close_today_commission_per_lot * pos.volume,
+            "slippage": self.cost_model._slippage(pos.volume, atr_value=self.current_atr),
+            "holding_bars": holding_bars,
+            "is_close_today": is_close_today,
             "timestamp": signal.created_at.isoformat() if signal.created_at else "",
         })
 
         del self._positions[signal.symbol]
+        self._open_bars.pop(signal.symbol, None)
 
     def get_position(self, symbol: str) -> Optional[GoldPosition]:
         return self._positions.get(symbol)
@@ -132,11 +141,17 @@ class Backtester:
     def run(self, strategy: StrategyBase, bars: list[GoldBarData],
             capital: float = None, params: dict = None) -> dict:
         capital = capital or self.config.backtest_capital
+
+        # 策略级别手续费覆盖
+        open_comm = strategy.commission_per_lot if strategy.commission_per_lot is not None else self.config.backtest_commission_per_lot
+        close_comm = strategy.commission_per_lot if strategy.commission_per_lot is not None else self.config.backtest_commission_per_lot
+
         cost_model = CostModel(
-            open_commission_per_lot=self.config.backtest_commission_per_lot,
-            close_commission_per_lot=self.config.backtest_commission_per_lot,
+            open_commission_per_lot=open_comm,
+            close_commission_per_lot=close_comm,
             close_today_commission_per_lot=self.config.backtest_close_commission_per_lot,
             slippage_per_lot=self.config.backtest_slippage_per_lot,
+            multiplier=self.config.au_multiplier,
         )
         context = BacktestStrategyContext(
             capital=capital, cost_model=cost_model,
@@ -152,7 +167,11 @@ class Backtester:
         strategy.set_context(context)
         strategy.on_init(context)
 
-        for bar in bars:
+        # 预计算 ATR（回测用全量数据）
+        atr_values = self._calc_atr_series(bars, 14)
+
+        for i, bar in enumerate(bars):
+            context.current_atr = atr_values[i] if i < len(atr_values) else 0.0
             strategy.on_bar(bar)
             context.update_equity(bar)
 
@@ -172,3 +191,23 @@ class Backtester:
             "trades": context._trades,
             "report": report,
         }
+
+    @staticmethod
+    def _calc_atr_series(bars: list[GoldBarData], period: int = 14) -> list[float]:
+        """计算 ATR 序列，用于动态滑点"""
+        if len(bars) < 2:
+            return [0.0] * len(bars)
+
+        trs = []
+        for i in range(1, len(bars)):
+            h, l, pc = bars[i].high, bars[i].low, bars[i-1].close
+            tr = max(h - l, abs(h - pc), abs(l - pc))
+            trs.append(tr)
+
+        atr_values = [0.0] * len(bars)
+        for i in range(len(bars)):
+            if i == 0:
+                continue
+            window = trs[max(0, i - period):i]
+            atr_values[i] = sum(window) / len(window) if window else 0.0
+        return atr_values
