@@ -2,7 +2,6 @@ import './style.css'
 import { toast } from './toast'
 import { fundManagerUI } from './fundManagerUI'
 import { marketDataUI } from './marketDataUI'
-import { goldPredictionUI } from './goldPredictionUI'
 import { goldTradingUI } from './goldTradingUI'
 
 toast.init();
@@ -64,10 +63,6 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <span class="tab-button-icon">💼</span>
         基金管理
       </button>
-      <button class="tab-button" data-tab="gold-prediction" role="tab" aria-selected="false">
-        <span class="tab-button-icon">🥇</span>
-        黄金预测
-      </button>
       <button class="tab-button" data-tab="gold-trading" role="tab" aria-selected="false">
         <span class="tab-button-icon">📊</span>
         黄金量化
@@ -81,7 +76,6 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <!-- 标签内容区域 -->
     <main>
       <div class="tab-content active" id="fund-manager-container" role="tabpanel"></div>
-      <div class="tab-content" id="gold-prediction-container" role="tabpanel"></div>
       <div class="tab-content" id="gold-trading-container" role="tabpanel"></div>
       <div class="tab-content" id="market-data-container" role="tabpanel"></div>
     </main>
@@ -107,10 +101,6 @@ async function initApp() {
   // 初始化市场数据界面
   const marketDataContainer = document.querySelector<HTMLDivElement>('#market-data-container')!
   marketDataUI.init(marketDataContainer)
-
-  // 初始化黄金预测界面
-  const goldPredictionContainer = document.querySelector<HTMLDivElement>('#gold-prediction-container')!
-  goldPredictionUI.init(goldPredictionContainer)
 
   // 初始化黄金量化交易界面
   const goldTradingContainer = document.querySelector<HTMLDivElement>('#gold-trading-container')!
