@@ -1,331 +1,383 @@
-# 智能理财 Agent
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/智能理财Agent-v1.0-1a1a2e?style=for-the-badge&logo=python&logoColor=gold">
+    <img src="https://img.shields.io/badge/智能理财Agent-v1.0-1a1a2e?style=for-the-badge&logo=python&logoColor=gold">
+  </picture>
+</p>
 
-一个基于 FastAPI 和 TypeScript 的智能理财助手系统，集成基金估值、黄金量化交易、市场数据监控等功能，通过 MCP 与 AI 助手深度集成，提供全方位的理财决策支持。
+<p align="center">
+  <b>WealthWise · 智能理财 Agent</b><br>
+  基金估值 · 黄金量化 · 市场数据 · AI 驱动
+</p>
 
-## 功能特性
+<p align="center">
+  <a href="#核心功能"><img src="https://img.shields.io/badge/功能-Features-22c55e?style=flat-square"></a>
+  <a href="#技术栈"><img src="https://img.shields.io/badge/技术栈-Tech-3b82f6?style=flat-square"></a>
+  <a href="#快速开始"><img src="https://img.shields.io/badge/开始-Get%20Started-eab308?style=flat-square"></a>
+  <a href="#估值策略"><img src="https://img.shields.io/badge/估值-Valuation-a855f7?style=flat-square"></a>
+  <a href="#黄金量化交易"><img src="https://img.shields.io/badge/黄金-Gold-f59e0b?style=flat-square"></a>
+  <a href="#api-文档"><img src="https://img.shields.io/badge/API-文档-06b6d4?style=flat-square"></a>
+</p>
 
-- **基金估值**：盘中实时计算基金估算净值和涨跌幅，支持多策略估值引擎
-- **黄金量化**：SHFE AU 黄金期货的趋势跟踪、均值回归、ML 预测策略回测与实时交易信号
-- **市场数据**：获取 A 股、港股、美股、指数实时行情
-- **持仓管理**：添加、查看、删除基金持仓
-- **批量估值**：支持 SSE 流式批量估值，实时返回每个基金的结果
-- **趋势跟踪**：SHFE AU 黄金期货 50/200 MA 交叉策略
-- **自动刷新**：可配置自动刷新间隔（30秒-10分钟）
-- **数据持久化**：基金数据本地存储，刷新不丢失
-- **MCP 集成**：支持 Model Context Protocol，AI 助手可直接调用系统功能
-- **Skill**：AI 助手可通过 Skill 调用系统功能
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white">
+  <img src="https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white">
+  <img src="https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square&logo=fastapi&logoColor=white">
+  <img src="https://img.shields.io/badge/Vite-6-646CFF?style=flat-square&logo=vite&logoColor=white">
+  <img src="https://img.shields.io/badge/License-MIT-brightgreen?style=flat-square">
+  <img src="https://img.shields.io/badge/MCP-Enabled-7c3aed?style=flat-square">
+</p>
 
-## 技术栈
+<p align="center">
+  <i>一个基于 FastAPI + TypeScript 的全方位智能理财助手系统。<br>
+  集成基金盘中实时估值、黄金期货量化交易、多源市场数据监控，<br>
+  通过 MCP 和 Skill 与 AI 助手深度集成，提供专业的理财决策支持。</i>
+</p>
 
-### 后端
-- **FastAPI**：高性能异步 Web 框架
-- **Pydantic**：数据验证和序列化
-- **AkShare**：中国金融数据接口
-- **yFinance**：Yahoo Finance 数据接口（国际市场）
-- **LightGBM / XGBoost / Ridge**：机器学习预测模型
-- **Walk-Forward / CPCV**：回测验证方法
-- **Triple-Barrier**：López de Prado 序列标注
-- **aiohttp**：异步 HTTP 客户端
-- **Loguru**：日志记录
-- **httpx**：异步 HTTP 客户端
-- **MCP**：Model Context Protocol 服务器
+<hr>
 
-### 前端
-- **TypeScript**：类型安全的 JavaScript
-- **Vite**：现代前端构建工具
-- **原生 JavaScript**：无框架依赖，轻量高效
+## 📋 目录
 
-## 安装和运行
+- [核心功能](#-核心功能)
+- [技术栈](#-技术栈)
+- [快速开始](#-快速开始)
+- [估值策略](#-估值策略)
+- [黄金量化交易](#-黄金量化交易)
+- [项目结构](#-项目结构)
+- [API 文档](#-api-文档)
+- [MCP 集成](#-mcp-集成)
+- [Skill 系统](#-skill-系统)
+- [数据源](#-数据源)
+- [配置说明](#-配置说明)
+- [注意事项](#-注意事项)
+- [开发计划](#-开发计划)
+- [免责声明](#-免责声明)
+
+---
+
+## 🚀 核心功能
+
+<table>
+<tr>
+<td width="50%">
+
+### 📊 基金估值
+盘中实时计算基金估算净值和涨跌幅，支持**多策略估值引擎**，根据基金类型自动选择最优算法：
+- 场内 ETF / LOF 实时价格
+- 指数基金 / ETF 联接
+- 主动股票型 / 混合型持仓估值
+- 偏债混合 / QDII 混合估值
+- 业绩基准参考
+
+</td>
+<td width="50%">
+
+### 🥇 黄金量化
+SHFE AU 黄金期货全流程量化交易子系统：
+- 趋势跟踪（双均线 + ATR 止损）
+- 均值回归（RSI + 布林带）
+- ML 预测（LightGBM / XGBoost / Ridge）
+- Walk-Forward / CPCV 回测验证
+- Triple-Barrier 序列标注
+
+</td>
+</tr>
+<tr>
+<td>
+
+### 📈 市场数据
+多源数据聚合，实时行情一网打尽：
+- A 股、港股、美股实时行情
+- 国内外指数（沪深300、标普500等）
+- 场内 ETF / LOF 行情
+- 黄金现货 / COMEX 黄金
+
+</td>
+<td>
+
+### 🤖 AI 集成
+双通道 AI 助手集成方案：
+- **MCP 协议**：33+ 个 Tool，覆盖基金、黄金、市场全功能
+- **Skill 系统**：AI 助手可直接调用的智能理财技能
+- 支持基金分析、持仓总结、市场日报等 Prompt
+
+</td>
+</tr>
+</table>
+
+#### 🎯 更多特性
+
+| 特性 | 说明 |
+|------|------|
+| ⚡ **批量估值** | SSE 流式批量估值，实时返回每个基金结果 |
+| 🔄 **自动刷新** | 可配置 30s – 10min 自动刷新间隔 |
+| 💾 **数据持久化** | 基金数据本地存储，刷新不丢失 |
+| 🛡️ **风控体系** | VaR / 波动率 / 回撤 / 信号频率实时监控 |
+| 📦 **无框架前端** | 原生 TypeScript，零依赖，轻量高效 |
+
+---
+
+## 🛠 技术栈
+
+### Backend
+
+| 类别 | 技术 |
+|------|------|
+| **框架** | [FastAPI](https://fastapi.tiangolo.com/) + Pydantic |
+| **数据** | [AkShare](https://akshare.akfamily.xyz/) · [yFinance](https://github.com/ranaroussi/yfinance) · aiohttp · httpx |
+| **ML** | LightGBM · XGBoost · scikit-learn (Ridge) |
+| **回测** | Walk-Forward · CPCV · Monte Carlo · Triple-Barrier |
+| **日志** | Loguru |
+| **协议** | MCP (Model Context Protocol) Streamable HTTP |
+
+### Frontend
+
+| 类别 | 技术 |
+|------|------|
+| **语言** | TypeScript 5 |
+| **构建** | Vite 6 |
+| **设计** | 原生 DOM 操作 · CSS 自定义属性 |
+
+---
+
+## 🏁 快速开始
 
 ### 环境要求
-- Python 3.11+
-- Node.js 16+
 
-### 后端
+- **Python** ≥ 3.11
+- **Node.js** ≥ 16
+- **网络** — 需要联网获取实时行情
 
-1. 创建并激活 conda 环境：
+### 后端启动
+
 ```bash
+# 创建并激活 conda 环境
 conda create -n wealth_agent python=3.11
 conda activate wealth_agent
-```
 
-2. 安装依赖：
-```bash
+# 安装依赖
 pip install -r requirements.txt
-```
 
-3. 启动后端服务：
-```bash
+# 启动服务（MCP 服务器自动随同启动）
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-服务将在 http://localhost:8000 启动，API 文档访问 http://localhost:8000/docs
+✅ 服务启动于 `http://localhost:8000`  
+📖 Swagger API 文档：`http://localhost:8000/docs`
 
-**注意**: 启动后端服务时，MCP 服务器会自动同时启动，无需额外操作。
+### 前端启动
 
-### 前端
-
-1. 进入前端目录并安装依赖：
 ```bash
 cd frontend
 npm install
-```
-
-2. 启动开发服务器：
-```bash
 npm run dev
 ```
 
-前端开发服务器默认在 http://localhost:3000 启动
+✅ 开发服务器默认运行于 `http://localhost:3000`
 
-## 使用说明
+> **提示**：Vite 已配置代理，`/api` 请求自动转发至后端 `localhost:8000`。
 
-1. 访问 http://localhost:3000 打开前端界面
-2. **基金管理**标签页：
-   - 输入基金代码，点击"查询"自动获取基金信息
-   - 设置持有份额，点击"添加基金"
-   - 点击"刷新估值"更新所有基金估值
-   - 选择自动刷新间隔
-3. **基金估值**标签页：
-   - 单个基金估值：输入基金代码进行估值
-   - 批量基金估值：输入多个基金代码批量估值
-4. **基金信息**标签页：查看基金详细持仓和历史净值
-5. **市场数据**标签页：监控股票、ETF、指数实时行情
-6. **黄金量化**标签页：策略回测、多策略对比、机器学习策略交易信号
+### 使用流程
 
-## 估值策略
+1. 访问 `http://localhost:3000` 打开界面
+2. **基金管理** → 输入基金代码查询 → 设置份额 → 添加
+3. **基金估值** → 点击"刷新估值"查看实时估算
+4. **市场数据** → 监控股票 / ETF / 指数行情
+5. **黄金量化** → 策略回测 / 信号生成 / 风控监控
 
-系统根据基金类型和数据可用性自动选择最优估值策略：
+---
 
-| 估值类型 | 估值方法 | 置信度 | 适用基金 |
-|----------|----------|--------|----------|
-| `real_time_price` | 实时价格估值 | 100% | 场内 ETF、LOF |
-| `index_based` | 指数估值 | 85% | 指数基金、ETF 联接基金 |
-| `holdings_based` | 持仓估值 | 60-80% | 主动股票型、混合型基金 |
-| `hybrid_bond` | 混合估值（债券+股票） | 70% | 偏债混合基金、二级债基 |
-| `hybrid_qdii` | 混合估值（持仓+指数） | 70% | 主动管理型 QDII 基金 |
-| `benchmark_only` | 业绩基准参考 | 30% | 无法获取持仓或指数的基金 |
+## 📐 估值策略
+
+系统根据基金类型和数据可用性，**自动选择最优估值策略**：
+
+| 策略 | 置信度 | 适用基金 |
+|------|:------:|----------|
+| `real_time_price` — 实时价格 | **100%** | 场内 ETF、LOF |
+| `index_based` — 指数跟踪 | **85%** | 指数基金、ETF 联接 |
+| `holdings_based` — 持仓加权 | **60–80%** | 主动股票型、混合型 |
+| `hybrid_bond` — 债券+股票混合 | **70%** | 偏债混合、二级债基 |
+| `hybrid_qdii` — 持仓+指数混合 | **70%** | 主动管理型 QDII |
+| `benchmark_only` — 基准参考 | **30%** | 无法获取持仓 / 指数的基金 |
 
 ### 计算公式
 
-**持仓估值**：
 ```
-估算净值 = 昨日净值 × (1 + Σ(持仓占比 × 股票涨跌幅))
-```
-
-**指数估值**：
-```
-估算净值 = 昨日净值 × (1 + 指数涨跌幅)
+持仓估值： 估算净值 = 昨日净值 × (1 + Σ(持仓占比 × 股票涨跌幅))
+指数估值： 估算净值 = 昨日净值 × (1 + 指数涨跌幅)
+QDII 混合：估算净值 = 昨日净值 × (1 + 已知持仓贡献 + 剩余仓位 × 参考指数涨跌幅)
 ```
 
-**混合估值（QDII）**：
-```
-估算净值 = 昨日净值 × (1 + 已知持仓贡献 + 剩余仓位×参考指数涨跌幅)
-```
+---
 
-## 黄金量化交易
+## 🥇 黄金量化交易
 
-基于 FastAPI 的黄金期货量化交易子系统，支持多种策略回测与实时信号生成。
+基于 FastAPI 的黄金期货量化交易子系统，覆盖从策略研发到实盘信号的全流程。
 
 ### 内置策略
 
-| 策略 | 类型 | 描述 |
-|------|------|------|
-| `trend_following` | 趋势跟踪 | 双均线交叉（5/20） + ATR 动态止损 |
+| 策略 | 类型 | 核心逻辑 |
+|------|------|----------|
+| `trend_following` | 趋势跟踪 | 5/20 双均线交叉 + ATR 动态止损 |
 | `mean_reversion` | 均值回归 | RSI 超买超卖 + 布林带位置判断 |
-| `ml_predictor` | ML 预测 | LightGBM/XGBoost/Ridge 滑动窗口预测（含 Triple-Barrier 模式） |
+| `ml_predictor` | ML 预测 | LightGBM/XGBoost/Ridge 滑动窗口预测 |
 
-### 回测引擎
+### 回测引擎特性
 
-| 特性 | 描述 |
+| 特性 | 说明 |
 |------|------|
 | **成本模型** | 固定滑点 + ATR 动态滑点 + 手续费 |
 | **部分成交** | `fill_ratio` 参数模拟流动性不足 |
 | **交易延时** | `execution_delay` 参数模拟成交延迟 |
-| **Walk-Forward** | 滚动窗口回测，带 Purging + Embargo 防泄漏 |
+| **Walk-Forward** | 滚动窗口回测，Purging + Embargo 防前视偏差 |
 | **CPCV** | 组合清洗交叉验证，计算 PBO 过拟合概率 |
 | **Monte Carlo** | Bootstrap 重采样，95% 置信区间风险估计 |
-| **Benchmark** | 买入持有基准对比，信息比率/跟踪误差 |
+| **Benchmark** | 买入持有基准对比，信息比率 / 跟踪误差 |
+| **Triple-Barrier** | López de Prado 三屏障序列标注（ML 策略） |
+| **合约展期** | SHFE AU 主力合约前向 / 后向调整 |
 
 ### 风控体系
 
-| 检查项 | 触发条件 |
-|--------|----------|
-| 回撤检查 | 当日回撤 > 总资产 5% → WARNING, > 10% → REJECT |
-| 单日亏损 | 单日亏损 > 总资产 2% → WARNING, > 5% → REJECT |
-| 信号频率 | 同方向 5 分钟内已有信号 → 跳过 |
-| VaR(95%) | VaR > 总资产 5% → WARNING, > 10% → REJECT |
-| 波动率 | ATR/价格 > 5% → WARNING, > 10% → REJECT |
+| 检查项 | 🔶 Warning | 🔴 Reject |
+|--------|:----------:|:---------:|
+| 当日回撤 > 总资产 | 5% | 10% |
+| 单日亏损 > 总资产 | 2% | 5% |
+| VaR(95%) > 总资产 | 5% | 10% |
+| ATR/价格 > | 5% | 10% |
+| 信号频率 | 同方向 5 分钟内有信号 → 跳过 |
 
-### 数据标签
+---
 
-- **Triple-Barrier Labeling**：基于 López de Prado 方法，为 ML 策略生成三屏障标签
-- **Rollover 处理**：SHFE AU 主力合约展期处理（前向/后向调整）
-
-## API 文档
-
-启动后端后访问 http://localhost:8000/docs 查看完整的 Swagger API 文档。
-
-### 主要 API 端点
-
-#### 基金管理
-| 方法 | 端点 | 描述 |
-|------|------|------|
-| GET | `/api/funds` | 获取基金列表 |
-| POST | `/api/funds/add` | 添加基金 |
-| DELETE | `/api/funds/{fund_code}` | 删除基金 |
-| GET | `/api/funds/query/{fund_code}` | 查询基金信息（从外部数据源） |
-| GET | `/api/funds/{fund_code}/holdings` | 获取基金持仓 |
-| GET | `/api/funds/{fund_code}/nav-history` | 获取净值历史 |
-
-#### 估值计算
-| 方法 | 端点 | 描述 |
-|------|------|------|
-| GET | `/api/valuation/{fund_code}` | 获取单个基金估值 |
-| POST | `/api/valuation/batch` | 批量获取基金估值 |
-| POST | `/api/valuation/batch/stream` | 流式批量估值（SSE） |
-| GET | `/api/valuation/{fund_code}/detail` | 获取估值详情 |
-| GET | `/api/valuation/{fund_code}/accuracy` | 验证估值准确性 |
-| GET | `/api/valuation/info/types` | 获取估值类型说明 |
-
-#### 黄金量化
-| 方法 | 端点 | 描述 |
-|------|------|------|
-| GET | `/api/gold/trading/status` | 系统状态 |
-| GET | `/api/gold/trading/strategies` | 策略列表 |
-| GET | `/api/gold/trading/strategies/{name}` | 策略详情 |
-| POST | `/api/gold/trading/backtest` | 单策略回测 |
-| POST | `/api/gold/trading/compare` | 多策略对比 |
-| POST | `/api/gold/trading/backtest/sensitivity` | 参数敏感性分析 |
-| POST | `/api/gold/trading/backtest/validation` | 策略验证 |
-| POST | `/api/gold/trading/backtest/walk-forward` | Walk-Forward 回测 |
-| POST | `/api/gold/trading/backtest/cpcv` | CPCV 回测 |
-| POST | `/api/gold/trading/backtest/monte-carlo` | Monte Carlo 模拟 |
-| GET | `/api/gold/trading/signals` | 交易信号列表 |
-| POST | `/api/gold/trading/signal/generate` | 信号生成 |
-| GET | `/api/gold/trading/risk/status` | 风控状态 |
-| GET | `/api/gold/trading/market-data` | 市场数据仪表盘 |
-| GET | `/api/gold/trading/analysis` | 技术分析 |
-| GET | `/api/gold/trading/feature-importance` | 特征重要性 |
-| POST | `/api/gold/trading/label/triple-barrier` | Triple-Barrier 标注 |
-| POST | `/api/gold/trading/sync-data` | 数据同步 |
-| GET | `/api/gold/trading/bars` | K 线数据 |
-| GET | `/api/gold/trading/config` | 配置信息 |
-| GET | `/api/gold/trading/strategy-comparison` | 策略适配度对比 |
-
-#### 市场数据
-| 方法 | 端点 | 描述 |
-|------|------|------|
-| GET | `/api/market/stock/{code}` | 获取股票行情 |
-| GET | `/api/market/etf/{code}` | 获取 ETF 行情 |
-| GET | `/api/market/index/{code}` | 获取国内指数行情 |
-| GET | `/api/market/global-index/{code}` | 获取全球指数行情 |
-
-## 项目结构
+## 📁 项目结构
 
 ```
 智能理财Agent/
-├── backend/                    # 后端代码
-│   ├── api/                   # API 路由
-│   │   ├── funds.py          # 基金管理接口
-│   │   ├── gold_trading.py   # 黄金量化交易接口
-│   │   ├── valuation.py      # 估值计算接口
-│   │   ├── market.py         # 市场数据接口
-│   │   └── schemas.py        # API 响应模型
-│   ├── mcp_server/           # MCP 服务器
-│   │   ├── server.py        # MCP 服务器定义
-│   │   ├── tools.py         # MCP Tools 实现
-│   │   ├── resources.py     # MCP Resources 实现
-│   │   └── prompts.py       # MCP Prompts 实现
+├── backend/                    # FastAPI 后端
+│   ├── api/                   # API 路由层
+│   │   ├── funds.py          # 基金管理
+│   │   ├── gold_trading.py   # 黄金量化
+│   │   ├── valuation.py      # 估值计算
+│   │   ├── market.py         # 市场数据
+│   │   └── schemas.py        # 响应模型
+│   ├── mcp_server/           # MCP 协议服务
+│   │   ├── server.py         # 服务器定义
+│   │   ├── tools.py          # 工具实现
+│   │   ├── resources.py      # 资源实现
+│   │   └── prompts.py        # 提示词实现
+│   ├── gold/                 # 黄金量化子系统
+│   │   ├── core/             # 模型 · 配置 · 异常
+│   │   ├── strategy/         # 策略基类 + 内置策略
+│   │   ├── backtest/         # 回测引擎 · 报告 · MC
+│   │   ├── data/             # 数据网关 · 存储 · 标签 · 展期
+│   │   ├── risk/             # 风控 · 订单管理
+│   │   ├── signal/           # 信号输出
+│   │   └── ml/               # 特征工程 · 训练 · 预测
 │   ├── fund_service.py       # 基金业务逻辑
-│   ├── fund_valuation.py     # 估值计算引擎
-│   ├── gold/                # 黄金量化交易子系统
-│   │   ├── core/            # 数据模型、配置、错误定义
-│   │   ├── strategy/        # 策略基类 + 内置策略
-│   │   ├── backtest/        # 回测引擎、报告、Monte Carlo
-│   │   ├── data/            # 数据网关、存储、标签、展期
-│   │   ├── risk/            # 风控检查、订单管理
-│   │   ├── signal/          # 信号输出
-│   │   └── ml/              # ML 模型（特征工程/训练/预测）
-│   ├── data_sync.py          # 数据同步服务
-│   ├── market_data.py        # 市场数据获取服务
-│   ├── models.py             # Pydantic 数据模型
+│   ├── fund_valuation.py     # 估值引擎
+│   ├── market_data.py        # 市场数据服务
+│   ├── data_sync.py          # 数据同步
+│   ├── models.py             # 数据模型
 │   ├── config.py             # 应用配置
-│   └── main.py               # FastAPI 应用入口
-├── frontend/                   # 前端代码
+│   └── main.py               # 应用入口
+├── frontend/                   # Vite + TypeScript 前端
 │   ├── src/
-│   │   ├── main.ts           # 应用入口
-│   │   ├── api.ts            # API 客户端封装
+│   │   ├── main.ts           # 入口
+│   │   ├── api.ts            # API 客户端
+│   │   ├── types.ts          # 类型定义
 │   │   ├── fundManager.ts    # 基金状态管理
 │   │   ├── fundManagerUI.ts  # 基金管理界面
-│   │   ├── valuationUI.ts    # 估值计算界面
+│   │   ├── valuationUI.ts    # 估值界面
 │   │   ├── fundInfoUI.ts     # 基金信息界面
 │   │   ├── marketDataUI.ts   # 市场数据界面
-│   │   ├── types.ts          # TypeScript 类型定义
-│   │   ├── style.css         # 样式文件
-│   │   └── toast.ts          # 消息提示组件
-│   ├── index.html            # HTML 入口
-│   ├── package.json          # npm 依赖配置
-│   └── vite.config.ts        # Vite 配置
-├── data/                       # 数据存储
-│   └── funds.json            # 基金持仓数据
-├── logs/                       # 日志目录
-├── skills/                     # AI Skill
-│   ├── wealth-agent/         # 智能理财Agent技能
-│   │   └── SKILL.md
-│   └── fund-valuation/       # 基金估值技能（已合并至 wealth-agent）
-│       ├── SKILL.md
-│       └── REFERENCE.md
-├── requirements.txt            # Python 依赖
-├── CLAUDE.md                   # Claude Code 开发指南
-└── README.md                   # 项目说明
+│   │   ├── style.css         # 样式
+│   │   └── toast.ts          # 消息提示
+│   ├── index.html
+│   ├── package.json
+│   └── vite.config.ts
+├── data/                       # 持久化数据
+│   └── funds.json
+├── logs/                       # 运行日志
+├── skills/                     # AI 技能
+│   └── wealth-agent/
+│       └── SKILL.md
+├── requirements.txt
+├── CLAUDE.md
+└── README.md
 ```
 
-## Skill
+---
 
-本项目包含智能理财 Agent Skill，让 AI 助手可以直接调用系统全部功能。
+## 📖 API 文档
 
-### Skill 位置
+启动后端后访问 [http://localhost:8000/docs](http://localhost:8000/docs) 查看完整的 Swagger 交互式文档。
 
-```
-skills/wealth-agent/
-└── SKILL.md        # 智能理财Agent技能使用指南
-```
+### 基金管理
 
-### Skill 功能
+| 方法 | 端点 | 描述 |
+|:----:|:-----|:-----|
+| `GET` | `/api/funds` | 获取基金列表 |
+| `POST` | `/api/funds/add` | 添加基金 |
+| `DELETE` | `/api/funds/{fund_code}` | 删除基金 |
+| `GET` | `/api/funds/query/{fund_code}` | 从外部数据源查询基金信息 |
+| `GET` | `/api/funds/{fund_code}/holdings` | 获取基金持仓 |
+| `GET` | `/api/funds/{fund_code}/nav-history` | 获取净值历史 |
 
-| 功能 | 描述 |
-|------|------|
-| 基金查询 | 获取基金信息、持仓、净值 |
-| 实时估值 | 盘中实时估算基金净值和涨跌幅 |
-| 持仓管理 | 添加/删除/查看持仓基金 |
-| 市场数据 | 获取 A 股股票、ETF、指数行情 |
-| 批量估值 | 同时估值多只基金 |
-| 黄金量化 | 策略回测、对比、交易信号 |
-| 风控状态 | VaR/波动率/回撤实时监控 |
-| 技术分析 | K线技术指标解读 |
+### 估值计算
 
-### 使用方式
+| 方法 | 端点 | 描述 |
+|:----:|:-----|:-----|
+| `GET` | `/api/valuation/{fund_code}` | 单个基金估值 |
+| `POST` | `/api/valuation/batch` | 批量估值 |
+| `POST` | `/api/valuation/batch/stream` | **SSE 流式**批量估值 |
+| `GET` | `/api/valuation/{fund_code}/detail` | 估值详情 |
+| `GET` | `/api/valuation/{fund_code}/accuracy` | 估值准确性验证 |
+| `GET` | `/api/valuation/info/types` | 估值类型说明 |
 
-Skill 通过 HTTP API 调用系统功能，后端服务启动后，AI 助手可以自动执行：
-- 查询基金信息和持仓
-- 获取实时估值数据
-- 监控市场行情
-- 批量估值操作
-- 运行策略回测
-- 获取交易信号
-- 多策略对比
+### 黄金量化（21 个端点）
 
-## MCP 服务
+| 方法 | 端点 | 描述 |
+|:----:|:-----|:-----|
+| `GET` | `/api/gold/trading/status` | 系统状态 |
+| `GET` | `/api/gold/trading/strategies` | 策略列表 |
+| `GET` | `/api/gold/trading/strategies/{name}` | 策略详情 |
+| `POST` | `/api/gold/trading/backtest` | 单策略回测 |
+| `POST` | `/api/gold/trading/compare` | 多策略对比 |
+| `POST` | `/api/gold/trading/backtest/sensitivity` | 参数敏感性分析 |
+| `POST` | `/api/gold/trading/backtest/validation` | 策略验证 |
+| `POST` | `/api/gold/trading/backtest/walk-forward` | Walk-Forward 回测 |
+| `POST` | `/api/gold/trading/backtest/cpcv` | CPCV 回测 |
+| `POST` | `/api/gold/trading/backtest/monte-carlo` | Monte Carlo 模拟 |
+| `GET` | `/api/gold/trading/signals` | 交易信号 |
+| `POST` | `/api/gold/trading/signal/generate` | 生成信号 |
+| `GET` | `/api/gold/trading/risk/status` | 风控状态 |
+| `GET` | `/api/gold/trading/market-data` | 市场数据仪表盘 |
+| `GET` | `/api/gold/trading/analysis` | 技术分析 |
+| `GET` | `/api/gold/trading/feature-importance` | 特征重要性 |
+| `POST` | `/api/gold/trading/label/triple-barrier` | Triple-Barrier 标注 |
+| `POST` | `/api/gold/trading/sync-data` | 数据同步 |
+| `GET` | `/api/gold/trading/bars` | K 线数据 |
+| `GET` | `/api/gold/trading/config` | 配置信息 |
+| `GET` | `/api/gold/trading/strategy-comparison` | 策略适配度对比 |
 
-系统支持 MCP (Model Context Protocol) Streamable HTTP 模式，可与 AI 助手集成实现自动化操作。
+### 市场数据
 
-### MCP 配置（Streamable HTTP 模式）
+| 方法 | 端点 | 描述 |
+|:----:|:-----|:-----|
+| `GET` | `/api/market/stock/{code}` | A 股股票行情 |
+| `GET` | `/api/market/etf/{code}` | 场内 ETF 行情 |
+| `GET` | `/api/market/index/{code}` | 国内指数行情 |
+| `GET` | `/api/market/global-index/{code}` | 全球指数行情 |
 
-**配置方法**（以 Claude Code 为例）：
+---
+
+## 🔌 MCP 集成
+
+系统支持 **MCP (Model Context Protocol) Streamable HTTP** 模式，AI 助手可直接调用全部功能。
+
+### MCP 配置
 
 ```bash
-# 通过命令行添加 MCP 服务器
+# Claude Code
 claude mcp add http wealth-agent http://127.0.0.1:8000/mcp
 ```
 
@@ -342,51 +394,45 @@ claude mcp add http wealth-agent http://127.0.0.1:8000/mcp
 }
 ```
 
-**前提条件**：后端 API 必须运行在 `http://127.0.0.1:8000`
+> **前提**：后端必须运行在 `http://127.0.0.1:8000`
 
-```bash
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
-```
+### MCP 工具一览
 
-启动后端服务后，MCP 服务器会自动挂载到 `/mcp` 端点，支持 SSE 连接和 HTTP 消息传输。
+**基金 / 市场（12 个）**
 
-### MCP Tools
-
-#### 基金/市场工具（12个）
-
-| Tool | 功能描述 |
-|------|---------|
-| `get_fund_list` | 获取持仓基金列表 |
+| Tool | 功能 |
+|:-----|:-----|
+| `get_fund_list` | 持仓基金列表 |
 | `add_fund` | 添加基金到持仓 |
 | `delete_fund` | 删除持仓基金 |
-| `get_fund_info` | 获取基金详细信息 |
-| `get_valuation` | 获取基金实时估值 |
-| `get_batch_valuation` | 批量获取基金估值 |
-| `get_stock_price` | 获取 A 股股票行情 |
-| `get_etf_price` | 获取场内 ETF 行情 |
-| `get_index_price` | 获取国内指数行情 |
-| `get_global_index_price` | 获取海外指数行情 |
-| `get_valuation_types` | 获取估值类型说明 |
-| `get_supported_indices` | 获取支持的指数列表 |
+| `get_fund_info` | 基金详细信息 |
+| `get_valuation` | 实时估值 |
+| `get_batch_valuation` | 批量估值 |
+| `get_stock_price` | A 股行情 |
+| `get_etf_price` | ETF 行情 |
+| `get_index_price` | 国内指数行情 |
+| `get_global_index_price` | 海外指数行情 |
+| `get_valuation_types` | 估值类型说明 |
+| `get_supported_indices` | 支持的指数列表 |
 
-#### 黄金量化工具（21个）
+**黄金量化（18 个）**
 
-| Tool | 功能描述 |
-|------|---------|
+| Tool | 功能 |
+|:-----|:-----|
 | `get_gold_status` | 系统状态 |
 | `get_gold_strategies` | 策略列表 |
 | `get_gold_strategy_detail` | 策略详情 |
-| `get_gold_signals` | 交易信号列表 |
-| `generate_gold_signal` | 手动触发信号生成 |
+| `get_gold_signals` | 交易信号 |
+| `generate_gold_signal` | 触发信号生成 |
 | `run_gold_strategy_backtest` | 单策略回测 |
 | `compare_gold_strategies` | 多策略对比 |
 | `run_gold_sensitivity` | 参数敏感性分析 |
 | `run_gold_validation` | 策略验证 |
-| `run_gold_walk_forward` | Walk-Forward 滚动回测 |
-| `run_gold_cpcv` | CPCV 组合交叉验证 |
+| `run_gold_walk_forward` | Walk-Forward 回测 |
+| `run_gold_cpcv` | CPCV 交叉验证 |
 | `run_gold_monte_carlo` | Monte Carlo 模拟 |
 | `get_gold_risk_status` | 风控状态 |
-| `get_gold_market_data` | 市场数据仪表盘 |
+| `get_gold_market_data` | 市场数据 |
 | `get_gold_analysis` | K 线技术分析 |
 | `get_gold_feature_importance` | 特征重要性 |
 | `run_gold_triple_barrier_label` | Triple-Barrier 标注 |
@@ -394,95 +440,134 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
 ### MCP Resources
 
-- `fund://{fund_code}` - 基金详细信息
-- `valuation://{fund_code}` - 基金实时估值
-- `market://stock/{stock_code}` - 股票行情
-- `market://etf/{etf_code}` - ETF 行情
-- `market://index/{index_code}` - 国内指数行情
-- `market://global-index/{index_code}` - 海外指数行情
+```
+fund://{fund_code}              → 基金详细信息
+valuation://{fund_code}          → 基金实时估值
+market://stock/{stock_code}      → 股票行情
+market://etf/{etf_code}          → ETF 行情
+market://index/{index_code}      → 国内指数行情
+market://global-index/{code}     → 海外指数行情
+```
 
 ### MCP Prompts
 
-- `analyze_fund` - 分析单只基金投资价值
-- `portfolio_summary` - 生成持仓组合总结报告
-- `market_daily` - 生成市场日报
+| Prompt | 用途 |
+|:-------|:-----|
+| `analyze_fund` | 分析单只基金投资价值 |
+| `portfolio_summary` | 持仓组合总结报告 |
+| `market_daily` | 市场日报生成 |
 
-## 数据源
+---
 
-系统整合多个数据源，自动选择最优数据：
+## 🧠 Skill 系统
 
-| 数据源 | 数据类型 | 说明 |
-|--------|----------|------|
-| 东方财富 | 基金信息、持仓、净值 | 主要数据源 |
-| 天天基金 | 基金持仓 | 备用数据源 |
-| AkShare | A股行情、ETF、指数、黄金现货 | 国内市场数据 |
-| 新浪财经 | 股票行情 | 备用数据源 |
-| 腾讯财经 | 股票行情 | 备用数据源 |
-| yFinance | 全球指数、港股、COMEX黄金 | 国际市场数据 |
+AI 助手可通过 **Skill** 直接调用系统全部功能，无需手动构造 HTTP 请求。
 
-## 配置说明
+```
+skills/wealth-agent/
+└── SKILL.md         # 智能理财 Agent 技能指南
+```
 
-### 后端配置 (backend/config.py)
+| 功能 | 描述 |
+|:-----|:-----|
+| 🔍 基金查询 | 基金信息、持仓、净值 |
+| 📊 实时估值 | 盘中实时估算净值 / 涨跌幅 |
+| 📋 持仓管理 | 添加 / 删除 / 查看持仓 |
+| 📈 市场数据 | 股票、ETF、指数行情 |
+| 🔄 批量估值 | 多基金同时估值 |
+| 🥇 黄金量化 | 回测、对比、交易信号 |
+| 🛡️ 风控状态 | VaR / 波动率 / 回撤实时监控 |
+| 📉 技术分析 | K 线技术指标解读 |
+
+---
+
+## 🌐 数据源
+
+系统整合多数据源，自动选择最优可用数据：
+
+| 数据源 | 数据类型 | 角色 |
+|:-------|:---------|:----:|
+| 东方财富 | 基金信息 · 持仓 · 净值 | ⭐ 主要 |
+| 天天基金 | 基金持仓 | 🔄 备用 |
+| AkShare | A 股行情 · ETF · 指数 · 黄金现货 | ⭐ 主要 |
+| 新浪财经 | 股票行情 | 🔄 备用 |
+| 腾讯财经 | 股票行情 | 🔄 备用 |
+| yFinance | 全球指数 · 港股 · COMEX 黄金 | ⭐ 主要 |
+
+---
+
+## ⚙️ 配置说明
+
+### 后端 (`backend/config.py`)
 
 ```python
-APP_NAME = "智能理财Agent"
-APP_VERSION = "1.0.0"
-DEBUG = True
-API_PREFIX = "/api"
-DATA_DIR = "data"
+APP_NAME     = "智能理财Agent"
+APP_VERSION  = "1.0.0"
+DEBUG        = True
+API_PREFIX   = "/api"
+DATA_DIR     = "data"
 CORS_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
 ```
 
-### 前端配置
+### 前端 (`frontend/vite.config.ts`)
 
-Vite 代理配置 (`frontend/vite.config.ts`)：
 ```typescript
 server: {
   port: 3000,
   proxy: {
-    '/api': {
-      target: 'http://localhost:8000',
-      changeOrigin: true
-    }
+    '/api': { target: 'http://localhost:8000', changeOrigin: true }
   }
 }
 ```
 
-## 注意事项
+---
 
-1. **估值准确性**：估值数据仅供参考，实际净值以基金公司公布为准
-2. **持仓时效性**：持仓数据来自季报，存在滞后性，会影响估值准确性
-3. **QDII 估值**：QDII 基金投资海外市场，估值时间与 A 股不同步
-4. **黄金量化**：策略回测基于历史数据，仅供参考，不构成投资建议
-5. **ML 预测**：ML 策略使用 Walk-Forward 回测避免前视偏差，R² 为负时置信度降低
-5. **网络依赖**：系统需要联网获取实时行情数据
-6. **频率限制**：请合理设置刷新间隔，避免被数据源限制
+## ⚠️ 注意事项
 
-## 开发计划
+| # | 提醒 |
+|:--:|:-----|
+| 1 | **估值 ≠ 实际净值** — 估算数据仅供参考，以基金公司公布为准 |
+| 2 | **持仓滞后** — 持仓数据来自季报，存在时滞，影响估值准确性 |
+| 3 | **QDII 时差** — QDII 投资海外市场，估值时间与 A 股不同步 |
+| 4 | **历史不代表未来** — 回测基于历史数据，不构成投资建议 |
+| 5 | **ML 置信度** — R² 为负时模型预测置信度降低 |
+| 6 | **网络依赖** — 需要联网获取实时行情 |
+| 7 | **频率限制** — 请合理设置刷新间隔，避免被数据源限制 |
+
+---
+
+## 📌 开发计划
 
 - [x] 基金增删改查
-- [x] 实时估值计算
-- [x] 多策略估值引擎
+- [x] 实时估值计算 · 多策略引擎
 - [x] 批量估值（SSE 流式）
-- [x] 市场数据监控
-- [x] 自动刷新机制
-- [x] 数据缓存
-- [x] 估值方法显示
-- [x] MCP 服务
-- [x] Skill
-- [x] 趋势跟踪/均值回归/ML 策略
-- [x] Walk-Forward / CPCV 回测
-- [x] Monte Carlo 模拟 / Benchmark 对比
-- [x] Triple-Barrier 标注
-- [x] 合约展期处理
-- [x] 风控体系（VaR/波动率/回撤/频率）
+- [x] 市场数据监控 · 自动刷新 · 数据缓存
+- [x] MCP 服务 · Skill 系统
+- [x] 趋势跟踪 / 均值回归 / ML 策略
+- [x] Walk-Forward / CPCV / Monte Carlo 回测
+- [x] Triple-Barrier 标注 · 合约展期处理
+- [x] 风控体系（VaR / 波动率 / 回撤 / 频率）
 - [ ] 更多资产类别支持
 - [ ] 投资组合优化
 
-## 免责声明
+---
 
-本项目是一个个人科研项目，目的是为投资者提供理财决策参考服务。并不承诺数据的可靠性和准确性，用户在使用时请自行承担风险。估值数据和预测结果仅供参考，不构成任何投资建议。
-
-## Star History
+## ⭐ Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=hkwuks/Fund-Valuation-Framework&type=date&legend=top-left)](https://www.star-history.com/?repos=hkwuks%2FFund-Valuation-Framework&type=date&legend=top-left)
+
+---
+
+## 📜 免责声明
+
+> 本项目是一个**个人科研项目**，旨在为投资者提供理财决策参考服务。  
+> 并不承诺数据的可靠性和准确性，用户在使用时请**自行承担风险**。  
+> **估值数据和预测结果仅供参考，不构成任何投资建议。**
+
+---
+
+<p align="center">
+  <sub>Built with ⚡ by <a href="https://github.com/hkwuks">hkwuks</a></sub>
+  <br>
+  <sub>© 2026 智能理财 Agent · WealthWise</sub>
+</p>
