@@ -17,12 +17,13 @@ class Settings(BaseSettings):
 
     FRED_API_KEY: Optional[str] = None
 
-    MODEL_DIR: str = "data/models"
+    MODEL_DIR: str = "data/backend/models"
     MODEL_MAX_AGE_DAYS: int = 7
     
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"
 
 
 settings = Settings()

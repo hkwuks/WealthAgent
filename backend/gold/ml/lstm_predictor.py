@@ -30,7 +30,7 @@ class GoldPricePredictorLSTM:
     def __init__(self, input_dim: int = 30, hidden_dim: int = 64,
                  num_layers: int = 2, dropout: float = 0.2,
                  sequence_length: int = 60, learning_rate: float = 0.001,
-                 model_dir: str = "data/models"):
+                 model_dir: str = "data/backend/models"):
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers

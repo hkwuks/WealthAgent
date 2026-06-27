@@ -60,11 +60,10 @@ class DataStore:
     """
 
     def __init__(self, data_dir: str = None):
-        # 默认使用 backend/data 目录
+        # 默认使用项目根目录 data/backend/
         if data_dir is None:
-            # 获取当前文件所在目录 (backend/)，然后使用其下的 data
-            backend_dir = os.path.dirname(os.path.abspath(__file__))
-            data_dir = os.path.join(backend_dir, "data")
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            data_dir = os.path.join(project_root, "data", "backend")
 
         self.data_dir = data_dir
         self.cache_dir = os.path.join(data_dir, "cache")

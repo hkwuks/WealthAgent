@@ -20,7 +20,7 @@ from loguru import logger
 class GoldPricePredictor:
     """黄金价格预测器"""
 
-    def __init__(self, model_dir: str = "data/models"):
+    def __init__(self, model_dir: str = "data/backend/models"):
         self.model_dir = model_dir
         os.makedirs(model_dir, exist_ok=True)
         self.feature_engineer = FeatureEngineer()
