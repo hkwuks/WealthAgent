@@ -55,10 +55,18 @@ class MLPredictorStrategy(StrategyBase):
         self._atr_value: float = 0
         self._last_predict_bar: int = -999
         self._feature_importance: dict = {}
+        self._model_quality: str = "unknown"
+        self._last_metrics: dict = {}
+        self._quality_fail_count: int = 0
         self._tb_labeler = TripleBarrierLabeler(
             tp_multiplier=1.5, sl_multiplier=1.0, max_holding_days=self.max_holding_bars,
         )
-        # _macro_df 由外部注入，不在此重置
+        # 如果外部注入了预训练predictor，使用它而非重新训练
+        if hasattr(self, '_injected_predictor') and self._injected_predictor is not None:
+            self._predictor = self._injected_predictor
+            self._predictor_failed = False
+            self._model_quality = "injected"
+            self._model_quality = "injected"
 
     def on_bar(self, bar: GoldBarData):
         self._bars.append(bar)
@@ -256,10 +264,23 @@ class MLPredictorStrategy(StrategyBase):
             predictor = GoldPricePredictor()
             if self.prediction_mode == "triple_barrier":
                 predictor.train_tb(df, mt)
+                self._model_quality = "unknown"
             else:
                 horizon_map = {1: PredictionHorizon.SHORT, 5: PredictionHorizon.MEDIUM, 20: PredictionHorizon.LONG}
                 horizon = horizon_map.get(self.horizon_days, PredictionHorizon.SHORT)
-                predictor.train(df, mt, horizon)
+                train_result = predictor.train(df, mt, horizon)
+                # 捕获模型质量
+                self._model_quality = train_result.get("quality", "unknown")
+                metrics = train_result.get("metrics", {})
+                self._last_metrics = {
+                    "r2": metrics.get("r2"),
+                    "directional_accuracy": metrics.get("directional_accuracy"),
+                    "rmse": metrics.get("rmse"),
+                    "quality": self._model_quality,
+                }
+                if self._model_quality == "poor":
+                    logger.warning(f"ML 模型质量差 (R²={metrics.get('r2'):.4f}, DA={metrics.get('directional_accuracy'):.2f})，仍尝试交易，置信度已降低")
+                    # 模型差时仍不阻止交易，但置信度会由 confidence 计算控制
 
             self._predictor = predictor
             return predictor
@@ -350,6 +371,8 @@ class MLPredictorStrategy(StrategyBase):
         df = pd.DataFrame(rows)
 
         # 合并宏观因子数据（如果有），让ML使用完整特征集
+        # 如果合并失败，仍可使用纯技术特征
+        has_macro = False
         if hasattr(self, '_macro_df') and self._macro_df is not None and not self._macro_df.empty:
             try:
                 macro = self._macro_df.copy()
@@ -363,9 +386,14 @@ class MLPredictorStrategy(StrategyBase):
                     if col in df.columns:
                         df[col] = df[col].ffill().bfill().fillna(0)
                 after = len(df.columns)
-                logger.debug(f"Merged macro data: {before} -> {after} columns ({after - before} macro cols)")
+                has_macro = after > before
+                if has_macro:
+                    logger.debug(f"Merged macro data: {before} -> {after} columns ({after - before} macro cols)")
             except Exception as e:
-                logger.debug(f"Failed to merge macro data: {e}")
+                logger.debug(f"Failed to merge macro data, using pure technical features: {e}")
+
+        if not has_macro:
+            logger.debug("使用纯技术特征模式（无宏观数据）")
 
         return df
 

@@ -217,6 +217,13 @@ class FeatureEngineer:
             df['BREAKEVEN_level'] = df['US10Y_value'] - df['TIPS_value']
             df['BREAKEVEN_change'] = df['BREAKEVEN_level'].pct_change()
 
+        # COT 持仓因子
+        if 'spec_net' in df.columns:
+            df['spec_net_change'] = df['spec_net'].pct_change()
+            df['spec_net_ma_4'] = df['spec_net'].rolling(4).mean()  # 4周均值
+        if 'spec_net_ratio' in df.columns:
+            df['spec_ratio_change'] = df['spec_net_ratio'].diff()
+
         return df
 
     def create_lag_features(self, df: pd.DataFrame, lags: List[int] = None) -> pd.DataFrame:
@@ -754,43 +761,44 @@ class GoldPricePredictor:
         if len(X) < 50:
             raise ValueError(f"Insufficient data: {len(X)} samples (minimum 50)")
 
-        # 因子筛选（互信息 + 相关性去冗余）
-        X_selected, screening_report = self.feature_engineer.select_features(X, y)
-
         # 时序划分（不用random split）
-        split_idx = int(len(X_selected) * (1 - test_size))
-        X_train, X_test = X_selected.iloc[:split_idx], X_selected.iloc[split_idx:]
-        y_aligned = y.loc[X_selected.index]
-        y_train, y_test = y_aligned.iloc[:split_idx], y_aligned.iloc[split_idx:]
+        split_idx = int(len(X) * (1 - test_size))
+        X_train_raw, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+        y_train_raw, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+
+        # 因子筛选（互信息 + 相关性去冗余）— 只在训练集内做
+        X_selected, screening_report = self.feature_engineer.select_features(X_train_raw, y_train_raw)
+
+        # 测试集用筛选后的相同特征列
+        X_train = X_selected
+        X_test_sel = X_test[X_selected.columns]
 
         # 标准化
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
+        X_test_scaled = scaler.transform(X_test_sel)
 
         self.scalers[model_type.value] = scaler
 
         # 训练模型
         if model_type == ModelType.LIGHTGBM:
-            model = self._train_lightgbm(X_train_scaled, y_train)
+            model = self._train_lightgbm(X_train_scaled, y_train_raw)
         elif model_type == ModelType.XGBOOST:
-            model = self._train_xgboost(X_train_scaled, y_train)
+            model = self._train_xgboost(X_train_scaled, y_train_raw)
         elif model_type == ModelType.RIDGE:
-            model = self._train_ridge(X_train_scaled, y_train)
+            model = self._train_ridge(X_train_scaled, y_train_raw)
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
 
         self.models[model_type.value] = model
 
-        # SHAP验证（树模型）— 仅报告，不改变特征集
+        # SHAP验证（树模型）— 仅在训练集上
         shap_report = {}
         if model_type in (ModelType.LIGHTGBM, ModelType.XGBOOST):
             _, shap_report = self.feature_engineer.select_features(
-                X_selected, y_aligned, shap_model=model
+                X_train, y_train_raw, shap_model=model
             )
-            # SHAP验证仅作为报告，selected_features_已经由MI+corr确定
-            # 恢复MI+corr筛选的特征集
-            self.feature_engineer.selected_features_ = list(X_selected.columns)
+            self.feature_engineer.selected_features_ = list(X_train.columns)
 
         # 评估
         y_pred = model.predict(X_test_scaled)
@@ -822,10 +830,21 @@ class GoldPricePredictor:
 
         logger.info(f"Training completed: {metrics}")
 
+        # 模型质量评级
+        r2 = metrics.get('r2', -1)
+        da = metrics.get('directional_accuracy', 0)
+        if r2 < 0 or da < 0.5:
+            quality = "poor"
+        elif r2 < 0.3 or da < 0.55:
+            quality = "mediocre"
+        else:
+            quality = "good"
+
         return {
             'model_type': model_type.value,
             'horizon': horizon.value,
             'metrics': metrics,
+            'quality': quality,
             'feature_count': X_selected.shape[1],
             'features': list(X_selected.columns),
             'screening_report': screening_report,

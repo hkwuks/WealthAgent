@@ -20,7 +20,12 @@ class BacktestReport:
 
     def generate(self, equity_curve: list[float], trades: list[dict],
                  capital: float, start_date: str, end_date: str,
-                 risk_free_rate: float = 0.025) -> dict:
+                 risk_free_rate: float = 0.025,
+                 benchmark_returns: list[float] = None) -> dict:
+        """
+        Args:
+            benchmark_returns: 基准每日收益率列表（买入持有），用于对比
+        """
         if len(equity_curve) < 2:
             return self._empty_report(capital, start_date, end_date, risk_free_rate)
 
@@ -74,8 +79,65 @@ class BacktestReport:
         net_pnl = sum(t.get("pnl", 0) for t in close_trades)
         gross_pnl = net_pnl + total_commission + total_slippage
 
+        # 基准对比 (买入持有)
+        benchmark = {}
+        if benchmark_returns is not None and len(benchmark_returns) > 0:
+            bh = np.array(benchmark_returns, dtype=float)
+            bh_equity = capital * np.cumprod(1 + bh)
+            bh_total_return = bh_equity[-1] / capital - 1
+            bh_days = len(bh_equity) - 1
+            bh_ann_return = np.exp(np.log(1 + bh_total_return) * 252 / bh_days) - 1 if bh_days > 0 and bh_total_return > -1 else 0
+            bh_vol = float(np.std(bh) * np.sqrt(252)) if len(bh) > 1 else 0
+            bh_sharpe = (bh_ann_return - risk_free_rate) / bh_vol if bh_vol > 0 else 0
+            bh_peak = np.maximum.accumulate(bh_equity)
+            bh_dd = float(np.min((bh_equity - bh_peak) / bh_peak))
+
+            # 超额收益 — 对齐到 strategy returns 的长度
+            if len(bh) < len(returns):
+                # benchmark_returns 是 bar-to-bar 收益率，比 equity_curve 少 1
+                pad = len(returns) - len(bh)
+                bh_padded = np.pad(bh, (pad, 0), 'constant', constant_values=0)
+            else:
+                bh_padded = bh[:len(returns)]
+            excess_returns = returns - bh_padded
+            excess_ann = annualized_return - bh_ann_return
+            tracking_error = float(np.std(excess_returns) * np.sqrt(252)) if len(excess_returns) > 1 else 0
+            information_ratio = excess_ann / tracking_error if tracking_error > 0 else 0
+
+            benchmark = {
+                "total_return": _safe_round(bh_total_return * 100, 2),
+                "annualized_return": _safe_round(bh_ann_return * 100, 2),
+                "sharpe_ratio": _safe_round(bh_sharpe, 2),
+                "max_drawdown": _safe_round(bh_dd * 100, 2),
+                "volatility": _safe_round(bh_vol * 100, 2),
+            }
+
         return {
             "performance": {
+                "total_return": _safe_round(total_return * 100, 2),
+                "annualized_return": _safe_round(annualized_return * 100, 2),
+                "sharpe_ratio": _safe_round(sharpe, 2),
+                "sortino_ratio": _safe_round(sortino, 2),
+                "calmar_ratio": _safe_round(calmar, 2),
+                "win_rate": _safe_round(win_rate * 100, 2),
+                "profit_factor": _safe_round(profit_factor, 2) if profit_factor else None,
+            },
+            "risk": {
+                "max_drawdown": _safe_round(max_dd * 100, 2),
+                "var_95": _safe_round(var_95, 2),
+                "cvar_95": _safe_round(cvar_95, 2),
+                "volatility": _safe_round(volatility * 100, 2),
+                "downside_deviation": _safe_round(downside_dev * 100, 2),
+                "skewness": _safe_round(sk, 4),
+                "kurtosis": _safe_round(ku, 4),
+            },
+            "benchmark": benchmark if benchmark else None,
+            "excess": {
+                "excess_return": _safe_round(total_return * 100 - benchmark.get("total_return", 0), 2) if benchmark else None,
+                "information_ratio": _safe_round(information_ratio, 2) if benchmark else None,
+                "tracking_error": _safe_round(tracking_error * 100, 2) if benchmark else None,
+            } if benchmark else None,
+            "trades": {
                 "total_return": _safe_round(total_return * 100, 2),
                 "annualized_return": _safe_round(annualized_return * 100, 2),
                 "sharpe_ratio": _safe_round(sharpe, 2),

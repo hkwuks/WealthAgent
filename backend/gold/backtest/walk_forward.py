@@ -115,26 +115,59 @@ class WalkForwardValidator:
         # 在训练数据上运行策略，学习参数
         result = bt.run(strategy, train_bars, capital=self.capital, params=params)
 
+        # 捕获 ML 策略的预训练 predictor（避免测试窗口重新训练 + 消除泄漏）
+        predictor_to_inject = getattr(strategy, '_predictor', None)
+
         # 在测试数据上运行
         test_strategy = strategy_cls()
-        test_result = bt.run(test_strategy, test_bars, capital=self.capital, params=params)
+        if predictor_to_inject is not None:
+            test_strategy._injected_predictor = predictor_to_inject
 
-        report = test_result.get("report", {})
-        perf = report.get("performance", {})
-        trades = test_result.get("trades", [])
+        # 为测试策略提供预热数据（训练集尾部），让 MA/RSI 等指标有足够历史
+        # 策略只会在 test_bars 范围内产生信号，但预热数据确保指标计算正确
+        warmup_bars = train_bars[-max(60, self.embargo_days * 2):]
+        combined_test_bars = warmup_bars + test_bars
+        test_result = bt.run(test_strategy, combined_test_bars, capital=self.capital, params=params)
+
+        # 过滤掉预热区间的交易（只保留 test_start 之后的）
+        test_start_date = bars[test_start].datetime if test_start < len(bars) else None
+        test_trades = []
+        for t in test_result.get("trades", []):
+            ts = t.get("timestamp", "")
+            if test_start_date and ts >= test_start_date.isoformat():
+                test_trades.append(t)
+
+        # 计算测试区间的收益率（从测试区间的close trades计算）
+        test_close_trades = [t for t in test_trades if t.get("type") == "close"]
+        test_pnl = sum(t.get("pnl", 0) for t in test_close_trades)
+        test_return_pct = round(test_pnl / self.capital * 100, 2) if self.capital else 0
+
+        # 过滤信号
+        def _signal_ts(s):
+            if isinstance(s, dict):
+                ts = s.get("created_at", "") or ""
+                if isinstance(ts, datetime):
+                    return ts.isoformat()
+                return str(ts)
+            return s.created_at.isoformat() if s.created_at else ""
+
+        test_signals_raw = test_result.get("signals", [])
+        test_start_ts = test_start_date.isoformat() if test_start_date else ""
+        test_signals = [s for s in test_signals_raw if _signal_ts(s) >= test_start_ts]
+        test_trade_count = len([t for t in test_trades if t.get("type") == "close"])
 
         return {
             "window_index": wf_start,
             "train_bars": len(train_bars),
             "test_bars": len(test_bars),
-            "total_return_pct": perf.get("total_return"),
-            "sharpe_ratio": perf.get("sharpe_ratio"),
-            "max_drawdown_pct": report.get("risk", {}).get("max_drawdown"),
-            "win_rate": perf.get("win_rate"),
-            "trade_count": report.get("trades", {}).get("total_count", 0),
-            "equity": self._calc_equity_return(test_result),
-            "trades": trades,
-            "signals": test_result.get("signals", []),
+            "total_return_pct": test_return_pct,
+            "sharpe_ratio": None,
+            "max_drawdown_pct": None,
+            "win_rate": None,
+            "trade_count": test_trade_count,
+            "equity": test_return_pct,
+            "trades": test_trades,
+            "signals": test_signals[-20:],
         }
 
     @staticmethod
