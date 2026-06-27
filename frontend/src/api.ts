@@ -590,11 +590,18 @@ class ApiService {
     return this.request<{ success: boolean; data: any }>('/gold/trading/config');
   }
 
-  async generateTradingSignal(strategyName: string, symbol?: string): Promise<{ success: boolean; data: any }> {
-    const params = new URLSearchParams({ strategy_name: strategyName, symbol: symbol || 'AU0' });
+  async generateTradingSignal(strategyName: string, symbol?: string, autoExecute?: boolean): Promise<{ success: boolean; data: any }> {
+    const params = new URLSearchParams({ strategy_name: strategyName, symbol: symbol || 'AU0' })
+    if (autoExecute) params.set('auto_execute', 'true')
     return this.request<{ success: boolean; data: any }>(`/gold/trading/signal/generate?${params.toString()}`, {
       method: 'POST',
     }, 60000);
+  }
+
+  async executeTradingSignal(signalId: string): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>(`/gold/trading/signal/execute?signal_id=${signalId}`, {
+      method: 'POST',
+    }, 30000);
   }
 
   async runSensitivity(params: {
@@ -649,6 +656,11 @@ class ApiService {
 
   async getGoldMarketData(): Promise<{ success: boolean; data: any }> {
     return this.request<{ success: boolean; data: any }>('/gold/trading/market-data', {}, 15000);
+  }
+
+  // ===== CTP 模拟交易 API =====
+  async getCtpData(): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>('/gold/trading/ctp/data', {}, 20000);
   }
 }
 

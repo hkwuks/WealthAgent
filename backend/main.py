@@ -1,5 +1,14 @@
 import sys
 import os
+
+# 尽早加载 .env 到 os.environ，确保所有 Settings 子类都能读到
+try:
+    from dotenv import load_dotenv
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+    load_dotenv(env_path, override=True)
+except Exception:
+    pass
+
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request

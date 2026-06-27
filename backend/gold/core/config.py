@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic_settings import BaseSettings
 
 
@@ -5,8 +6,8 @@ class GoldSettings(BaseSettings):
     """黄金量化系统配置"""
 
     # 数据目录
-    gold_data_dir: str = "data/gold"
-    gold_db_path: str = "data/gold/gold.db"
+    gold_data_dir: str = "data/backend/gold"
+    gold_db_path: str = "data/backend/gold/gold.db"
 
     # SHFE AU合约参数
     au_multiplier: int = 1000       # 合约乘数：1000克/手
@@ -25,9 +26,24 @@ class GoldSettings(BaseSettings):
     max_drawdown_pct: float = 0.10
     max_daily_loss_pct: float = 0.03
     max_daily_signals: int = 20
+    max_position_lots: int = 10        # 单品种最大持仓手数
+    max_margin_ratio: float = 0.30     # 保证金占比上限
+    max_consecutive_losses: int = 3    # 连续亏损熔断次数
 
     # AkShare数据
     akshare_symbol: str = "AU0"
+
+    # CTP/SimNow 连接配置
+    ctp_enabled: bool = False
+    ctp_broker_id: str = "9999"
+    ctp_user_id: str = ""
+    ctp_password: str = ""
+    ctp_md_address: str = "tcp://182.254.243.31:40011"   # 7×24 行情前置
+    ctp_td_address: str = "tcp://182.254.243.31:40001"   # 7×24 交易前置
+    ctp_app_id: str = "simnow_client_test"
+    ctp_auth_code: str = "0000000000000000"
+    ctp_symbols: str = ""                                 # 订阅合约列表（逗号分隔），留空自动按季度生成后续合约
+    ctp_main_symbol: str = "AU0"                          # 前端显示用的主连代码（仅展示）
 
     class Config:
         env_prefix = "GOLD_"
