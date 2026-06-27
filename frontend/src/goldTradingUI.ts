@@ -93,6 +93,7 @@ export class GoldTradingUI {
     this.bindEvents()
     this.loadStrategies()
     this.loadMarketData()
+    this.loadStrategyComparison()
 
     // 市场数据 + K线 轮询刷新
     this.marketTimer = setInterval(() => this.loadMarketData(), 30000)
@@ -230,6 +231,17 @@ export class GoldTradingUI {
           </div>
           <div class="analysis-body" id="analysis-body">
             <div class="analysis-loading">加载分析中...</div>
+          </div>
+        </div>
+
+        <!-- 策略对比（当前市场环境） -->
+        <div class="quant-section">
+          <div class="section-title-bar">
+            <h3>⚔️ 策略对比 — 当前市场适配度</h3>
+            <span class="regime-badge" id="regime-badge">--</span>
+          </div>
+          <div class="strategy-compare" id="strategy-compare">
+            <div class="analysis-loading">加载中...</div>
           </div>
         </div>
 
@@ -573,6 +585,83 @@ export class GoldTradingUI {
       <div class="analysis-judgment">
         <div class="judgment-icon">💡</div>
         <div class="judgment-text">${judgment}</div>
+      </div>
+    `
+  }
+
+  // ===== 策略对比面板 =====
+
+  private async loadStrategyComparison() {
+    try {
+      const resp = await api.getGoldStrategyComparison('AU0')
+      if (resp.success && resp.data) {
+        this.renderStrategyComparison(resp.data)
+      }
+    } catch (e) {
+      console.error('Strategy comparison load failed:', e)
+    }
+  }
+
+  private renderStrategyComparison(d: any) {
+    const container = document.getElementById('strategy-compare')
+    const badge = document.getElementById('regime-badge')
+    if (!container) return
+
+    const regime = d.market_regime || '--'
+    const regimeDesc = d.regime_description || ''
+    const strategies: any[] = d.strategies || []
+    const indicators = d.indicators_summary || {}
+
+    if (badge) {
+      badge.textContent = regime
+      badge.className = 'regime-badge ' + (
+        regime.includes('多头') ? 'regime-bull' :
+        regime.includes('空头') ? 'regime-bear' :
+        regime.includes('超卖') ? 'regime-oversold' :
+        regime.includes('超买') ? 'regime-overbought' : 'regime-neutral'
+      )
+    }
+
+    container.innerHTML = `
+      <div class="compare-header">
+        <div class="compare-regime">
+          <span class="regime-desc">${regimeDesc}</span>
+          <div class="compare-indicators">
+            <span class="indicator-chip"><b>RSI</b> ${indicators.rsi14 ?? '--'}</span>
+            <span class="indicator-chip"><b>趋势强度</b> ${indicators.trend_strength ?? '--'}%</span>
+            <span class="indicator-chip"><b>均线</b> ${indicators.ma_alignment || '--'}</span>
+            <span class="indicator-chip"><b>波动</b> ${indicators.vol_anomaly_pct ?? '--'}%</span>
+          </div>
+        </div>
+        <div class="compare-best">
+          推荐: <span class="best-strategy-name">${d.best_icon || ''} ${d.best_strategy || '--'}</span>
+        </div>
+      </div>
+
+      <div class="compare-cards">
+        ${strategies.map(s => {
+          const score = s.score ?? 0
+          const barClass = score >= 70 ? 'bar-high' : score >= 45 ? 'bar-mid' : 'bar-low'
+          return `
+            <div class="compare-card">
+              <div class="compare-card-top">
+                <span class="compare-icon">${s.icon || '📊'}</span>
+                <div class="compare-card-title">${s.strategy_name || '--'}</div>
+                <div class="compare-score ${score >= 70 ? 'score-high' : score >= 45 ? 'score-mid' : 'score-low'}">${score}<span class="score-unit">分</span></div>
+              </div>
+              <div class="compare-bar-bg">
+                <div class="compare-bar ${barClass}" style="width:${score}%"></div>
+              </div>
+              <div class="compare-tags">
+                ${(s.tags || []).map((t: string) => `<span class="compare-tag">${t}</span>`).join('')}
+              </div>
+              <div class="compare-desc">${s.description || ''}</div>
+              <div class="compare-reasons">
+                ${(s.reasons || []).map((r: string) => `<div class="compare-reason">${r}</div>`).join('')}
+              </div>
+            </div>
+          `
+        }).join('')}
       </div>
     `
   }

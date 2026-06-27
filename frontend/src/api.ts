@@ -675,6 +675,11 @@ class ApiService {
     return this.request<{ success: boolean; data: any }>(`/gold/trading/analysis?${params.toString()}`, {}, 15000);
   }
 
+  async getGoldStrategyComparison(symbol?: string): Promise<{ success: boolean; data: any }> {
+    const params = symbol ? `?symbol=${symbol}` : '';
+    return this.request<{ success: boolean; data: any }>(`/gold/trading/strategy-comparison${params}`, {}, 15000);
+  }
+
   async getGoldMarketData(): Promise<{ success: boolean; data: any }> {
     return this.request<{ success: boolean; data: any }>('/gold/trading/market-data', {}, 15000);
   }
