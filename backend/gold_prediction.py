@@ -83,19 +83,29 @@ class FeatureEngineer:
         self.selected_features_: Optional[List[str]] = None  # 因子筛选后保留的特征
 
     def create_technical_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """创建技术指标特征（精选，避免冗余）"""
+        """创建技术指标特征（35+ 因子）"""
         df = df.copy()
 
-        # 收益率
+        # ---- 收益率特征 ----
         df['returns'] = df['close'].pct_change()
         df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
 
-        # MA比率（不保留MA值本身，避免冗余）
+        # 动量衰减: 过去N天收益率的衰减加权平均
+        for window in [5, 10, 21]:
+            df[f'momentum_{window}'] = df['close'].pct_change(window)
+        # 动量加速度: ROC的变化率
+        df['roc_accel'] = df['close'].pct_change(5) - df['close'].pct_change(10).shift(5)
+
+        # ---- 移动平均关系 ----
         for window in [20, 60]:
             ma = df['close'].rolling(window=window).mean()
             df[f'ma_ratio_{window}'] = df['close'] / ma
+        # 短期均线相对长期均线位置
+        ma5 = df['close'].rolling(5).mean()
+        ma20 = df['close'].rolling(20).mean()
+        df['ma5_ma20_ratio'] = ma5 / ma20
 
-        # ATR(20)替代多个volatility窗口
+        # ---- 波动率因子 ----
         high_low = df['high'] - df['low']
         high_close = (df['high'] - df['close'].shift(1)).abs()
         low_close = (df['low'] - df['close'].shift(1)).abs()
@@ -103,20 +113,71 @@ class FeatureEngineer:
         df['atr_20'] = tr.rolling(window=20).mean()
         df['atr_ratio'] = df['atr_20'] / df['close']
 
-        # RSI(14) — 仅保留一个周期
-        df['rsi_14'] = self._calculate_rsi(df['close'], 14)
+        # 历史波动率 HV(20/60)
+        df['hv_20'] = df['returns'].rolling(20).std() * np.sqrt(252)
+        df['hv_60'] = df['returns'].rolling(60).std() * np.sqrt(252)
+        df['hv_ratio'] = df['hv_20'] / (df['hv_60'] + 1e-10)
 
-        # MACD(12,26,9) — 不再单独保留hist
+        # Parkinson 波动率 (HL estimator)
+        df['parkinson_vol'] = np.sqrt(
+            (1 / (4 * np.log(2))) * (np.log(df['high'] / df['low']) ** 2).rolling(20).mean()
+        )
+
+        # ---- 趋势强度 ADX ----
+        # +DI / -DI
+        atr14 = tr.rolling(14).mean()
+        plus_dm = (df['high'].diff() > df['low'].diff().abs()) * df['high'].diff().clip(0)
+        minus_dm = (df['low'].diff().abs() > df['high'].diff()) * df['low'].diff().abs().clip(0)
+        plus_di = 100 * plus_dm.rolling(14).mean() / (atr14 + 1e-10)
+        minus_di = 100 * minus_dm.rolling(14).mean() / (atr14 + 1e-10)
+        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di + 1e-10)
+        df['adx_14'] = dx.rolling(14).mean()
+
+        # ---- RSI ----
+        df['rsi_14'] = self._calculate_rsi(df['close'], 14)
+        df['rsi_7'] = self._calculate_rsi(df['close'], 7)
+
+        # ---- MACD ----
         df['macd'], df['macd_signal'], _ = self._calculate_macd(df['close'])
         df['macd_diff'] = df['macd'] - df['macd_signal']
+        df['macd_histogram'] = df['macd_diff'] - df['macd_diff'].rolling(9).mean()
 
-        # 布林带位置（不保留upper/middle/lower）
+        # ---- 布林带 ----
         _, _, bb_lower = self._calculate_bollinger(df['close'])
         bb_upper, bb_middle, _ = self._calculate_bollinger(df['close'])
         df['bb_position'] = (df['close'] - bb_lower) / (bb_upper - bb_lower + 1e-10)
+        df['bb_width'] = (bb_upper - bb_lower) / (bb_middle + 1e-10)
+        df['bb_%b'] = (df['close'] - bb_lower) / (bb_upper - bb_lower + 1e-10)
 
-        # 价格位置
+        # ---- 成交量因子 ----
+        if 'volume' in df.columns:
+            # OBV
+            close_diff = df['close'].diff()
+            direction = np.sign(close_diff)
+            df['obv'] = (direction * df['volume']).fillna(0).cumsum()
+            df['obv_ma_ratio'] = df['obv'] / (df['obv'].rolling(20).mean() + 1e-10)
+
+            # VWAP 偏离度
+            vwap = (df['volume'] * df['close']).rolling(20).sum() / (df['volume'].rolling(20).sum() + 1e-10)
+            df['vwap_deviation'] = (df['close'] - vwap) / (vwap + 1e-10)
+
+            # 成交量变化
+            df['volume_change'] = df['volume'].pct_change()
+            df['volume_ma_ratio'] = df['volume'] / (df['volume'].rolling(5).mean() + 1e-10)
+
+            # VPIN (成交量Pin — 简单近似)
+            signed_vol = direction * df['volume']
+            df['vpin'] = signed_vol.rolling(20).sum() / (df['volume'].rolling(20).sum() + 1e-10)
+
+        # ---- 价格位置 / 微观结构 ----
+        # 收盘价在当日区间位置
         df['close_position'] = (df['close'] - df['low']) / (df['high'] - df['low'] + 1e-10)
+
+        # HL价差比
+        df['hl_spread_ratio'] = (df['high'] - df['low']) / (df['close'] + 1e-10)
+
+        # 隔夜跳空 gap
+        df['overnight_gap'] = df['open'] / df['close'].shift(1) - 1
 
         return df
 
@@ -382,6 +443,113 @@ class FeatureEngineer:
         return upper, middle, lower
 
 
+class FeatureImportanceTracker:
+    """特征重要性跟踪 — 监控特征漂移"""
+
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or "data/gold/gold.db"
+        self._init_db()
+
+    def _init_db(self):
+        import sqlite3
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS feature_importance (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    model_type TEXT NOT NULL,
+                    horizon TEXT NOT NULL,
+                    feature_name TEXT NOT NULL,
+                    importance REAL NOT NULL,
+                    rank INTEGER NOT NULL,
+                    train_date TEXT NOT NULL,
+                    n_samples INTEGER NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_fi_model_date
+                ON feature_importance(model_type, train_date)
+            """)
+            conn.commit()
+
+    def record(self, model_type: str, horizon: str,
+               importance_dict: Dict[str, float], n_samples: int):
+        """记录一次训练的特征重要性"""
+        import sqlite3
+        from datetime import date
+        today = date.today().isoformat()
+        sorted_feats = sorted(importance_dict.items(), key=lambda x: -x[1])
+
+        with sqlite3.connect(self.db_path) as conn:
+            for rank, (name, imp) in enumerate(sorted_feats):
+                conn.execute(
+                    """INSERT INTO feature_importance
+                       (model_type, horizon, feature_name, importance, rank, train_date, n_samples)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (model_type, horizon, name, round(imp, 6), rank, today, n_samples)
+                )
+            conn.commit()
+
+    def get_latest(self, model_type: str, top_n: int = 20) -> list[dict]:
+        """获取最近一次训练的特征重要性"""
+        import sqlite3
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT train_date FROM feature_importance WHERE model_type=? ORDER BY train_date DESC LIMIT 1",
+                (model_type,)
+            ).fetchone()
+            if not row:
+                return []
+            rows = conn.execute(
+                """SELECT feature_name, importance, rank
+                   FROM feature_importance
+                   WHERE model_type=? AND train_date=?
+                   ORDER BY rank ASC LIMIT ?""",
+                (model_type, row["train_date"], top_n)
+            ).fetchall()
+        return [{"name": r["feature_name"], "importance": r["importance"], "rank": r["rank"]} for r in rows]
+
+    def detect_drift(self, model_type: str, threshold: float = 0.3) -> Optional[str]:
+        """检测特征漂移（排名变化 > threshold 的特征占比）"""
+        import sqlite3
+        from collections import defaultdict
+        with sqlite3.connect(self.db_path) as conn:
+            dates = [r["train_date"] for r in
+                     conn.execute(
+                         "SELECT DISTINCT train_date FROM feature_importance WHERE model_type=? ORDER BY train_date DESC LIMIT 2",
+                         (model_type,)
+                     ).fetchall()]
+            if len(dates) < 2:
+                return None
+
+            def _rank_map(date):
+                return {
+                    r["feature_name"]: r["rank"]
+                    for r in conn.execute(
+                        "SELECT feature_name, rank FROM feature_importance WHERE model_type=? AND train_date=?",
+                        (model_type, date)
+                    ).fetchall()
+                }
+
+            old_map = _rank_map(dates[1])
+            new_map = _rank_map(dates[0])
+
+        changed = 0
+        total = 0
+        for feat, old_rank in old_map.items():
+            new_rank = new_map.get(feat)
+            if new_rank is None:
+                changed += 1
+            elif abs(new_rank - old_rank) / max(old_rank, 1) > threshold:
+                changed += 1
+            total += 1
+
+        drift_pct = changed / total if total > 0 else 0
+        if drift_pct > threshold:
+            return f"特征漂移: {drift_pct*100:.0f}% 特征排名变化 > {threshold*100:.0f}%"
+        return None
+
+
 class TripleBarrierLabeler:
     """
     Triple-Barrier Labeling
@@ -561,6 +729,7 @@ class GoldPricePredictor:
         self.feature_engineer = FeatureEngineer()
         self.models = {}
         self.scalers = {}
+        self.importance_tracker = FeatureImportanceTracker()
         self.oos_error_std = {}  # 每个模型的OOS误差标准差
 
     def train(self, df: pd.DataFrame, model_type: ModelType = ModelType.LIGHTGBM,
@@ -629,6 +798,18 @@ class GoldPricePredictor:
         # 记录OOS误差标准差（用于置信度估算）
         oos_errors = (y_test.values - y_pred)
         self.oos_error_std[model_type.value] = np.std(oos_errors)
+
+        # 记录特征重要性
+        if hasattr(model, 'feature_importances_'):
+            feat_imp = dict(zip(X_selected.columns, model.feature_importances_))
+        elif model_type == ModelType.RIDGE:
+            feat_imp = dict(zip(X_selected.columns, np.abs(model.coef_)))
+        else:
+            feat_imp = {}
+        if feat_imp:
+            self.importance_tracker.record(
+                model_type.value, horizon.name, feat_imp, len(X_train)
+            )
 
         metrics = {
             'rmse': np.sqrt(mean_squared_error(y_test, y_pred)),

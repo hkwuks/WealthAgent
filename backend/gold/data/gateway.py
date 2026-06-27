@@ -4,6 +4,7 @@ from loguru import logger
 
 from backend.gold.core.models import GoldBarData
 from backend.gold.data.storage import GoldDataStore
+from backend.gold.data.quality import DataQualityChecker
 
 
 class GoldDataGateway:
@@ -15,7 +16,8 @@ class GoldDataGateway:
 
     async def get_bars(self, symbol: str = "AU0", period: str = "d",
                        start: str = None, end: str = None,
-                       limit: int = None, refresh: bool = False) -> list[GoldBarData]:
+                       limit: int = None, refresh: bool = False,
+                       skip_quality_check: bool = False) -> list[GoldBarData]:
         """获取K线数据 — 优先SQLite，数据过期或refresh=True时从AkShare刷新"""
         today = datetime.now().strftime("%Y-%m-%d")
 
@@ -27,6 +29,11 @@ class GoldDataGateway:
                 age_days = (datetime.now() - latest).days
                 # 日线超过1天未更新，视为过期
                 if (period == "d" and age_days <= 1) or period != "d":
+                    if not skip_quality_check:
+                        qc = DataQualityChecker()
+                        report = qc.check(bars)
+                        if not report.passed:
+                            logger.warning(f"缓存数据质量问题: {report.summary}")
                     return bars
 
         # 缓存miss或过期，从外部源获取
@@ -205,6 +212,67 @@ class GoldDataGateway:
         result = pd.concat(dfs, axis=1).reset_index()
         result["date"] = result["Date"].dt.strftime("%Y-%m-%d") if hasattr(result["Date"], "dt") else result["Date"]
         return result[["date"] + list(indicators.keys())]
+
+    async def get_cot_data(self, symbol: str = "088691") -> pd.DataFrame:
+        """
+        获取 CFTC COT 持仓报告（黄金期货）
+
+        COT 数据每周五发布（下周二可获取），包含商业/非商业持仓分类。
+        非商业（投机）净多单 = 投机多 - 投机空 → 对金价有领先指示。
+
+        Args:
+            symbol: CFTC 市场代码，088691=黄金期货
+
+        Returns:
+            DataFrame: date, spec_long, spec_short, comm_long, comm_short, total_oi
+        """
+        try:
+            import requests
+            import pandas as pd
+        except ImportError:
+            return pd.DataFrame()
+
+        try:
+            # 使用 Quantsuz 的 COT 数据源（免费，无需 API key）
+            url = f"https://data.quantsuz.com/api/v1/cftc/{symbol}"
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200:
+                # fallback: 尝试 alternative source
+                url = f"https://www.cftc.gov/dea/futures/past/pa{int(symbol)}_past.txt"
+                resp = requests.get(url, timeout=10)
+                if resp.status_code != 200:
+                    logger.warning(f"COT data fetch failed for {symbol}")
+                    return pd.DataFrame()
+                # 解析 CFTC legacy 文本格式
+                lines = resp.text.strip().split("\n")
+                if len(lines) < 4:
+                    return pd.DataFrame()
+                records = []
+                for line in lines[3:]:
+                    parts = line.strip().split(",")
+                    if len(parts) < 20:
+                        continue
+                    try:
+                        records.append({
+                            "date": parts[0].strip(),
+                            "spec_long": int(parts[6]),
+                            "spec_short": int(parts[7]),
+                            "comm_long": int(parts[10]),
+                            "comm_short": int(parts[11]),
+                            "total_oi": int(parts[1]),
+                        })
+                    except (ValueError, IndexError):
+                        continue
+                return pd.DataFrame(records)
+
+            data = resp.json()
+            if "data" in data:
+                return pd.DataFrame(data["data"])
+            return pd.DataFrame()
+
+        except Exception as e:
+            logger.warning(f"COT data error: {e}")
+            return pd.DataFrame()
 
     async def get_training_data(self, symbol: str = 'GC',
                                  lookback_days: int = 2520) -> pd.DataFrame:

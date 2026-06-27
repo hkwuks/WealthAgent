@@ -154,7 +154,7 @@ class MLPredictorStrategy(StrategyBase):
             self._last_predict_bar = self._bar_count
 
         except Exception as e:
-            logger.debug(f"ML prediction failed: {e}")
+            logger.warning(f"ML prediction failed: {e}")
 
     def _check_exit(self, bar: GoldBarData):
         """检查平仓条件"""

@@ -17,6 +17,7 @@ class MeanReversionStrategy(StrategyBase):
         "rsi_oversold": 30,
         "atr_stop_multiplier": 2.0,
         "position_size": 1,
+        "target_vol_pct": 0.10,
     }
     param_ranges = {
         "boll_period": [10, 15, 20, 25, 30, 40, 50],
