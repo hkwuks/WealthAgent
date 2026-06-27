@@ -244,7 +244,7 @@ class MLPredictorStrategy(StrategyBase):
             return None
 
         try:
-            from backend.gold_prediction import (
+            from backend.gold.ml import (
                 GoldPricePredictor, ModelType, PredictionHorizon,
             )
 
@@ -293,7 +293,7 @@ class MLPredictorStrategy(StrategyBase):
     def _predict_regression(self, predictor, df: pd.DataFrame) -> Optional[float]:
         """回归预测 → 返回预测涨跌幅"""
         try:
-            from backend.gold_prediction import ModelType, PredictionHorizon
+            from backend.gold.ml import ModelType, PredictionHorizon
 
             mt = ModelType(self.model_type)
             horizon_map = {1: PredictionHorizon.SHORT, 5: PredictionHorizon.MEDIUM, 20: PredictionHorizon.LONG}
@@ -311,7 +311,7 @@ class MLPredictorStrategy(StrategyBase):
     def _predict_tb(self, predictor, df: pd.DataFrame) -> Optional[int]:
         """Triple-Barrier预测 → 返回方向 1/-1"""
         try:
-            from backend.gold_prediction import ModelType
+            from backend.gold.ml import ModelType
 
             mt = ModelType(self.model_type)
             result = predictor.predict_tb(df, mt)
@@ -326,7 +326,7 @@ class MLPredictorStrategy(StrategyBase):
     def _retrain_and_predict(self, df: pd.DataFrame) -> Optional[float]:
         """特征不匹配时：用当前可用数据重新训练，再做预测"""
         try:
-            from backend.gold_prediction import GoldPricePredictor, ModelType, PredictionHorizon
+            from backend.gold.ml import GoldPricePredictor, ModelType, PredictionHorizon
             mt = ModelType(self.model_type)
             horizon = PredictionHorizon.SHORT
             predictor = GoldPricePredictor()
