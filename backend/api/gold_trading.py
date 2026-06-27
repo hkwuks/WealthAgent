@@ -13,7 +13,11 @@ import pandas as pd
 from backend.gold.strategy.base import StrategyRegistry
 from backend.gold.backtest.engine import Backtester
 from backend.gold.backtest.sensitivity import SensitivityAnalyzer
-from backend.gold.backtest.validation import SampleSplitter, ScenarioValidator
+from backend.gold.backtest.validation import (
+    SampleSplitter, ScenarioValidator,
+    WalkForwardValidatorAdapter, CPCVValidatorAdapter,
+)
+from backend.gold.data.labeling import TripleBarrierLabeler
 from backend.gold.risk.checks import RiskChecker
 from backend.gold.signal.output import SignalOutput
 from backend.gold.data.gateway import GoldDataGateway
@@ -272,6 +276,153 @@ async def run_validation(req: ValidationRequest):
             "scenario_validation": scenario_result,
         },
     }
+
+
+# ===== Walk-Forward 回测 =====
+
+@router.post("/backtest/walk-forward")
+async def walk_forward_backtest(
+    strategy_name: str = "trend_following",
+    train_window: int = Query(252, ge=60, le=500),
+    test_window: int = Query(20, ge=5, le=60),
+    embargo_days: int = Query(20, ge=0, le=100),
+    capital: float = Query(1_000_000, ge=10_000),
+):
+    """Walk-Forward 滚动窗口回测 (Purging + Embargo)"""
+    cls = StrategyRegistry.get(strategy_name)
+    if not cls:
+        raise HTTPException(status_code=404, detail=f"策略不存在: {strategy_name}")
+
+    bars = gateway.get_bars("AU0", period="d")
+    if not bars or len(bars) < train_window + 30:
+        raise HTTPException(status_code=400, detail=f"K线数据不足 {len(bars or [])} 根")
+
+    import copy
+    validator = WalkForwardValidatorAdapter(
+        train_window=train_window, test_window=test_window,
+        embargo_days=embargo_days, capital=capital,
+    )
+    result = validator.validate(strategy_name, copy.deepcopy(bars))
+
+    return {"success": True, "data": result}
+
+
+# ===== CPCV 回测 =====
+
+@router.post("/backtest/cpcv")
+async def cpcv_backtest(
+    strategy_name: str = "trend_following",
+    n_groups: int = Query(6, ge=3, le=10),
+    k_test: int = Query(2, ge=1, le=5),
+    capital: float = Query(1_000_000, ge=10_000),
+):
+    """CPCV (Combinatorial Purged Cross-Validation) 回测 + PBO"""
+    cls = StrategyRegistry.get(strategy_name)
+    if not cls:
+        raise HTTPException(status_code=404, detail=f"策略不存在: {strategy_name}")
+
+    bars = gateway.get_bars("AU0", period="d")
+    if not bars or len(bars) < 200:
+        raise HTTPException(status_code=400, detail=f"K线数据不足 {len(bars or [])} 根")
+
+    import copy
+    validator = CPCVValidatorAdapter(
+        n_groups=n_groups, k_test=k_test,
+        capital=capital,
+    )
+    result = validator.validate(strategy_name, copy.deepcopy(bars))
+
+    return {"success": True, "data": result}
+
+
+# ===== Triple-Barrier 标注 =====
+
+@router.post("/label/triple-barrier")
+async def triple_barrier_label(
+    atr_window: int = Query(20, ge=5, le=60),
+    tp_multiplier: float = Query(1.5, ge=0.5, le=5.0),
+    sl_multiplier: float = Query(1.0, ge=0.5, le=5.0),
+    max_holding_days: int = Query(5, ge=1, le=30),
+):
+    """对当前K线进行 Triple-Barrier 标注，返回标签分布和明细"""
+    bars = gateway.get_bars("AU0", period="d")
+    if not bars or len(bars) < 50:
+        raise HTTPException(status_code=400, detail=f"K线数据不足 {len(bars or [])} 根")
+
+    labeler = TripleBarrierLabeler(
+        atr_window=atr_window, tp_multiplier=tp_multiplier,
+        sl_multiplier=sl_multiplier, max_holding_days=max_holding_days,
+    )
+    labels = labeler.label_bars(bars)
+    distribution = labeler.label_distribution(labels)
+
+    return {
+        "success": True,
+        "data": {
+            "total_bars": len(bars),
+            "labeled": len([l for l in labels if l["label"] != 0]),
+            "config": {
+                "atr_window": atr_window,
+                "tp_multiplier": tp_multiplier,
+                "sl_multiplier": sl_multiplier,
+                "max_holding_days": max_holding_days,
+            },
+            "distribution": distribution,
+            "labels": labels[-50:],
+        },
+    }
+
+
+# ===== 特征重要性（ML策略） =====
+
+@router.get("/feature-importance")
+async def get_ml_feature_importance():
+    """返回 ML 预测器最近一次训练的特征重要性"""
+    cls = StrategyRegistry.get("ml_predictor")
+    if not cls:
+        raise HTTPException(status_code=404, detail="ML 策略未注册")
+
+    import copy
+    bars = gateway.get_bars("AU0", period="d")
+    if not bars or len(bars) < 150:
+        raise HTTPException(status_code=400, detail="K线数据不足")
+
+    strategy = cls()
+    from backend.gold.backtest.engine import BacktestStrategyContext
+    from backend.gold.backtest.cost_model import CostModel
+    from backend.gold.core.config import gold_settings
+
+    ctx = BacktestStrategyContext(
+        capital=1_000_000,
+        cost_model=CostModel(),
+        multiplier=gold_settings.au_multiplier,
+        margin_rate=gold_settings.au_margin_rate,
+    )
+    strategy._macro_df = _get_macro_df()
+    strategy.set_context(ctx)
+    strategy.on_init(ctx)
+    for b in bars[-200:]:
+        strategy.on_bar(b)
+
+    importance = strategy.get_feature_importance()
+    tb_dist = strategy.get_tb_label_distribution()
+
+    return {
+        "success": True,
+        "data": {
+            "feature_importance": importance,
+            "tb_label_distribution": tb_dist if tb_dist else None,
+        },
+    }
+
+
+def _get_macro_df():
+    """获取宏观因子DataFrame（供ML策略注入）"""
+    try:
+        df = get_gold_training_data("GC", lookback_days=500)
+        return df if not df.empty else None
+    except Exception:
+        return None
 
 
 # ===== 信号生成 =====

@@ -14,6 +14,7 @@ from typing import Optional
 
 from backend.gold.strategy.base import StrategyBase, StrategyRegistry, StrategyContext
 from backend.gold.core.models import GoldBarData, SignalDirection
+from backend.gold.data.labeling import TripleBarrierLabeler
 from loguru import logger
 
 
@@ -25,20 +26,20 @@ class MLPredictorStrategy(StrategyBase):
     strategy_type = "ml_predictor"
     description = "LightGBM/XGBoost/Ridge滑动窗口预测"
     default_params = {
-        "window_size": 60,           # 滑动窗口大小（累积多少bar后开始预测）
+        "window_size": 60,           # 滑动窗口大小
         "predict_interval": 5,       # 每N根bar预测一次
-        "model_type": "lightgbm",    # lightgbm / xgboost / ridge
-        "prediction_mode": "regression",  # regression / triple_barrier
-        "change_threshold": 0.003,   # 回归模式：涨跌幅阈值（0.3%）
-        "max_holding_bars": 20,      # 最大持仓bar数
-        "atr_stop_multiplier": 2.0,  # ATR止损倍数
+        "model_type": "lightgbm",
+        "prediction_mode": "regression",
+        "change_threshold": 0.0005,  # 0.05%（ML预测值偏小，原0.3%过高）
+        "max_holding_bars": 20,
+        "atr_stop_multiplier": 2.0,
         "position_size": 1,
-        "horizon_days": 1,           # 预测周期
+        "horizon_days": 1,
     }
     param_ranges = {
         "window_size": [40, 60, 80, 100, 120],
         "predict_interval": [1, 3, 5, 10],
-        "change_threshold": [0.001, 0.002, 0.003, 0.005, 0.01],
+        "change_threshold": [0.0001, 0.0003, 0.0005, 0.001, 0.002],
         "max_holding_bars": [5, 10, 20, 30],
         "atr_stop_multiplier": [1.5, 2.0, 2.5, 3.0],
     }
@@ -53,6 +54,10 @@ class MLPredictorStrategy(StrategyBase):
         self._predictor_failed: bool = False
         self._atr_value: float = 0
         self._last_predict_bar: int = -999
+        self._feature_importance: dict = {}
+        self._tb_labeler = TripleBarrierLabeler(
+            tp_multiplier=1.5, sl_multiplier=1.0, max_holding_days=self.max_holding_bars,
+        )
         # _macro_df 由外部注入，不在此重置
 
     def on_bar(self, bar: GoldBarData):
@@ -102,6 +107,7 @@ class MLPredictorStrategy(StrategyBase):
             if self.prediction_mode == "triple_barrier":
                 direction = self._predict_tb(predictor, df)
                 if direction is None:
+                    self._last_predict_bar = self._bar_count  # 防止无限重试
                     return
 
                 if direction == 1:
@@ -128,6 +134,7 @@ class MLPredictorStrategy(StrategyBase):
                 # 回归模式
                 change_pct = self._predict_regression(predictor, df)
                 if change_pct is None:
+                    self._last_predict_bar = self._bar_count  # 防止无限重试
                     return
 
                 if change_pct > self.change_threshold:
@@ -153,8 +160,40 @@ class MLPredictorStrategy(StrategyBase):
 
             self._last_predict_bar = self._bar_count
 
+            # 记录训练后的特征重要性（如果可用）
+            self._capture_feature_importance()
+
         except Exception as e:
             logger.warning(f"ML prediction failed: {e}")
+            self._last_predict_bar = self._bar_count  # 防止无限重试
+
+    def _capture_feature_importance(self):
+        """从 GoldPricePredictor 提取 SHAP 特征重要性"""
+        try:
+            if self._predictor is None:
+                return
+            fe = self._predictor.feature_engineer
+            if hasattr(fe, 'shap_importance_') and fe.shap_importance_:
+                self._feature_importance = fe.shap_importance_
+            elif hasattr(fe, 'mi_scores_') and fe.mi_scores_:
+                sorted_mi = sorted(fe.mi_scores_.items(), key=lambda x: -abs(x[1]))
+                self._feature_importance = dict(sorted_mi[:20])
+        except Exception as e:
+            logger.debug(f"无法捕获特征重要性: {e}")
+
+    def get_feature_importance(self) -> dict:
+        """返回最近一次训练的特征重要性"""
+        return dict(self._feature_importance)
+
+    def get_tb_label_distribution(self) -> dict:
+        """返回 TB 标签分布（仅 TB 模式有效）"""
+        if self.prediction_mode != "triple_barrier":
+            return {}
+        if len(self._bars) < 30:
+            return {}
+        return self._tb_labeler.label_distribution(
+            self._tb_labeler.label_bars(self._bars)
+        )
 
     def _check_exit(self, bar: GoldBarData):
         """检查平仓条件"""
@@ -189,15 +228,16 @@ class MLPredictorStrategy(StrategyBase):
             self._position = 0
 
     def _get_predictor(self):
-        """获取或初始化预测器（懒加载，失败后不重试）"""
+        """获取或初始化预测器（回测模式下用窗口数据训练，跳过缓存）"""
         if self._predictor is not None:
+            # 已成功训练过
             return self._predictor
         if self._predictor_failed:
             return None
 
         try:
             from backend.gold_prediction import (
-                GoldPricePredictor, ModelType, PredictionHorizon, model_manager,
+                GoldPricePredictor, ModelType, PredictionHorizon,
             )
 
             model_map = {
@@ -205,20 +245,10 @@ class MLPredictorStrategy(StrategyBase):
                 "xgboost": ModelType.XGBOOST,
                 "ridge": ModelType.RIDGE,
             }
-            horizon_map = {1: PredictionHorizon.SHORT, 5: PredictionHorizon.MEDIUM, 20: PredictionHorizon.LONG}
-
             mt = model_map.get(self.model_type, ModelType.LIGHTGBM)
-            horizon = horizon_map.get(self.horizon_days, PredictionHorizon.SHORT)
 
-            # 尝试从缓存加载
-            predictor = model_manager.get_predictor(mt, horizon)
-            if predictor is not None:
-                self._predictor = predictor
-                return predictor
-
-            # 无缓存 — 回测模式下用当前窗口数据训练
-            # 注意：这有look-ahead bias，但V1先这样，V2做walk-forward
-            # 需要足够数据：技术指标预热约60bar + 最少50个训练样本
+            # 回测模式：不用缓存模型，直接用当前窗口数据训练
+            # 这样训练和预测使用相同特征集，不会出现特征名不匹配
             df = self._bars_to_dataframe()
             if df.empty or len(df) < 150:
                 return None
@@ -227,6 +257,8 @@ class MLPredictorStrategy(StrategyBase):
             if self.prediction_mode == "triple_barrier":
                 predictor.train_tb(df, mt)
             else:
+                horizon_map = {1: PredictionHorizon.SHORT, 5: PredictionHorizon.MEDIUM, 20: PredictionHorizon.LONG}
+                horizon = horizon_map.get(self.horizon_days, PredictionHorizon.SHORT)
                 predictor.train(df, mt, horizon)
 
             self._predictor = predictor
