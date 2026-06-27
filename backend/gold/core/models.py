@@ -192,6 +192,7 @@ class BacktestRequest(BaseModel):
     end_date: str = "2025-12-31"
     capital: float = 1_000_000
     params: Optional[dict] = None
+    method: str = "auto"  # simple / walk_forward / auto（ML默认WF）
 
 
 class StrategyComparisonRequest(BaseModel):
@@ -202,6 +203,7 @@ class StrategyComparisonRequest(BaseModel):
     start_date: str = "2020-01-01"
     end_date: str = "2025-12-31"
     capital: float = 1_000_000
+    method: str = "auto"  # simple / walk_forward / auto（ML默认WF）
 
 
 # ===== 策略信息 =====

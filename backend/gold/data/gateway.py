@@ -278,4 +278,30 @@ class GoldDataGateway:
                                  lookback_days: int = 2520) -> pd.DataFrame:
         """获取ML预测训练数据 — 复用现有data_sync.py"""
         from backend.data_sync import get_gold_training_data
+        df = get_gold_training_data(symbol, lookback_days=lookback_days)
+
+        if df.empty:
+            return df
+
+        # 合并COT持仓数据（如果有）
+        try:
+            cot = await self.get_cot_data()
+            if not cot.empty:
+                cot["date"] = pd.to_datetime(cot["date"]).dt.strftime("%Y-%m-%d")
+                df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+                # 计算COT因子
+                cot["spec_net"] = cot["spec_long"] - cot["spec_short"]
+                cot["spec_net_ratio"] = cot["spec_net"] / (cot["total_oi"] + 1)
+                cot["spec_long_ratio"] = cot["spec_long"] / (cot["total_oi"] + 1)
+                cot_cols = ["date", "spec_net", "spec_net_ratio", "spec_long_ratio"]
+                df = df.merge(cot[cot_cols], on="date", how="left")
+                # 向前填充（COT 每周发布一次）
+                for c in cot_cols:
+                    if c != "date" and c in df.columns:
+                        df[c] = df[c].ffill().bfill().fillna(0)
+                logger.debug(f"合并 COT 数据: {cot[cot_cols].dropna().shape[0]} 条记录")
+        except Exception as e:
+            logger.debug(f"COT 数据合并失败: {e}")
+
+        return df
         return get_gold_training_data(symbol, lookback_days)
