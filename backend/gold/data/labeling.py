@@ -6,7 +6,7 @@ Triple-Barrier Labeling — 基于 López de Prado 方法的序列标注
 2. 止损屏障 (Stop Loss): price down = ATR × sl_multiplier
 3. 时间屏障 (Max Holding): max_holding_days 后到期
 
-既支持 DataFrame（兼容 gold_prediction.py），也支持 GoldBarData 列表。
+既支持 DataFrame，也支持 GoldBarData 列表。
 """
 
 from typing import Optional
@@ -89,7 +89,7 @@ class TripleBarrierLabeler:
 
         return results
 
-    # ── DataFrame 接口（兼容 gold_prediction.py） ─────────────────────
+    # ── DataFrame 接口 ─────────────────────────────────────────────
 
     def label_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """DataFrame 版标注。 新增列: tb_label, tb_touch_day, tb_barrier_type, …"""

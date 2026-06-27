@@ -564,7 +564,7 @@ async def generate_signal(
 async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> dict:
     """ML策略信号生成 — 直接预测路径，绕过全量回测"""
     from backend.gold.core.models import GoldSignal, SignalDirection
-    from backend.gold_prediction import GoldPricePredictor, FeatureEngineer, ModelType, PredictionHorizon
+    from backend.gold.ml import GoldPricePredictor, FeatureEngineer, ModelType, PredictionHorizon
     from loguru import logger
 
     current_price = bars[-1].close

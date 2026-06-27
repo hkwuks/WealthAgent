@@ -1,7 +1,7 @@
 """
 Walk-Forward + CPCV 回测验证
 
-吸收自 backend/backtest_engine.py 的 Purging + Embargo + CPCV 方法论，
+Purging + Embargo + CPCV 方法论，
 适配 gold/ 量化体系的 Backtester + StrategyBase + GoldBarData。
 
 两种用法:
