@@ -666,6 +666,15 @@ class ApiService {
     return this.request<{ success: boolean; data: any }>(`/gold/trading/bars?${params.toString()}`, {}, 30000);
   }
 
+  async getGoldAnalysis(symbol?: string, period?: string, limit?: number): Promise<{ success: boolean; data: any }> {
+    const params = new URLSearchParams({
+      symbol: symbol || 'AU0',
+      period: period || 'd',
+      limit: String(limit || 500),
+    });
+    return this.request<{ success: boolean; data: any }>(`/gold/trading/analysis?${params.toString()}`, {}, 15000);
+  }
+
   async getGoldMarketData(): Promise<{ success: boolean; data: any }> {
     return this.request<{ success: boolean; data: any }>('/gold/trading/market-data', {}, 15000);
   }
