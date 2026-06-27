@@ -12,7 +12,7 @@ from backend.gold.core.models import GoldBarData, GoldSignal
 class GoldDataStore:
     """SQLite存储 — 独立gold.db，WAL模式"""
 
-    def __init__(self, db_path: str = "data/gold/gold.db"):
+    def __init__(self, db_path: str = "data/backend/gold/gold.db"):
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._init_db()
@@ -83,6 +83,39 @@ class GoldDataStore:
                     ON signals(created_at);
                 CREATE INDEX IF NOT EXISTS idx_backtest_strategy
                     ON backtest_results(strategy_name, created_at);
+
+                -- CTP 模拟交易表
+                CREATE TABLE IF NOT EXISTS live_positions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    volume INTEGER NOT NULL DEFAULT 0,
+                    avg_price REAL NOT NULL DEFAULT 0,
+                    pnl REAL NOT NULL DEFAULT 0,
+                    margin REAL NOT NULL DEFAULT 0,
+                    snapshot_time TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_lp_time
+                    ON live_positions(snapshot_time);
+
+                CREATE TABLE IF NOT EXISTS live_accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    balance REAL NOT NULL,
+                    available REAL NOT NULL,
+                    margin REAL NOT NULL,
+                    pnl REAL NOT NULL,
+                    snapshot_time TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS ctp_orders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    order_ref INTEGER NOT NULL,
+                    order_id TEXT NOT NULL UNIQUE,
+                    front_id INTEGER,
+                    session_id INTEGER,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
             """)
 
     def save_bars(self, bars: list[GoldBarData], period: str,

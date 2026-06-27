@@ -522,6 +522,11 @@ body::before {
   font-size: 13px;
 }
 
+.btn-xs {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
 .btn-lg {
   padding: 14px 28px;
   font-size: 16px;
@@ -3877,4 +3882,113 @@ body::after {
   .compare-cards { grid-template-columns: 1fr; }
   .compare-header { flex-direction: column; align-items: flex-start; }
   .compare-best { align-self: flex-start; }
+}
+
+/* ===== CTP/SimNow 模拟交易 ===== */
+.ctp-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.ctp-card {
+  background: var(--bg-secondary, #f8fafc);
+  border: 1px solid var(--border-light, #e2e8f0);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ctp-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ctp-card-body {
+  flex: 1;
+  min-height: 60px;
+}
+
+.ctp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 12px;
+  border-radius: 12px;
+}
+.ctp-on { background: rgba(16,185,129,0.12); color: #10b981; }
+.ctp-mid { background: rgba(245,158,11,0.12); color: #f59e0b; }
+.ctp-off { background: rgba(100,116,139,0.12); color: #64748b; }
+
+.ctp-account-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.ctp-account-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ctp-a-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.ctp-a-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ctp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.ctp-table th {
+  text-align: left;
+  padding: 4px 6px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ctp-table td {
+  padding: 4px 6px;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.ctp-table.small td,
+.ctp-table.small th {
+  padding: 3px 4px;
+  font-size: 11px;
+}
+
+.ctp-time {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.positive { color: #ef4444 !important; }
+.negative { color: #10b981 !important; }
+
+.dark-mode .ctp-card { background: rgba(51,65,85,0.3); border-color: var(--border-color); }
+
+@media (max-width: 1024px) {
+  .ctp-grid { grid-template-columns: 1fr; }
 }
