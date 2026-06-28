@@ -1008,7 +1008,7 @@ export class GoldTradingUI {
                ${exec.sim_trade ? `<span class="scc-item">模拟成交 @¥${formatPrice(exec.sim_trade.price)}</span>` : ''}`
             : !autoExecute && riskOK
               ? `<button class="btn btn-primary btn-xs" data-sig-execute="${data.signal_id || data.signal?.signal_id || ''}" style="font-size:11px;padding:2px 8px">▶ 执行到 SimNow</button>`
-              : `<span class="scc-item" style="color:#64748b">${exec?.reason || (riskOK ? '等待执行' : '风控未通过')}</span>`
+              : `<span class="scc-item" style="color:#64748b">${exec?.reason || (riskOK ? '等待执行' : `风控未通过: ${data.risk_check?.reason || ''}`)}</span>`
           }
         </div>
       </div>

@@ -559,15 +559,18 @@ async def generate_signal(
     # 风控检查（含 CTP 方向/资金检查）
     risk_result = await _check_risk_with_ctp(signal_data)
 
-    # 记录信号到风控状态
+    # 记录信号到风控状态（仅风控通过时才计数）
     risk_checker = RiskChecker()
-    risk_checker.record_signal(signal_data)
+    if risk_result.passed:
+        risk_checker.record_signal(signal_data)
 
     # 自动执行
     execution = None
     if auto_execute and risk_result.passed:
         execution = await _execute_signal_to_ctp(store, signal_data)
-        risk_checker.set_equity(signal_data.price)  # 更新权益估算
+        # 用 CTP 账户余额更新权益，而非价格
+        if account and account.get("balance"):
+            risk_checker.set_equity(account["balance"])
 
     # 输出交易建议
     signal_output = SignalOutput()
@@ -772,13 +775,17 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
 
     store = GoldDataStore()
     store.save_signal(signal)
-    signal_data.created_at = datetime.now()
 
     risk_checker = RiskChecker()
-    risk_checker.record_signal(signal)
     positions = await query_ctp_positions_raw()
     account = await query_ctp_account_raw()
-    risk_result = risk_checker.check(signal, positions=positions, account=account)
+    # 用 CTP 余额作为当前权益，避免回撤误判
+    current_equity = account.get("balance") if account else None
+    risk_result = risk_checker.check(signal, positions=positions, account=account,
+                                     current_equity=current_equity)
+    # 仅风控通过时才计数
+    if risk_result.passed:
+        risk_checker.record_signal(signal)
 
     signal_output = SignalOutput()
     advice = signal_output.output(signal, risk_result)
