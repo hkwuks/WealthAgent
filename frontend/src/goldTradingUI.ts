@@ -87,6 +87,7 @@ export class GoldTradingUI {
   private chartReady = false
   private dark = false
   private signalTimer: ReturnType<typeof setInterval> | null = null
+  private ctpTimer: ReturnType<typeof setInterval> | null = null
 
   init(container: HTMLDivElement) {
     this.container = container
@@ -107,7 +108,9 @@ export class GoldTradingUI {
     new MutationObserver(() => this.onThemeChange()).observe(document.body, { attributes: true, attributeFilter: ['class'] })
     window.addEventListener('resize', () => this.onResize())
 
-    // 恢复自动信号定时器设置
+    // CTP 定时刷新
+    this.ctpTimer = setInterval(() => this.loadCtpData(), 10000)
+    this.loadCtpData()
     const savedInterval = localStorage.getItem('gold_signal_auto_interval')
     if (savedInterval) {
       const sel = document.getElementById('sig-auto-select') as HTMLSelectElement
@@ -153,6 +156,7 @@ export class GoldTradingUI {
     if (this.marketTimer) clearInterval(this.marketTimer)
     if (this.chartTimer) clearInterval(this.chartTimer)
     if (this.signalTimer) clearInterval(this.signalTimer)
+    if (this.ctpTimer) clearInterval(this.ctpTimer)
     this.destroyChart()
   }
 
@@ -383,6 +387,41 @@ export class GoldTradingUI {
             </div>
           </div>
         </div>
+
+        <!-- 模拟交易面板 -->
+        <div class="quant-section">
+          <div class="section-title-bar">
+            <h3>🖥️ 模拟交易</h3>
+            <div style="display:flex;align-items:center;gap:8px">
+              <select id="trading-mode-select" style="font-size:12px;padding:3px 8px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary);color:var(--text-primary)">
+                <option value="simnow">SimNow</option>
+                <option value="openctp">openctp TTS</option>
+              </select>
+              <button class="btn btn-ghost btn-xs" id="trading-mode-switch" style="font-size:11px">切换</button>
+              <span class="ctp-badge" id="ctp-badge">⏳ 连接中...</span>
+            </div>
+          </div>
+          <div class="ctp-grid" id="ctp-grid">
+            <div class="ctp-card">
+              <div class="ctp-card-title">💰 资金账户</div>
+              <div class="ctp-card-body" id="ctp-account">
+                <div class="empty-text">加载中...</div>
+              </div>
+            </div>
+            <div class="ctp-card">
+              <div class="ctp-card-title">📦 实时持仓</div>
+              <div class="ctp-card-body" id="ctp-positions">
+                <div class="empty-text">加载中...</div>
+              </div>
+            </div>
+            <div class="ctp-card">
+              <div class="ctp-card-title">📋 今日委托</div>
+              <div class="ctp-card-body" id="ctp-orders">
+                <div class="empty-text">加载中...</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     `
   }
@@ -430,6 +469,9 @@ export class GoldTradingUI {
     document.getElementById('bt-strategy-select')?.addEventListener('change', (e) => {
       this.renderParams((e.target as HTMLSelectElement).value)
     })
+
+    // 交易模式切换
+    document.getElementById('trading-mode-switch')?.addEventListener('click', () => this.switchTradingMode())
   }
 
   // ===== K线图 =====
@@ -904,11 +946,23 @@ export class GoldTradingUI {
     const btn = document.getElementById('sig-generate-btn') as HTMLButtonElement
     if (btn) { btn.disabled = true; btn.textContent = '...' }
 
+    // 定时模式 → 自动执行；手动点击 → 不自动执行
+    const autoInterval = parseInt((document.getElementById('sig-auto-select') as HTMLSelectElement)?.value || '0', 10)
+    const autoExecute = autoInterval > 0
+
     try {
-      const resp = await api.generateTradingSignal(strategyName)
+      const resp = await api.generateTradingSignal(strategyName, 'AU0', autoExecute)
       if (resp.success && resp.data) {
-        this.displaySignal(resp.data)
-        toast.success('信号已生成')
+        this.displaySignal(resp.data, autoExecute)
+        if (autoExecute && resp.data.execution?.executed) {
+          toast.success('信号已自动执行')
+          // 执行后刷新 CTP 数据
+          this.loadCtpData()
+        } else if (autoExecute) {
+          toast.info('信号已生成（自动执行未触发）')
+        } else {
+          toast.success('信号已生成')
+        }
       } else {
         toast.error('信号生成失败')
       }
@@ -920,7 +974,7 @@ export class GoldTradingUI {
     }
   }
 
-  private displaySignal(data: any) {
+  private displaySignal(data: any, autoExecute?: boolean) {
     const container = document.getElementById('sig-result')
     if (!container) return
 
@@ -933,6 +987,8 @@ export class GoldTradingUI {
     const isBull = dir === 'long'
     const isBear = dir === 'short'
     const riskOK = data.risk_check?.passed !== false
+    const exec = data.execution
+    const executed = exec?.executed
 
     container.innerHTML = `
       <div class="signal-card-compact ${isBull ? 'bullish' : isBear ? 'bearish' : ''}">
@@ -946,8 +1002,40 @@ export class GoldTradingUI {
           <span class="scc-strategy">${STRATEGY_LABELS[data.strategy]?.icon || ''} ${STRATEGY_LABELS[data.strategy]?.name || data.strategy}</span>
         </div>
         ${data.reason ? `<div class="scc-reason">${data.reason}</div>` : ''}
+        <div class="scc-row" style="margin-top:6px;gap:8px">
+          ${executed
+            ? `<span class="scc-item" style="color:#10b981">✅ 已执行 ref=${exec.ctp_ref}</span>
+               ${exec.sim_trade ? `<span class="scc-item">模拟成交 @¥${formatPrice(exec.sim_trade.price)}</span>` : ''}`
+            : !autoExecute && riskOK
+              ? `<button class="btn btn-primary btn-xs" data-sig-execute="${data.signal_id || data.signal?.signal_id || ''}" style="font-size:11px;padding:2px 8px">▶ 执行到 SimNow</button>`
+              : `<span class="scc-item" style="color:#64748b">${exec?.reason || (riskOK ? '等待执行' : '风控未通过')}</span>`
+          }
+        </div>
       </div>
     `
+
+    // 绑定执行按钮
+    const execBtn = container.querySelector('[data-sig-execute]') as HTMLElement
+    if (execBtn) {
+      execBtn.addEventListener('click', () => this.executeSignal(execBtn.dataset.sigExecute || ''))
+    }
+  }
+
+  private async executeSignal(signalId: string) {
+    if (!signalId) return
+    try {
+      const resp = await api.executeTradingSignal(signalId)
+      if (resp.success && resp.data.executed) {
+        toast.success('已执行到 SimNow')
+        this.loadCtpData()
+        this.generateSignal() // 刷新信号
+      } else {
+        toast.error('执行失败: ' + (resp.data.reason || '未知'))
+        this.generateSignal()
+      }
+    } catch (e) {
+      toast.error('执行出错')
+    }
   }
 
   // ===== 回测 =====
@@ -1221,14 +1309,118 @@ export class GoldTradingUI {
         const container = document.getElementById('risk-panel')
         if (container) {
           const checks = resp.data.checks || []
-          container.innerHTML = checks.map((c: any) =>
-            `<div class="risk-mini"><span>${c.name}</span><span>阈值: ${c.threshold}</span><span class="risk-active">${c.status}</span></div>`
-          ).join('') + `<div class="risk-mini" style="font-size:11px;color:var(--text-tertiary)">最近信号: ${resp.data.recent_signal_count ?? 0}</div>`
+          const daily = resp.data.daily_summary || {}
+          container.innerHTML = `
+            <div class="risk-daily">
+              <div class="risk-mini"><span>日内信号</span><span>${daily.signal_count ?? 0} 次</span></div>
+              <div class="risk-mini"><span>日内盈亏</span><span class="${(daily.total_pnl||0)>=0?'positive':'negative'}">${(daily.total_pnl||0)>=0?'+':''}¥${fmtNum(daily.total_pnl)}</span></div>
+              <div class="risk-mini"><span>连续亏损</span><span class="${(daily.consecutive_losses||0) >= 3 ? 'negative' : ''}">${daily.consecutive_losses ?? 0} 次</span></div>
+            </div>
+            <div style="margin-top:8px;border-top:1px solid var(--border-color);padding-top:8px">
+              ${checks.map((c: any) =>
+                `<div class="risk-mini"><span>${c.name}</span><span>${c.threshold}</span><span class="risk-active">${c.status}</span></div>`
+              ).join('')}
+            </div>`
         }
       }
     } catch (e) {
       // 静默
     }
+  }
+
+  // ===== 模拟交易（支持 SimNow/openctp 切换） =====
+
+  private async loadCtpData() {
+    try {
+      const resp = await api.getCtpData()
+      if (!resp.success || !resp.data) return
+      const d = resp.data
+
+      // 状态指示器
+      const badge = document.getElementById('ctp-badge')
+      if (badge) {
+        if (!d.enabled) {
+          badge.textContent = '⚪ 未启用'
+          badge.className = 'ctp-badge ctp-off'
+        } else if (d.connected) {
+          badge.textContent = '🟢 已连接'
+          badge.className = 'ctp-badge ctp-on'
+        } else {
+          badge.textContent = '🔴 已断开'
+          badge.className = 'ctp-badge ctp-off'
+        }
+      }
+
+      // 更新下拉框选中值
+      const sel = document.getElementById('trading-mode-select') as HTMLSelectElement
+      if (sel && d.mode) {
+        sel.value = d.mode
+      }
+
+      // 资金账户
+      const accountEl = document.getElementById('ctp-account')
+      if (accountEl) {
+        const acct = d.account || {}
+        if (acct.balance) {
+          accountEl.innerHTML = `
+            <div class="ctp-account-grid">
+              <div class="ctp-account-item"><span class="ctp-a-label">总资产</span><span class="ctp-a-value">¥${fmtNum(acct.balance)}</span></div>
+              <div class="ctp-account-item"><span class="ctp-a-label">可用</span><span class="ctp-a-value">¥${fmtNum(acct.available)}</span></div>
+              <div class="ctp-account-item"><span class="ctp-a-label">保证金</span><span class="ctp-a-value">¥${fmtNum(acct.margin)}</span></div>
+              <div class="ctp-account-item"><span class="ctp-a-label">浮动盈亏</span><span class="ctp-a-value ${(acct.pnl||0)>=0?'positive':'negative'}">${(acct.pnl||0)>=0?'+':''}¥${fmtNum(acct.pnl)}</span></div>
+            </div>`
+        } else {
+          accountEl.innerHTML = '<div class="empty-text">无资金数据</div>'
+        }
+      }
+
+      // 持仓
+      const posEl = document.getElementById('ctp-positions')
+      if (posEl) {
+        const list = d.positions || []
+        if (!list.length) {
+          posEl.innerHTML = '<div class="empty-text">无持仓</div>'
+        } else {
+          posEl.innerHTML = '<table class="ctp-table"><thead><tr><th>合约</th><th>方向</th><th>手数</th><th>均价</th><th>盈亏</th></tr></thead><tbody>' +
+            list.map((p: any) => `
+              <tr>
+                <td>${p.symbol||'--'}</td>
+                <td class="${p.direction==='long'?'positive':'negative'}">${p.direction==='long'?'多':'空'}</td>
+                <td>${p.volume??0}</td>
+                <td>¥${formatPrice(p.avg_price)}</td>
+                <td class="${(p.pnl||0)>=0?'positive':'negative'}">${(p.pnl||0)>=0?'+':''}¥${fmtNum(p.pnl)}</td>
+              </tr>`).join('') +
+            '</tbody></table>'
+        }
+      }
+
+      // 委托
+      const ordEl = document.getElementById('ctp-orders')
+      if (ordEl) {
+        const list = d.orders || []
+        if (!list.length) {
+          ordEl.innerHTML = '<div class="empty-text">无委托记录</div>'
+        } else {
+          const latest = list.slice(-10).reverse()
+          ordEl.innerHTML = '<table class="ctp-table small"><thead><tr><th>合约</th><th>方向</th><th>价格</th><th>数量</th><th>成交</th><th>状态</th><th>时间</th></tr></thead><tbody>' +
+            latest.map((o: any) => {
+              const dir = o.direction || ''
+              const dirCls = dir.includes('buy') || dir === 'long' ? 'positive' : 'negative'
+              const dirLabel = dir.includes('buy') || dir === 'long' ? '买' : '卖'
+              return `<tr>
+                <td>${o.symbol||'--'}</td>
+                <td class="${dirCls}">${dirLabel}</td>
+                <td>¥${formatPrice(o.price)}</td>
+                <td>${o.volume??0}</td>
+                <td>${o.traded??0}</td>
+                <td>${o.status||'--'}</td>
+                <td class="ctp-time">${o.insert_time||'--'}</td>
+              </tr>`
+            }).join('') +
+            '</tbody></table>'
+        }
+      }
+    } catch (_) { /* 静默 */ }
   }
 
   // ===== 辅助方法 =====
@@ -1240,6 +1432,24 @@ export class GoldTradingUI {
         this.renderParams('trend_following')
       }
     } catch (e) { /* ignore */ }
+  }
+
+  /** 切换交易模式 */
+  private async switchTradingMode() {
+    const sel = document.getElementById('trading-mode-select') as HTMLSelectElement
+    if (!sel) return
+    const mode = sel.value
+    try {
+      const resp = await api.setTradingMode(mode)
+      if (resp.success) {
+        toast.success(`已切换至 ${mode}`)
+        this.loadCtpData()
+      } else {
+        toast.error('切换失败')
+      }
+    } catch (e) {
+      toast.error('切换失败')
+    }
   }
 
   private renderParams(strategyName: string) {

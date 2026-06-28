@@ -1,5 +1,28 @@
 import sys
 import os
+import locale as _locale
+
+# 尽早设置 GB18030 locale — openctp_ctp C++ DSO 导入时需要
+# 必须在 import openctp_ctp 之前完成
+for _p in ['/tmp/locale', '/usr/lib/locale', '/usr/share/locale']:
+    if os.path.isdir(os.path.join(_p, 'zh_CN.GB18030')):
+        os.environ['LOCPATH'] = _p
+        break
+os.environ['LANG'] = 'zh_CN.GB18030'
+os.environ['LC_ALL'] = 'zh_CN.GB18030'
+try:
+    _locale.setlocale(_locale.LC_ALL, 'zh_CN.GB18030')
+except _locale.Error:
+    pass
+
+# 尽早加载 .env 到 os.environ，确保所有 Settings 子类都能读到
+try:
+    from dotenv import load_dotenv
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+    load_dotenv(env_path, override=True)
+except Exception:
+    pass
+
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request

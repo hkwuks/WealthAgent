@@ -10,7 +10,7 @@ from backend.gold.data.quality import DataQualityChecker
 class GoldDataGateway:
     """黄金数据网关 — AkShare(SHFE) → 直连新浪(SHFE) → yFinance(COMEX) 三级降级"""
 
-    def __init__(self, db_path: str = "data/gold/gold.db"):
+    def __init__(self, db_path: str = "data/backend/gold/gold.db"):
         self.db_path = db_path
         self.store = GoldDataStore(db_path)
 
