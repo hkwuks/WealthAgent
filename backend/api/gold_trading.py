@@ -578,8 +578,7 @@ async def generate_signal(
 
 
 async def _check_risk_with_ctp(signal: GoldSignal) -> RiskCheckResult:
-    """风控检查（含 CTP 持仓/资金检查）"""
-    # 获取 CTP 持仓/资金
+    """风控检查（含交易后端持仓/资金检查）"""
     positions = await query_ctp_positions_raw()
     account = await query_ctp_account_raw()
 
@@ -594,19 +593,19 @@ async def _check_risk_with_ctp(signal: GoldSignal) -> RiskCheckResult:
 
 
 async def _execute_signal_to_ctp(store, signal: GoldSignal) -> dict:
-    """执行信号到 CTP/SimNow"""
+    """执行信号到当前交易后端"""
     try:
         from backend.gold.trading.execution.executor import LiveExecutor
         from backend.gold.trading.execution.sim_account import InternalSimAccount
         from backend.gold.risk.order_manager import OrderManager
 
-        client = await _get_ctp_client()
-        if client is None:
-            return {"executed": False, "reason": "CTP 未连接"}
+        adapter = await _get_adapter()
+        if adapter is None:
+            return {"executed": False, "reason": "交易后端未连接"}
 
         om = OrderManager(store)
         sim = InternalSimAccount()
-        executor = LiveExecutor(client, om, sim)
+        executor = LiveExecutor(adapter, om, sim)
         result = executor.execute(signal, market_price=signal.price)
         return {
             "executed": result["executed"],
@@ -641,33 +640,33 @@ async def execute_signal(
     return {"success": True, "data": execution}
 
 
-# 模块级缓存（避免重复查询 CTP）
+# 模块级缓存（避免重复查询交易后端）
 _last_ctp_positions: list = []
 _last_ctp_positions_time: float = 0
 
 async def query_ctp_positions_raw() -> list:
-    """获取 CTP 持仓（带缓存，避免高频查询）"""
+    """获取持仓（带缓存，避免高频查询）"""
     global _last_ctp_positions, _last_ctp_positions_time
     now = time.time()
     if now - _last_ctp_positions_time < 10:
         return _last_ctp_positions
-    client = await _get_ctp_client()
-    if client is None:
+    adapter = await _get_adapter()
+    if adapter is None:
         return []
-    _last_ctp_positions = await client.query_positions()
+    _last_ctp_positions = await adapter.query_positions()
     _last_ctp_positions_time = now
     return _last_ctp_positions
 
 async def query_ctp_account_raw() -> dict:
-    """获取 CTP 资金（带缓存）"""
+    """获取资金（带缓存）"""
     global _last_ctp_account, _last_ctp_account_time
     now = time.time()
     if now - _last_ctp_account_time < 10:
         return _last_ctp_account
-    client = await _get_ctp_client()
-    if client is None:
+    adapter = await _get_adapter()
+    if adapter is None:
         return {}
-    _last_ctp_account = await client.query_account()
+    _last_ctp_account = await adapter.query_account()
     _last_ctp_account_time = now
     return _last_ctp_account
 
@@ -1502,62 +1501,97 @@ async def get_gold_config():
     }
 
 
-# ===== CTP/SimNow 模拟交易 =====
+# ===== 模拟交易（适配器模式，支持 SimNow/openctp/QMT 切换） =====
 
-_ctp_client = None  # 模块级单例
-_ctp_lock = asyncio.Lock()
+_adapter = None           # TradingAdapter 实例
+_adapter_lock = asyncio.Lock()
+_adapter_mode = None      # 当前已初始化的模式
 
 
-async def _get_ctp_client():
-    """获取 CTP 客户端（延迟初始化，带锁防并发）"""
-    global _ctp_client
-    if _ctp_client is not None:
-        return _ctp_client
+async def _get_adapter() -> Optional["TradingAdapter"]:
+    """获取交易适配器（延迟初始化）"""
+    global _adapter, _adapter_mode
 
-    async with _ctp_lock:
-        # 二次检查（拿到锁时可能已被初始化）
-        if _ctp_client is not None:
-            return _ctp_client
+    from backend.gold.core.config import gold_settings
+    s = gold_settings
+    if not s.ctp_enabled:
+        return None
 
-        s = GoldSettings()
-        if not s.ctp_enabled:
-            return None
+    mode = (s.trading_mode or "simnow").lower()
+    if _adapter is not None and _adapter_mode == mode:
+        return _adapter
+
+    async with _adapter_lock:
+        if _adapter is not None and _adapter_mode != mode:
+            await _adapter.stop()
+            _adapter = None
+        if _adapter is not None:
+            return _adapter
 
         try:
-            from backend.gold.trading.connectors.ctp_config import CtpConfig
-            from backend.gold.trading.connectors.ctp_client import CtpClient
-
-            cfg = CtpConfig()
-            valid, msg = cfg.is_valid()
-            if not valid:
-                logger.warning(f"[CTP] 配置无效: {msg}")
-                return None
-
-            _ctp_client = CtpClient(cfg)
-            await _ctp_client.start()
-            logger.info("[CTP] 客户端已创建（异步连接中）")
-            return _ctp_client
+            from backend.gold.trading.connectors import create_adapter
+            _adapter = create_adapter(mode)
+            await _adapter.start()
+            _adapter_mode = mode
+            logger.info(f"[交易适配器] 已创建: {mode}")
+            return _adapter
         except Exception as e:
-            logger.error(f"[CTP] 创建客户端失败: {e}")
+            logger.error(f"[交易适配器] 创建失败: {e}")
             return None
+
+
+@router.get("/modes")
+async def get_trading_modes():
+    """获取所有可用的交易模式"""
+    from backend.gold.core.config import gold_settings
+    current = (gold_settings.trading_mode or "simnow").lower()
+
+    modes = [
+        {"id": "simnow",  "name": "SimNow",         "description": "上期技术官方仿真，需注册，7×24环境",       "current": current == "simnow"},
+        {"id": "openctp", "name": "openctp TTS",    "description": "开放平台仿真，扫码即用，免认证，7×24稳定", "current": current == "openctp"},
+    ]
+    return {"success": True, "data": {"modes": modes, "current": current}}
+
+
+@router.post("/mode")
+async def set_trading_mode(mode: str = "simnow"):
+    """切换交易模式（运行时切换会自动重启适配器）"""
+    global _adapter, _adapter_mode
+
+    valid_modes = ["simnow", "openctp"]
+    if mode not in valid_modes:
+        raise HTTPException(status_code=400, detail=f"不支持的模式: {mode}，支持: {valid_modes}")
+
+    # 更新配置中的模式
+    from backend.gold.core.config import gold_settings
+    gold_settings.trading_mode = mode
+
+    # 如果已连接且模式不同，关闭旧的
+    if _adapter is not None and _adapter_mode != mode:
+        async with _adapter_lock:
+            if _adapter is not None:
+                await _adapter.stop()
+                _adapter = None
+                _adapter_mode = None
+
+    logger.info(f"[交易] 模式已切换: {mode}")
+    return {"success": True, "data": {"mode": mode}}
 
 
 @router.get("/ctp/status")
 async def get_ctp_status():
-    """CTP 连接状态"""
-    client = await _get_ctp_client()
+    """模拟交易连接状态"""
+    client = await _get_adapter()
     if client is None:
-        config = GoldSettings()
+        from backend.gold.core.config import GoldSettings
+        s = GoldSettings()
         return {
             "success": True,
             "data": {
-                "enabled": config.ctp_enabled,
+                "enabled": s.ctp_enabled,
+                "mode": s.trading_mode,
                 "connected": False,
-                "md_connected": False,
-                "td_connected": False,
-                "md_logged_in": False,
-                "td_logged_in": False,
-                "message": "CTP 未启用或配置不完整",
+                "message": "未启用或配置不完整",
             },
         }
     status = client.get_status()
@@ -1565,24 +1599,21 @@ async def get_ctp_status():
         "success": True,
         "data": {
             "enabled": True,
-            "connected": status["md_logged_in"] and status["td_logged_in"],
-            "md_connected": status["md_connected"],
-            "td_connected": status["td_connected"],
-            "md_logged_in": status["md_logged_in"],
-            "td_logged_in": status["td_logged_in"],
-            "symbols": status.get("symbols", []),
+            "mode": client.name,
+            "connected": status.get("connected", status.get("md_logged_in", False)),
             "main_contract": client.get_main_contract(),
-            "last_tick_time": None,  # 可扩展
+            "symbols": status.get("symbols", []),
+            "detail": status,
         },
     }
 
 
 @router.get("/ctp/positions")
 async def get_ctp_positions():
-    """实时持仓（从 CTP 查询）"""
-    client = await _get_ctp_client()
+    """实时持仓"""
+    client = await _get_adapter()
     if client is None:
-        return {"success": True, "data": [], "message": "CTP 未启用"}
+        return {"success": True, "data": [], "message": "未启用"}
     positions = await client.query_positions()
     return {"success": True, "data": positions}
 
@@ -1590,9 +1621,9 @@ async def get_ctp_positions():
 @router.get("/ctp/account")
 async def get_ctp_account():
     """账户资金信息"""
-    client = await _get_ctp_client()
+    client = await _get_adapter()
     if client is None:
-        return {"success": True, "data": {}, "message": "CTP 未启用"}
+        return {"success": True, "data": {}, "message": "未启用"}
     account = await client.query_account()
     return {"success": True, "data": account}
 
@@ -1600,30 +1631,27 @@ async def get_ctp_account():
 @router.get("/ctp/orders")
 async def get_ctp_orders():
     """当日委托记录"""
-    client = await _get_ctp_client()
+    client = await _get_adapter()
     if client is None:
-        return {"success": True, "data": [], "message": "CTP 未启用"}
+        return {"success": True, "data": [], "message": "未启用"}
     orders = await client.query_orders()
     return {"success": True, "data": orders}
 
 
 @router.get("/ctp/data")
 async def get_ctp_data():
-    """CTP 全量数据（一次调用返回状态+持仓+资金+委托）"""
-    client = await _get_ctp_client()
+    """全量数据（一次调用返回状态+持仓+资金+委托）"""
+    client = await _get_adapter()
     if client is None:
-        config = GoldSettings()
+        from backend.gold.core.config import GoldSettings
+        s = GoldSettings()
         return {
             "success": True,
             "data": {
-                "enabled": config.ctp_enabled,
+                "enabled": s.ctp_enabled,
+                "mode": s.trading_mode,
                 "connected": False,
-                "status": {
-                    "enabled": config.ctp_enabled,
-                    "connected": False,
-                    "md_connected": False,
-                    "td_connected": False,
-                },
+                "status": None,
                 "account": {},
                 "positions": [],
                 "orders": [],
@@ -1639,15 +1667,9 @@ async def get_ctp_data():
         "success": True,
         "data": {
             "enabled": True,
-            "connected": status["md_logged_in"] and status["td_logged_in"],
-            "status": {
-                "md_connected": status["md_connected"],
-                "td_connected": status["td_connected"],
-                "md_logged_in": status["md_logged_in"],
-                "td_logged_in": status["td_logged_in"],
-                "main_contract": client.get_main_contract(),
-                "symbols": status.get("symbols", []),
-            },
+            "mode": client.name,
+            "connected": status.get("connected", status.get("md_logged_in", False)),
+            "status": status,
             "account": account,
             "positions": positions,
             "orders": orders,

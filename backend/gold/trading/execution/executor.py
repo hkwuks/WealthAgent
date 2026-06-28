@@ -1,9 +1,9 @@
 """
-实盘执行器 — 信号 → 风控 → CTP 下单 → 成交跟踪
+实盘执行器 — 信号 → 风控 → TradingAdapter 下单 → 成交跟踪
 
 流程:
   GoldSignal → RiskCheck → OrderManager.create_from_signal
-    → CtpClient.send_order → 等待回报 → OrderManager.fill
+    → TradingAdapter.send_order → 等待回报 → OrderManager.fill
 """
 import time
 from typing import Optional
@@ -12,7 +12,7 @@ from backend.gold.core.models import (
     GoldSignal, GoldOrder, GoldTrade, OrderStatus,
 )
 from backend.gold.risk.order_manager import OrderManager
-from backend.gold.trading.connectors.ctp_client import CtpClient
+from backend.gold.trading.connectors import TradingAdapter
 from backend.gold.trading.execution.sim_account import InternalSimAccount
 from loguru import logger
 
@@ -20,10 +20,10 @@ from loguru import logger
 class LiveExecutor:
     """实盘执行器"""
 
-    def __init__(self, ctp_client: CtpClient,
+    def __init__(self, adapter: TradingAdapter,
                  order_manager: OrderManager,
                  sim_account: InternalSimAccount = None):
-        self.ctp = ctp_client
+        self.adapter = adapter
         self.om = order_manager
         self.sim = sim_account or InternalSimAccount()
         self._ref_counter: int = 0
@@ -33,7 +33,7 @@ class LiveExecutor:
         执行信号
 
         1. 创建订单
-        2. 发送到 CTP
+        2. 发送到交易后端（CTP / QMT）
         3. 运行内部模拟
         4. 返回执行结果
 
@@ -49,9 +49,9 @@ class LiveExecutor:
         if order.status == OrderStatus.REJECTED:
             return {"order": order, "executed": False, "reason": "风控拒绝"}
 
-        # 发送到 CTP
+        # 发送到交易后端
         self._ref_counter += 1
-        ref = self.ctp.send_order(
+        ref = self.adapter.send_order(
             symbol=signal.symbol,
             direction=signal.direction,
             price=signal.price,

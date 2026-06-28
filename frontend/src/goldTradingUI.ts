@@ -388,11 +388,18 @@ export class GoldTradingUI {
           </div>
         </div>
 
-        <!-- CTP 模拟交易 -->
+        <!-- 模拟交易面板 -->
         <div class="quant-section">
           <div class="section-title-bar">
-            <h3>🖥️ SimNow 模拟交易</h3>
-            <span class="ctp-badge" id="ctp-badge">⏳ 连接中...</span>
+            <h3>🖥️ 模拟交易</h3>
+            <div style="display:flex;align-items:center;gap:8px">
+              <select id="trading-mode-select" style="font-size:12px;padding:3px 8px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary);color:var(--text-primary)">
+                <option value="simnow">SimNow</option>
+                <option value="openctp">openctp TTS</option>
+              </select>
+              <button class="btn btn-ghost btn-xs" id="trading-mode-switch" style="font-size:11px">切换</button>
+              <span class="ctp-badge" id="ctp-badge">⏳ 连接中...</span>
+            </div>
           </div>
           <div class="ctp-grid" id="ctp-grid">
             <div class="ctp-card">
@@ -462,6 +469,9 @@ export class GoldTradingUI {
     document.getElementById('bt-strategy-select')?.addEventListener('change', (e) => {
       this.renderParams((e.target as HTMLSelectElement).value)
     })
+
+    // 交易模式切换
+    document.getElementById('trading-mode-switch')?.addEventListener('click', () => this.switchTradingMode())
   }
 
   // ===== K线图 =====
@@ -1318,7 +1328,7 @@ export class GoldTradingUI {
     }
   }
 
-  // ===== CTP 模拟交易 =====
+  // ===== 模拟交易（支持 SimNow/openctp 切换） =====
 
   private async loadCtpData() {
     try {
@@ -1335,13 +1345,16 @@ export class GoldTradingUI {
         } else if (d.connected) {
           badge.textContent = '🟢 已连接'
           badge.className = 'ctp-badge ctp-on'
-        } else if (d.status?.md_connected || d.status?.td_connected) {
-          badge.textContent = '🟡 连接中...'
-          badge.className = 'ctp-badge ctp-mid'
         } else {
           badge.textContent = '🔴 已断开'
           badge.className = 'ctp-badge ctp-off'
         }
+      }
+
+      // 更新下拉框选中值
+      const sel = document.getElementById('trading-mode-select') as HTMLSelectElement
+      if (sel && d.mode) {
+        sel.value = d.mode
       }
 
       // 资金账户
@@ -1419,6 +1432,24 @@ export class GoldTradingUI {
         this.renderParams('trend_following')
       }
     } catch (e) { /* ignore */ }
+  }
+
+  /** 切换交易模式 */
+  private async switchTradingMode() {
+    const sel = document.getElementById('trading-mode-select') as HTMLSelectElement
+    if (!sel) return
+    const mode = sel.value
+    try {
+      const resp = await api.setTradingMode(mode)
+      if (resp.success) {
+        toast.success(`已切换至 ${mode}`)
+        this.loadCtpData()
+      } else {
+        toast.error('切换失败')
+      }
+    } catch (e) {
+      toast.error('切换失败')
+    }
   }
 
   private renderParams(strategyName: string) {

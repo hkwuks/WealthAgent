@@ -658,9 +658,19 @@ class ApiService {
     return this.request<{ success: boolean; data: any }>('/gold/trading/market-data', {}, 15000);
   }
 
-  // ===== CTP 模拟交易 API =====
+  // ===== 模拟交易 API（支持 SimNow / openctp / QMT 切换） =====
   async getCtpData(): Promise<{ success: boolean; data: any }> {
     return this.request<{ success: boolean; data: any }>('/gold/trading/ctp/data', {}, 20000);
+  }
+
+  async getTradingModes(): Promise<{ success: boolean; data: { modes: any[]; current: string } }> {
+    return this.request<{ success: boolean; data: { modes: any[]; current: string } }>('/gold/trading/modes', {}, 5000);
+  }
+
+  async setTradingMode(mode: string): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>(`/gold/trading/mode?mode=${mode}`, {
+      method: 'POST',
+    }, 10000);
   }
 }
 
