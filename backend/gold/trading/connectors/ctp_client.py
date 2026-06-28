@@ -3,9 +3,12 @@ CTP 客户端 — 封装 CTP 行情/交易 API，桥接到 asyncio
 
 线程模型:
   CTP API → 原生线程 → call_soon_threadsafe → asyncio → 系统队列
+
+双模块支持:
+  simnow  → 标准 ctp 模块 (v6.7.7)
+  openctp → openctp_ctp 模块 (v6.7.11, TTS 兼容)
 """
 import asyncio
-import json
 import os
 import threading
 import time
@@ -17,7 +20,6 @@ from loguru import logger
 from backend.gold.core.models import GoldTickData, SignalDirection, OrderStatus
 from backend.gold.trading.connectors.ctp_config import CtpConfig
 
-import ctp
 
 # ── 交易方向/开平映射（CTP → 系统） ────────────────────────────
 
@@ -40,193 +42,41 @@ _ORDER_STATUS_MAP = {
 }
 
 
-class CtpMdSpi(ctp.CThostFtdcMdSpi):
-    """行情回调处理 — 在 CTP 原生线程上被调用"""
+# ── 模块选择 ──────────────────────────────────────────────────
 
-    def __init__(self, client: "CtpClient"):
-        super().__init__()
-        self._client = client
-
-    def OnFrontConnected(self):
-        logger.info("[CTP Md] 行情前置连接成功")
-        self._client._md_connected = True
-        self._client._notify({"type": "md_connected", "ok": True})
-        self._login_md()
-
-    def OnFrontDisconnected(self, nReason):
-        logger.warning(f"[CTP Md] 行情前置断开 reason={nReason}")
-        self._client._md_connected = False
-        self._client._notify({"type": "md_connected", "ok": False})
-
-    def OnRspUserLogin(self, pRspUserLogin, pRspInfo, nRequestID, bIsLast):
-        if pRspInfo.ErrorID == 0:
-            trading_day = pRspUserLogin.CZCETime  # 实际取 TradingDay
-            logger.info(f"[CTP Md] 行情登录成功")
-            self._client._md_logged_in = True
-            self._client._subscribe_symbols()
-        else:
-            logger.error(f"[CTP Md] 行情登录失败: {pRspInfo.ErrorID} {pRspInfo.ErrorMsg}")
-
-    def OnRtnDepthMarketData(self, pData: ctp.CThostFtdcDepthMarketDataField):
-        """行情 Tick 回调"""
-        tick = GoldTickData(
-            symbol=pData.InstrumentID,
-            exchange="SHFE",
-            datetime=datetime.now(),
-            last_price=pData.LastPrice if pData.LastPrice < 1e8 else 0,
-            last_volume=pData.Volume,
-            open_interest=pData.OpenInterest,
-        )
-        self._client._on_tick(tick)
-
-    def _login_md(self):
-        field = ctp.CThostFtdcReqUserLoginField()
-        field.BrokerID = self._client._cfg.broker_id
-        field.UserID = self._client._cfg.user_id
-        field.Password = self._client._cfg.password
-        self._client._md_api.ReqUserLogin(field, 1)
+def _setup_locale():
+    """openctp_ctp/openctp_tts 的 C++ DSO 需要 zh_CN.GB18030"""
+    for path in ['/tmp/locale', '/usr/lib/locale', '/usr/share/locale']:
+        if os.path.isdir(os.path.join(path, 'zh_CN.GB18030')):
+            os.environ['LOCPATH'] = path
+            break
+    os.environ['LANG'] = 'zh_CN.GB18030'
+    os.environ['LC_ALL'] = 'zh_CN.GB18030'
+    import locale
+    try:
+        locale.setlocale(locale.LC_ALL, 'zh_CN.GB18030')
+    except locale.Error:
+        pass
 
 
-class CtpTraderSpi(ctp.CThostFtdcTraderSpi):
-    """交易回调处理"""
+def _get_ctp_modules(mode: str):
+    """
+    根据 trading_mode 返回对应的 CTP 模块元组 (md_module, td_module)
 
-    def __init__(self, client: "CtpClient"):
-        super().__init__()
-        self._client = client
-        self._authenticated = False
+    simnow → 标准 ctp 模块 (v6.7.7)
+    openctp → openctp_tts 模块 (v6.7.2, TTS 协议)
+    """
+    if mode == "openctp":
+        _setup_locale()
+        import openctp_tts
+        logger.info("[CTP] 使用 openctp_tts 模块 (TTS 协议)")
+        return openctp_tts.mdapi, openctp_tts.tdapi
+    else:
+        import ctp as m
+        return m, m
 
-    def OnFrontConnected(self):
-        logger.info("[CTP Trader] 交易前置连接成功")
-        self._client._td_connected = True
-        self._client._notify({"type": "td_connected", "ok": True})
-        self._authenticate()
 
-    def OnFrontDisconnected(self, nReason):
-        logger.warning(f"[CTP Trader] 交易前置断开 reason={nReason}")
-        self._client._td_connected = False
-        self._client._notify({"type": "td_connected", "ok": False})
-
-    def OnRspAuthenticate(self, pRspAuthenticate, pRspInfo, nRequestID, bIsLast):
-        if pRspInfo.ErrorID == 0:
-            logger.info("[CTP Trader] 认证成功")
-            self._authenticated = True
-            self._login()
-        else:
-            # 如果认证失败（旧版CTP不需要认证），直接尝试登录
-            logger.warning(f"[CTP Trader] 认证失败 ({pRspInfo.ErrorID}), 直接登录")
-            self._login()
-
-    def OnRspUserLogin(self, pRspUserLogin, pRspInfo, nRequestID, bIsLast):
-        if pRspInfo.ErrorID == 0:
-            logger.info(f"[CTP Trader] 交易登录成功 front_id={pRspUserLogin.FrontID} session_id={pRspUserLogin.SessionID}")
-            self._client._td_logged_in = True
-            self._client._front_id = pRspUserLogin.FrontID
-            self._client._session_id = pRspUserLogin.SessionID
-        else:
-            logger.error(f"[CTP Trader] 交易登录失败: {pRspInfo.ErrorID} {pRspInfo.ErrorMsg}")
-
-    def OnRspOrderInsert(self, pInputOrder, pRspInfo, nRequestID, bIsLast):
-        """下单回报"""
-        ref = pInputOrder.RequestID
-        if pRspInfo.ErrorID != 0:
-            logger.warning(f"[CTP] 下单失败 ref={ref}: {pRspInfo.ErrorMsg}")
-            self._client._notify({"type": "order_rejected", "ref": ref, "error": pRspInfo.ErrorMsg})
-        else:
-            logger.info(f"[CTP] 下单成功 ref={ref}")
-
-    def OnRtnOrder(self, pOrder: ctp.CThostFtdcOrderField):
-        """订单状态推送"""
-        ref = pOrder.OrderRef
-        status = _ORDER_STATUS_MAP.get(pOrder.OrderStatus, "unknown")
-        logger.info(f"[CTP] 订单状态 ref={ref} status={status} traded={pOrder.VolumeTraded}")
-        self._client._notify({
-            "type": "order_status",
-            "ref": ref,
-            "status": status,
-            "traded_volume": pOrder.VolumeTraded,
-            "price": pOrder.LimitPrice,
-        })
-
-    def OnRtnTrade(self, pTrade: ctp.CThostFtdcTradeField):
-        """成交回报"""
-        ref = pTrade.OrderRef
-        logger.info(f"[CTP] 成交 ref={ref} {pTrade.InstrumentID} {pTrade.Direction} {pTrade.Volume}手 @{pTrade.Price}")
-        self._client._notify({
-            "type": "trade",
-            "ref": ref,
-            "symbol": pTrade.InstrumentID,
-            "direction": "long" if pTrade.Direction == _THOST_OPT_LONG else "short",
-            "volume": pTrade.Volume,
-            "price": pTrade.Price,
-            "trade_id": pTrade.TradeID,
-        })
-
-    def OnRspQryInvestorPosition(self, pPosition, pRspInfo, nRequestID, bIsLast):
-        """持仓查询回报"""
-        if pPosition:
-            self._client._position_result.append({
-                "symbol": pPosition.InstrumentID,
-                "direction": "long" if pPosition.PosiDirection == _THOST_OPT_LONG else "short",
-                "volume": pPosition.Position,
-                "avg_price": pPosition.OpenCost / pPosition.Position if pPosition.Position > 0 else 0,
-                "pnl": pPosition.PositionProfit,
-                "margin": pPosition.UseMargin,
-                "yd_volume": pPosition.YdPosition,  # 昨仓
-            })
-        if bIsLast:
-            self._client._position_done.set()
-
-    def OnRspQryTradingAccount(self, pAccount, pRspInfo, nRequestID, bIsLast):
-        """资金查询回报"""
-        if pAccount:
-            self._client._account_result = {
-                "balance": pAccount.Balance,
-                "available": pAccount.Available,
-                "margin": pAccount.CurrMargin,
-                "pnl": pAccount.PositionProfit,
-                "close_pnl": pAccount.CloseProfit,
-                "frozen_margin": pAccount.FrozenMargin,
-                "frozen_commission": pAccount.FrozenCommission,
-            }
-        if bIsLast:
-            self._client._account_done.set()
-
-    def OnRspQryOrder(self, pOrder, pRspInfo, nRequestID, bIsLast):
-        """委托查询回报"""
-        if pOrder:
-            self._client._order_result.append({
-                "ref": pOrder.OrderRef,
-                "symbol": pOrder.InstrumentID,
-                "direction": "buy" if pOrder.CombOffsetFlag[0] == _THOST_F_OPEN and pOrder.Direction == _THOST_OPT_LONG else "sell",
-                "price": pOrder.LimitPrice,
-                "volume": pOrder.VolumeTotalOriginal,
-                "traded": pOrder.VolumeTraded,
-                "status": _ORDER_STATUS_MAP.get(pOrder.OrderStatus, "unknown"),
-                "insert_time": f"{pOrder.InsertDate} {pOrder.InsertTime}",
-            })
-        if bIsLast:
-            self._client._order_done.set()
-
-    def _authenticate(self):
-        try:
-            field = ctp.CThostFtdcReqAuthenticateField()
-            field.BrokerID = self._client._cfg.broker_id
-            field.UserID = self._client._cfg.user_id
-            # UserProductInfo 在 CTP API 中为 char[11]，超过会抛 TypeError
-            field.UserProductInfo = self._client._cfg.app_id[:11]
-            field.AuthCode = self._client._cfg.auth_code
-            self._client._td_api.ReqAuthenticate(field, 1)
-        except Exception as e:
-            logger.warning(f"[CTP Trader] 认证字段设置失败 ({e}), 直接登录")
-            self._login()
-
-    def _login(self):
-        field = ctp.CThostFtdcReqUserLoginField()
-        field.BrokerID = self._client._cfg.broker_id
-        field.UserID = self._client._cfg.user_id
-        field.Password = self._client._cfg.password
-        self._client._td_api.ReqUserLogin(field, 2)
-
+# ── 客户端类 ──────────────────────────────────────────────────
 
 class CtpClient:
     """
@@ -243,13 +93,20 @@ class CtpClient:
         self._cfg = config
         self._loop = loop or asyncio.get_event_loop()
 
+        # 按模式选择 CTP 模块（标准 ctp vs openctp_tts）
+        self._md_module, self._td_module = _get_ctp_modules(config.mode)
+
+        # 动态创建 SPI 类（基类因模块而异）
+        self._MdSpiCls = self._make_md_spi_class()
+        self._TdSpiCls = self._make_td_spi_class()
+
         # CTP API 实例
-        self._md_api: Optional[ctp.CThostFtdcMdApi] = None
-        self._td_api: Optional[ctp.CThostFtdcTraderApi] = None
+        self._md_api = None
+        self._td_api = None
 
         # SPI 实例（必须保持引用，防止 GC）
-        self._md_spi: Optional[CtpMdSpi] = None
-        self._td_spi: Optional[CtpTraderSpi] = None
+        self._md_spi = None
+        self._td_spi = None
 
         # 状态
         self._running = False
@@ -259,7 +116,6 @@ class CtpClient:
         self._td_logged_in = False
         self._front_id = 0
         self._session_id = 0
-        self._thread: Optional[threading.Thread] = None
 
         # 异步队列
         self.tick_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
@@ -277,19 +133,198 @@ class CtpClient:
         self.on_tick_callback: Optional[Callable] = None
 
         # 主力合约检测
-        self._open_interest_map: dict[str, float] = {}  # symbol → open_interest
+        self._open_interest_map: dict[str, float] = {}
         self._main_contract: str = ""
+
+    def _make_md_spi_class(self):
+        """创建行情 SPI 类，基类取自 self._md_module"""
+        client = self  # captured for callbacks
+
+        class CtpMdSpi(client._md_module.CThostFtdcMdSpi):
+            def __init__(self):
+                super().__init__()
+
+            def OnFrontConnected(self):
+                logger.info("[CTP Md] 行情前置连接成功")
+                client._md_connected = True
+                client._notify({"type": "md_connected", "ok": True})
+                field = client._md_module.CThostFtdcReqUserLoginField()
+                field.BrokerID = client._cfg.broker_id
+                field.UserID = client._cfg.user_id
+                field.Password = client._cfg.password
+                client._md_api.ReqUserLogin(field, 1)
+
+            def OnFrontDisconnected(self, nReason):
+                logger.warning(f"[CTP Md] 行情前置断开 reason={nReason}")
+                client._md_connected = False
+                client._notify({"type": "md_connected", "ok": False})
+
+            def OnRspUserLogin(self, pRspUserLogin, pRspInfo, nRequestID, bIsLast):
+                if pRspInfo.ErrorID == 0:
+                    logger.info(f"[CTP Md] 行情登录成功")
+                    client._md_logged_in = True
+                    client._subscribe_symbols()
+                else:
+                    logger.error(f"[CTP Md] 行情登录失败: {pRspInfo.ErrorID} {pRspInfo.ErrorMsg}")
+
+            def OnRtnDepthMarketData(self, pData):
+                tick = GoldTickData(
+                    symbol=pData.InstrumentID,
+                    exchange="SHFE",
+                    datetime=datetime.now(),
+                    last_price=pData.LastPrice if pData.LastPrice < 1e8 else 0,
+                    last_volume=pData.Volume,
+                    open_interest=pData.OpenInterest,
+                )
+                client._on_tick(tick)
+
+        return CtpMdSpi
+
+    def _make_td_spi_class(self):
+        """创建交易 SPI 类，基类取自 self._td_module"""
+        client = self
+
+        class CtpTraderSpi(client._td_module.CThostFtdcTraderSpi):
+            def __init__(self):
+                super().__init__()
+                self._authenticated = False
+
+            def OnFrontConnected(self):
+                logger.info("[CTP Trader] 交易前置连接成功")
+                client._td_connected = True
+                client._notify({"type": "td_connected", "ok": True})
+                if client._cfg.needs_auth:
+                    self._authenticate()
+                else:
+                    logger.info("[CTP Trader] 无需认证，直接登录")
+                    self._login()
+
+            def OnFrontDisconnected(self, nReason):
+                logger.warning(f"[CTP Trader] 交易前置断开 reason={nReason}")
+                client._td_connected = False
+                client._notify({"type": "td_connected", "ok": False})
+
+            def OnRspAuthenticate(self, pRspAuthenticate, pRspInfo, nRequestID, bIsLast):
+                if pRspInfo.ErrorID == 0:
+                    logger.info("[CTP Trader] 认证成功")
+                    self._authenticated = True
+                    self._login()
+                else:
+                    logger.warning(f"[CTP Trader] 认证失败 ({pRspInfo.ErrorID}:{pRspInfo.ErrorMsg}), 不登录")
+
+            def OnRspUserLogin(self, pRspUserLogin, pRspInfo, nRequestID, bIsLast):
+                if pRspInfo.ErrorID == 0:
+                    logger.info(f"[CTP Trader] 交易登录成功 front_id={pRspUserLogin.FrontID} session_id={pRspUserLogin.SessionID}")
+                    client._td_logged_in = True
+                    client._front_id = pRspUserLogin.FrontID
+                    client._session_id = pRspUserLogin.SessionID
+                else:
+                    logger.error(f"[CTP Trader] 交易登录失败: {pRspInfo.ErrorID} {pRspInfo.ErrorMsg}")
+
+            def OnRspOrderInsert(self, pInputOrder, pRspInfo, nRequestID, bIsLast):
+                ref = pInputOrder.RequestID
+                if pRspInfo.ErrorID != 0:
+                    logger.warning(f"[CTP] 下单失败 ref={ref}: {pRspInfo.ErrorMsg}")
+                    client._notify({"type": "order_rejected", "ref": ref, "error": pRspInfo.ErrorMsg})
+                else:
+                    logger.info(f"[CTP] 下单成功 ref={ref}")
+
+            def OnRtnOrder(self, pOrder):
+                ref = pOrder.OrderRef
+                status = _ORDER_STATUS_MAP.get(pOrder.OrderStatus, "unknown")
+                logger.info(f"[CTP] 订单状态 ref={ref} status={status} traded={pOrder.VolumeTraded}")
+                client._notify({
+                    "type": "order_status",
+                    "ref": ref,
+                    "status": status,
+                    "traded_volume": pOrder.VolumeTraded,
+                    "price": pOrder.LimitPrice,
+                })
+
+            def OnRtnTrade(self, pTrade):
+                ref = pTrade.OrderRef
+                logger.info(f"[CTP] 成交 ref={ref} {pTrade.InstrumentID} {pTrade.Direction} {pTrade.Volume}手 @{pTrade.Price}")
+                client._notify({
+                    "type": "trade",
+                    "ref": ref,
+                    "symbol": pTrade.InstrumentID,
+                    "direction": "long" if pTrade.Direction == _THOST_OPT_LONG else "short",
+                    "volume": pTrade.Volume,
+                    "price": pTrade.Price,
+                    "trade_id": pTrade.TradeID,
+                })
+
+            def OnRspQryInvestorPosition(self, pPosition, pRspInfo, nRequestID, bIsLast):
+                if pPosition:
+                    client._position_result.append({
+                        "symbol": pPosition.InstrumentID,
+                        "direction": "long" if pPosition.PosiDirection == _THOST_OPT_LONG else "short",
+                        "volume": pPosition.Position,
+                        "avg_price": pPosition.OpenCost / pPosition.Position if pPosition.Position > 0 else 0,
+                        "pnl": pPosition.PositionProfit,
+                        "margin": pPosition.UseMargin,
+                        "yd_volume": pPosition.YdPosition,
+                    })
+                if bIsLast:
+                    client._position_done.set()
+
+            def OnRspQryTradingAccount(self, pAccount, pRspInfo, nRequestID, bIsLast):
+                if pAccount:
+                    client._account_result = {
+                        "balance": pAccount.Balance,
+                        "available": pAccount.Available,
+                        "margin": pAccount.CurrMargin,
+                        "pnl": pAccount.PositionProfit,
+                        "close_pnl": pAccount.CloseProfit,
+                        "frozen_margin": pAccount.FrozenMargin,
+                        "frozen_commission": pAccount.FrozenCommission,
+                    }
+                if bIsLast:
+                    client._account_done.set()
+
+            def OnRspQryOrder(self, pOrder, pRspInfo, nRequestID, bIsLast):
+                if pOrder:
+                    client._order_result.append({
+                        "ref": pOrder.OrderRef,
+                        "symbol": pOrder.InstrumentID,
+                        "direction": "buy" if pOrder.CombOffsetFlag[0] == _THOST_F_OPEN and pOrder.Direction == _THOST_OPT_LONG else "sell",
+                        "price": pOrder.LimitPrice,
+                        "volume": pOrder.VolumeTotalOriginal,
+                        "traded": pOrder.VolumeTraded,
+                        "status": _ORDER_STATUS_MAP.get(pOrder.OrderStatus, "unknown"),
+                        "insert_time": f"{pOrder.InsertDate} {pOrder.InsertTime}",
+                    })
+                if bIsLast:
+                    client._order_done.set()
+
+            def _authenticate(self):
+                try:
+                    field = client._td_module.CThostFtdcReqAuthenticateField()
+                    field.BrokerID = client._cfg.broker_id
+                    field.UserID = client._cfg.user_id
+                    field.AppID = client._cfg.app_id
+                    field.AuthCode = client._cfg.auth_code
+                    client._td_api.ReqAuthenticate(field, 1)
+                except Exception as e:
+                    logger.warning(f"[CTP Trader] 认证失败 ({e}), 不登录")
+
+            def _login(self):
+                field = client._td_module.CThostFtdcReqUserLoginField()
+                field.BrokerID = client._cfg.broker_id
+                field.UserID = client._cfg.user_id
+                field.Password = client._cfg.password
+                client._td_api.ReqUserLogin(field, 2)
+
+        return CtpTraderSpi
 
     # ── 主力合约检测 ──────────────────────────────────────────
 
     def get_main_contract(self) -> str:
-        """根据持仓量返回当前主力合约"""
         if not self._main_contract and self._open_interest_map:
             self._main_contract = max(self._open_interest_map, key=self._open_interest_map.get)
         return self._main_contract
 
     def _update_open_interest(self, symbol: str, oi: float):
-        """更新持仓量，触发主力切换"""
         if oi > 0:
             old_main = self._main_contract
             self._open_interest_map[symbol] = max(self._open_interest_map.get(symbol, 0), oi)
@@ -301,7 +336,6 @@ class CtpClient:
     # ── 生命周期 ──────────────────────────────────────────────
 
     async def start(self):
-        """启动 CTP 连接（非阻塞）"""
         if self._running:
             logger.warning("[CTP] 已在运行")
             return
@@ -316,13 +350,8 @@ class CtpClient:
         self._account_result = {}
         self._order_result = []
 
-        # CTP 对象创建（Create/Register/Init）是纯内存操作，很快
-        # Init() 启动的后台网络连接异步进行
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._init_sync)
-
-        self._start_monitor()
-        logger.info("[CTP] 初始化完成（后台线程连接中）")
 
         self._start_monitor()
         logger.info("[CTP] 初始化完成（后台线程连接中）")
@@ -332,33 +361,38 @@ class CtpClient:
         flow_dir = os.path.join("data", "backend", "gold", "ctp_flow")
         os.makedirs(flow_dir, exist_ok=True)
 
-        self._md_api = ctp.CThostFtdcMdApi.CreateFtdcMdApi(
+        self._md_api = self._md_module.CThostFtdcMdApi.CreateFtdcMdApi(
             os.path.join(flow_dir, "md").encode("utf-8").decode("utf-8")
         )
-        self._md_spi = CtpMdSpi(self)
+        self._md_spi = self._MdSpiCls()
         self._md_api.RegisterSpi(self._md_spi)
         self._md_api.RegisterFront(self._cfg.md_address)
         self._md_api.Init()
 
-        self._td_api = ctp.CThostFtdcTraderApi.CreateFtdcTraderApi(
+        self._td_api = self._td_module.CThostFtdcTraderApi.CreateFtdcTraderApi(
             os.path.join(flow_dir, "td").encode("utf-8").decode("utf-8")
         )
-        self._td_spi = CtpTraderSpi(self)
+        self._td_spi = self._TdSpiCls()
         self._td_api.RegisterSpi(self._td_spi)
         self._td_api.RegisterFront(self._cfg.td_address)
-        self._td_api.SubscribePrivateTopic(ctp.THOST_TERT_QUICK)  # type: ignore
-        self._td_api.SubscribePublicTopic(ctp.THOST_TERT_QUICK)   # type: ignore
+        self._td_api.SubscribePrivateTopic(self._td_module.THOST_TERT_QUICK)  # type: ignore
+        self._td_api.SubscribePublicTopic(self._td_module.THOST_TERT_QUICK)   # type: ignore
         self._td_api.Init()
 
     async def stop(self):
         """关闭 CTP 连接"""
         self._running = False
-        if self._md_api:
-            self._md_api.Release()
+        # ponytail: openctp_tts 的 Release() 会 segfault，只置空引用
+        if self._cfg.mode == "openctp":
             self._md_api = None
-        if self._td_api:
-            self._td_api.Release()
             self._td_api = None
+        else:
+            if self._md_api:
+                self._md_api.Release()
+                self._md_api = None
+            if self._td_api:
+                self._td_api.Release()
+                self._td_api = None
         self._md_connected = False
         self._td_connected = False
         self._md_logged_in = False
@@ -370,26 +404,13 @@ class CtpClient:
     def send_order(self, symbol: str, direction: SignalDirection,
                    price: float, volume: int,
                    order_ref: int = 0) -> int:
-        """
-        下单
-
-        Args:
-            symbol: 合约代码（如 au2608）
-            direction: LONG/SHORT/CLOSE_LONG/CLOSE_SHORT
-            price: 价格
-            volume: 手数
-            order_ref: 引用号（0 自动生成）
-
-        Returns:
-            order_ref
-        """
         if not self._td_logged_in:
             logger.error("[CTP] 未登录，无法下单")
             return -1
 
         ref = order_ref or int(time.time() * 1000) % 1000000
 
-        field = ctp.CThostFtdcInputOrderField()
+        field = self._td_module.CThostFtdcInputOrderField()
         field.BrokerID = self._cfg.broker_id
         field.InvestorID = self._cfg.user_id
         field.InstrumentID = symbol
@@ -398,12 +419,9 @@ class CtpClient:
         field.OrderRef = str(ref)
         field.UserID = self._cfg.user_id
 
-        # 组合开平标志 + 方向
         if direction in (SignalDirection.LONG, SignalDirection.SHORT):
-            # 开仓
             field.CombOffsetFlag[0] = _THOST_F_OPEN
         else:
-            # 平仓 — SimNow 统一平昨，简化处理
             field.CombOffsetFlag[0] = _THOST_F_CLOSE
 
         if direction in (SignalDirection.LONG, SignalDirection.CLOSE_SHORT):
@@ -411,14 +429,13 @@ class CtpClient:
         else:
             field.Direction = _THOST_OPT_SHORT
 
-        # 限价单
-        field.OrderPriceType = "2"  # THOST_FTDC_OPT_LimitPrice
+        field.OrderPriceType = "2"  # 限价
         field.CombHedgeFlag[0] = "1"  # 投机
         field.ContingentCondition = "1"  # 立即
         field.ForceCloseReason[0] = "0"
         field.IsAutoSuspend = 0
         field.TimeCondition = "3"  # 当日有效
-        field.VolumeCondition = "1"  # 任意数量
+        field.VolumeCondition = "1"
         field.MinVolume = 1
 
         result = self._td_api.ReqOrderInsert(field, ref)
@@ -429,10 +446,9 @@ class CtpClient:
 
         return ref
 
-    def cancel_order(self, symbol: str, order_ref: int, front_id: int = 0,
-                     session_id: int = 0) -> int:
-        """撤单"""
-        field = ctp.CThostFtdcInputOrderActionField()
+    def cancel_order(self, symbol: str, order_ref: int,
+                     front_id: int = 0, session_id: int = 0) -> int:
+        field = self._td_module.CThostFtdcInputOrderActionField()
         field.BrokerID = self._cfg.broker_id
         field.InvestorID = self._cfg.user_id
         field.InstrumentID = symbol
@@ -445,12 +461,11 @@ class CtpClient:
     # ── 查询 ───────────────────────────────────────────────────
 
     async def query_positions(self, symbol: str = "") -> list[dict]:
-        """查询持仓（异步等待 CTP 回报）"""
         if not self._td_logged_in:
             return []
         self._position_result = []
         self._position_done.clear()
-        field = ctp.CThostFtdcQryInvestorPositionField()
+        field = self._td_module.CThostFtdcQryInvestorPositionField()
         field.BrokerID = self._cfg.broker_id
         field.InvestorID = self._cfg.user_id
         if symbol:
@@ -462,12 +477,11 @@ class CtpClient:
         return self._position_result
 
     async def query_account(self) -> dict:
-        """查询资金账户"""
         if not self._td_logged_in:
             return {}
         self._account_result = {}
         self._account_done.clear()
-        field = ctp.CThostFtdcQryTradingAccountField()
+        field = self._td_module.CThostFtdcQryTradingAccountField()
         field.BrokerID = self._cfg.broker_id
         field.InvestorID = self._cfg.user_id
         self._td_api.ReqQryTradingAccount(field, 1)
@@ -477,12 +491,11 @@ class CtpClient:
         return self._account_result
 
     async def query_orders(self, symbol: str = "") -> list[dict]:
-        """查询当日委托"""
         if not self._td_logged_in:
             return []
         self._order_result = []
         self._order_done.clear()
-        field = ctp.CThostFtdcQryOrderField()
+        field = self._td_module.CThostFtdcQryOrderField()
         field.BrokerID = self._cfg.broker_id
         field.InvestorID = self._cfg.user_id
         if symbol:
@@ -510,14 +523,11 @@ class CtpClient:
     # ── 内部 ───────────────────────────────────────────────────
 
     def _on_tick(self, tick: GoldTickData):
-        """行情 Tick → 主力检测 + 入队列 + 回调"""
-        # 主力合约检测
         self._update_open_interest(tick.symbol, tick.open_interest)
-
         try:
             self.tick_queue.put_nowait(tick)
         except asyncio.QueueFull:
-            pass  # 丢弃最旧的，保持最新数据
+            pass
         if self.on_tick_callback:
             try:
                 self.on_tick_callback(tick)
@@ -525,19 +535,16 @@ class CtpClient:
                 logger.debug(f"[CTP] tick callback error: {e}")
 
     def _notify(self, msg: dict):
-        """CTP 事件 → 异步通知"""
         if self.event_callback:
             self._loop.call_soon_threadsafe(self.event_callback, msg)
         else:
             logger.debug(f"[CTP] event (no callback): {msg.get('type')}")
 
     def _subscribe_symbols(self):
-        """订阅合约行情"""
-        ret = self._md_api.SubscribeMarketData(self._cfg.symbols, len(self._cfg.symbols))
+        ret = self._md_api.SubscribeMarketData(self._cfg.symbols)
         logger.info(f"[CTP] 订阅行情: {self._cfg.symbols} ret={ret}")
 
     def _start_monitor(self):
-        """后台监控线程 — 检查连接状态，自动重连"""
         def _monitor():
             while self._running:
                 time.sleep(30)

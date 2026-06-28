@@ -22,6 +22,9 @@ class GoldSettings(BaseSettings):
     backtest_slippage_per_lot: float = 20.0          # 滑点：1跳=0.02元/克×1000=20元/手
     risk_free_rate: float = 0.025
 
+    # 模拟交易模式切换: "simnow" / "openctp"
+    trading_mode: str = "simnow"
+
     # 风控参数
     max_drawdown_pct: float = 0.10
     max_daily_loss_pct: float = 0.03
@@ -33,20 +36,27 @@ class GoldSettings(BaseSettings):
     # AkShare数据
     akshare_symbol: str = "AU0"
 
-    # CTP/SimNow 连接配置
+    # CTP 通用配置
     ctp_enabled: bool = False
-    ctp_broker_id: str = "9999"
-    ctp_user_id: str = ""
-    ctp_password: str = ""
-    ctp_md_address: str = "tcp://182.254.243.31:40011"   # 7×24 行情前置
-    ctp_td_address: str = "tcp://182.254.243.31:40001"   # 7×24 交易前置
-    ctp_app_id: str = "simnow_client_test"
-    ctp_auth_code: str = "0000000000000000"
     ctp_symbols: str = ""                                 # 订阅合约列表（逗号分隔），留空自动按季度生成后续合约
     ctp_main_symbol: str = "AU0"                          # 前端显示用的主连代码（仅展示）
 
+    # ---- SimNow 连接 ----
+    simnow_md_address: str = "tcp://182.254.243.31:40011"
+    simnow_td_address: str = "tcp://182.254.243.31:40001"
+    simnow_user_id: str = ""
+    simnow_password: str = ""
+
+    # ---- openctp TTS 连接 ----
+    openctp_md_address: str = "tcp://121.37.80.177:20004"
+    openctp_td_address: str = "tcp://121.37.80.177:20002"
+    openctp_user_id: str = ""
+    openctp_password: str = ""
+
     class Config:
         env_prefix = "GOLD_"
+        env_file = ".env"
+        extra = "ignore"
 
 
 gold_settings = GoldSettings()
