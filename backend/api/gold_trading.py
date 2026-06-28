@@ -8,6 +8,8 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel
 from datetime import datetime, timedelta
+import asyncio
+import time
 import pandas as pd
 
 from backend.gold.strategy.base import StrategyRegistry
@@ -22,7 +24,10 @@ from backend.gold.risk.checks import RiskChecker
 from backend.gold.signal.output import SignalOutput
 from backend.gold.data.gateway import GoldDataGateway
 from backend.gold.data.storage import GoldDataStore
-from backend.gold.core.models import BacktestRequest, StrategyComparisonRequest
+from backend.gold.core.models import (
+    BacktestRequest, StrategyComparisonRequest, RiskCheckResult, RiskLevel,
+    GoldSignal, SignalDirection,
+)
 from backend.gold.core.config import GoldSettings
 from backend.data_sync import get_gold_training_data
 from loguru import logger
@@ -475,12 +480,13 @@ def _get_macro_df():
 async def generate_signal(
     strategy_name: str = Query(..., description="策略名称"),
     symbol: str = Query("AU0", description="合约代码"),
+    auto_execute: bool = Query(False, description="风控通过后自动发单到SimNow"),
 ):
     """
     手动触发信号生成
 
     用最新行情数据驱动策略，输出交易建议。
-    不自动下单，仅返回建议。
+    auto_execute=true 时，风控通过后自动发单到 CTP/SimNow。
     """
     cls = StrategyRegistry.get(strategy_name)
     if cls is None:
@@ -550,15 +556,122 @@ async def generate_signal(
     except Exception as e:
         logger.warning(f"保存信号失败: {e}")
 
-    # 风控检查
+    # 风控检查（含 CTP 方向/资金检查）
+    risk_result = await _check_risk_with_ctp(signal_data)
+
+    # 记录信号到风控状态
     risk_checker = RiskChecker()
-    risk_result = risk_checker.check(signal_data)
+    risk_checker.record_signal(signal_data)
+
+    # 自动执行
+    execution = None
+    if auto_execute and risk_result.passed:
+        execution = await _execute_signal_to_ctp(store, signal_data)
+        risk_checker.set_equity(signal_data.price)  # 更新权益估算
 
     # 输出交易建议
     signal_output = SignalOutput()
     advice = signal_output.output(signal_data, risk_result)
+    advice["execution"] = execution
 
     return {"success": True, "data": advice}
+
+
+async def _check_risk_with_ctp(signal: GoldSignal) -> RiskCheckResult:
+    """风控检查（含交易后端持仓/资金检查）"""
+    positions = await query_ctp_positions_raw()
+    account = await query_ctp_account_raw()
+
+    risk_checker = RiskChecker()
+    risk_result = risk_checker.check(
+        signal,
+        positions=positions,
+        account=account,
+    )
+
+    return risk_result
+
+
+async def _execute_signal_to_ctp(store, signal: GoldSignal) -> dict:
+    """执行信号到当前交易后端"""
+    try:
+        from backend.gold.trading.execution.executor import LiveExecutor
+        from backend.gold.trading.execution.sim_account import InternalSimAccount
+        from backend.gold.risk.order_manager import OrderManager
+
+        adapter = await _get_adapter()
+        if adapter is None:
+            return {"executed": False, "reason": "交易后端未连接"}
+
+        om = OrderManager(store)
+        sim = InternalSimAccount()
+        executor = LiveExecutor(adapter, om, sim)
+        result = executor.execute(signal, market_price=signal.price)
+        return {
+            "executed": result["executed"],
+            "ctp_ref": result.get("ctp_ref"),
+            "ctp_status": result.get("ctp_status"),
+            "order_id": result.get("order", {}).get("order_id"),
+            "sim_trade": result.get("sim_trade"),
+        }
+    except Exception as e:
+        logger.error(f"执行失败: {e}")
+        return {"executed": False, "reason": str(e)}
+
+
+@router.post("/signal/execute")
+async def execute_signal(
+    signal_id: str = Query(..., description="信号ID"),
+):
+    """手动执行信号到 SimNow"""
+    store = GoldDataStore()
+    signals = store.get_signals(limit=100)
+    signal = next((s for s in signals if s.signal_id == signal_id), None)
+    if signal is None:
+        raise HTTPException(status_code=404, detail=f"信号 {signal_id} 不存在")
+
+    # 风控
+    risk_result = await _check_risk_with_ctp(signal)
+    if not risk_result.passed:
+        return {"success": True, "data": {"executed": False, "reason": risk_result.reason}}
+
+    # 执行
+    execution = await _execute_signal_to_ctp(store, signal)
+    return {"success": True, "data": execution}
+
+
+# 模块级缓存（避免重复查询交易后端）
+_last_ctp_positions: list = []
+_last_ctp_positions_time: float = 0
+
+async def query_ctp_positions_raw() -> list:
+    """获取持仓（带缓存，避免高频查询）"""
+    global _last_ctp_positions, _last_ctp_positions_time
+    now = time.time()
+    if now - _last_ctp_positions_time < 10:
+        return _last_ctp_positions
+    adapter = await _get_adapter()
+    if adapter is None:
+        return []
+    _last_ctp_positions = await adapter.query_positions()
+    _last_ctp_positions_time = now
+    return _last_ctp_positions
+
+async def query_ctp_account_raw() -> dict:
+    """获取资金（带缓存）"""
+    global _last_ctp_account, _last_ctp_account_time
+    now = time.time()
+    if now - _last_ctp_account_time < 10:
+        return _last_ctp_account
+    adapter = await _get_adapter()
+    if adapter is None:
+        return {}
+    _last_ctp_account = await adapter.query_account()
+    _last_ctp_account_time = now
+    return _last_ctp_account
+
+_last_ctp_account: dict = {}
+_last_ctp_account_time: float = 0
 
 
 async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> dict:
@@ -659,9 +772,13 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
 
     store = GoldDataStore()
     store.save_signal(signal)
+    signal_data.created_at = datetime.now()
 
     risk_checker = RiskChecker()
-    risk_result = risk_checker.check(signal)
+    risk_checker.record_signal(signal)
+    positions = await query_ctp_positions_raw()
+    account = await query_ctp_account_raw()
+    risk_result = risk_checker.check(signal, positions=positions, account=account)
 
     signal_output = SignalOutput()
     advice = signal_output.output(signal, risk_result)
@@ -710,17 +827,17 @@ async def get_risk_status():
     except Exception:
         pass
 
+    # 当日风控摘要
+    risk_checker = RiskChecker()
+    daily = risk_checker.get_daily_summary()
+    checks = risk_checker.get_check_config()
+
     return {
         "success": True,
         "data": {
-            "checks": [
-                {"name": "max_drawdown", "threshold": f"{config.max_drawdown_pct*100:.0f}%", "status": "active"},
-                {"name": "daily_loss", "threshold": f"{config.max_daily_loss_pct*100:.0f}%", "status": "active"},
-                {"name": "signal_frequency", "threshold": f"{config.max_daily_signals}/日", "status": "active"},
-                {"name": "var_95", "threshold": "10%", "status": "active"},
-                {"name": "volatility", "threshold": "10%", "status": "active"},
-            ],
+            "checks": checks,
             "today_signal_count": today_signal_count,
+            "daily_summary": daily,
             "recent_signal_count": len(recent_signals),
             "risk_logs": risk_logs[-10:],
         },
@@ -1380,5 +1497,181 @@ async def get_gold_config():
             "max_drawdown_pct": config.max_drawdown_pct,
             "max_daily_loss_pct": config.max_daily_loss_pct,
             "max_daily_signals": config.max_daily_signals,
+        },
+    }
+
+
+# ===== 模拟交易（适配器模式，支持 SimNow/openctp/QMT 切换） =====
+
+_adapter = None           # TradingAdapter 实例
+_adapter_lock = asyncio.Lock()
+_adapter_mode = None      # 当前已初始化的模式
+
+
+async def _get_adapter() -> Optional["TradingAdapter"]:
+    """获取交易适配器（延迟初始化）"""
+    global _adapter, _adapter_mode
+
+    from backend.gold.core.config import gold_settings
+    s = gold_settings
+    if not s.ctp_enabled:
+        return None
+
+    mode = (s.trading_mode or "simnow").lower()
+    if _adapter is not None and _adapter_mode == mode:
+        return _adapter
+
+    async with _adapter_lock:
+        if _adapter is not None and _adapter_mode != mode:
+            await _adapter.stop()
+            _adapter = None
+        if _adapter is not None:
+            return _adapter
+
+        try:
+            from backend.gold.trading.connectors import create_adapter
+            _adapter = create_adapter(mode)
+            await _adapter.start()
+            _adapter_mode = mode
+            logger.info(f"[交易适配器] 已创建: {mode}")
+            return _adapter
+        except Exception as e:
+            logger.error(f"[交易适配器] 创建失败: {e}")
+            return None
+
+
+@router.get("/modes")
+async def get_trading_modes():
+    """获取所有可用的交易模式"""
+    from backend.gold.core.config import gold_settings
+    current = (gold_settings.trading_mode or "simnow").lower()
+
+    modes = [
+        {"id": "simnow",  "name": "SimNow",         "description": "上期技术官方仿真，需注册，7×24环境",       "current": current == "simnow"},
+        {"id": "openctp", "name": "openctp TTS",    "description": "开放平台仿真，扫码即用，免认证，7×24稳定", "current": current == "openctp"},
+    ]
+    return {"success": True, "data": {"modes": modes, "current": current}}
+
+
+@router.post("/mode")
+async def set_trading_mode(mode: str = "simnow"):
+    """切换交易模式（运行时切换会自动重启适配器）"""
+    global _adapter, _adapter_mode
+
+    valid_modes = ["simnow", "openctp"]
+    if mode not in valid_modes:
+        raise HTTPException(status_code=400, detail=f"不支持的模式: {mode}，支持: {valid_modes}")
+
+    # 更新配置中的模式
+    from backend.gold.core.config import gold_settings
+    gold_settings.trading_mode = mode
+
+    # 如果已连接且模式不同，关闭旧的
+    if _adapter is not None and _adapter_mode != mode:
+        async with _adapter_lock:
+            if _adapter is not None:
+                await _adapter.stop()
+                _adapter = None
+                _adapter_mode = None
+
+    logger.info(f"[交易] 模式已切换: {mode}")
+    return {"success": True, "data": {"mode": mode}}
+
+
+@router.get("/ctp/status")
+async def get_ctp_status():
+    """模拟交易连接状态"""
+    client = await _get_adapter()
+    if client is None:
+        from backend.gold.core.config import GoldSettings
+        s = GoldSettings()
+        return {
+            "success": True,
+            "data": {
+                "enabled": s.ctp_enabled,
+                "mode": s.trading_mode,
+                "connected": False,
+                "message": "未启用或配置不完整",
+            },
+        }
+    status = client.get_status()
+    return {
+        "success": True,
+        "data": {
+            "enabled": True,
+            "mode": client.name,
+            "connected": status.get("connected", status.get("md_logged_in", False)),
+            "main_contract": client.get_main_contract(),
+            "symbols": status.get("symbols", []),
+            "detail": status,
+        },
+    }
+
+
+@router.get("/ctp/positions")
+async def get_ctp_positions():
+    """实时持仓"""
+    client = await _get_adapter()
+    if client is None:
+        return {"success": True, "data": [], "message": "未启用"}
+    positions = await client.query_positions()
+    return {"success": True, "data": positions}
+
+
+@router.get("/ctp/account")
+async def get_ctp_account():
+    """账户资金信息"""
+    client = await _get_adapter()
+    if client is None:
+        return {"success": True, "data": {}, "message": "未启用"}
+    account = await client.query_account()
+    return {"success": True, "data": account}
+
+
+@router.get("/ctp/orders")
+async def get_ctp_orders():
+    """当日委托记录"""
+    client = await _get_adapter()
+    if client is None:
+        return {"success": True, "data": [], "message": "未启用"}
+    orders = await client.query_orders()
+    return {"success": True, "data": orders}
+
+
+@router.get("/ctp/data")
+async def get_ctp_data():
+    """全量数据（一次调用返回状态+持仓+资金+委托）"""
+    client = await _get_adapter()
+    if client is None:
+        from backend.gold.core.config import GoldSettings
+        s = GoldSettings()
+        return {
+            "success": True,
+            "data": {
+                "enabled": s.ctp_enabled,
+                "mode": s.trading_mode,
+                "connected": False,
+                "status": None,
+                "account": {},
+                "positions": [],
+                "orders": [],
+            },
+        }
+
+    status = client.get_status()
+    positions = await client.query_positions()
+    account = await client.query_account()
+    orders = await client.query_orders()
+
+    return {
+        "success": True,
+        "data": {
+            "enabled": True,
+            "mode": client.name,
+            "connected": status.get("connected", status.get("md_logged_in", False)),
+            "status": status,
+            "account": account,
+            "positions": positions,
+            "orders": orders,
         },
     }
