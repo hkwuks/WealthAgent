@@ -513,8 +513,8 @@ async def generate_signal(
     for bar in bars[:-1]:
         strategy.on_bar(bar)
 
-    # 重置持仓状态 — 信号生成只看当前是否满足入场条件，不看历史回测持仓
-    strategy._position = 0
+    # 重置持仓状态 — 信号生成只看当前是否满足入场条件，不看回测累积的持仓
+    strategy.reset_for_signal()
 
     # 记录当前信号数，用于切分最后一根 bar 产生的新信号
     before = len(context._signals)
@@ -673,10 +673,12 @@ _last_ctp_account_time: float = 0
 async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> dict:
     """ML策略信号生成 — 直接预测路径，绕过全量回测"""
     from backend.gold.core.models import GoldSignal, SignalDirection
-    from backend.gold.ml import GoldPricePredictor, FeatureEngineer, ModelType, PredictionHorizon
+    from backend.gold.ml import FeatureEngineer, ModelType
+    from backend.gold.ml.predictor import GoldPricePredictor
     from loguru import logger
 
     current_price = bars[-1].close
+    model_dir = "data/backend/models"
 
     # 获取宏观数据
     macro_df = await gateway.get_macro_data(start="2024-01-01")
@@ -703,36 +705,84 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
                 df[col] = df[col].ffill().bfill().fillna(0)
         logger.info(f"Merged macro data for ML prediction: {list(macro.columns)}")
 
-    # 特征工程
+    # 单次特征工程 — prepare_features 包含全部 create_* 调用
     fe = FeatureEngineer()
-    X = fe.prepare_features_for_prediction(df)
-    if len(X) < 10:
-        logger.warning(f"Insufficient feature samples: {len(X)}")
-        return {"success": True, "data": {"signal": None, "message": "特征数据不足", "strategy": strategy_name, "price": round(current_price, 2)}}
-
-    # 用全部数据训练一个小模型（Ridge，小样本稳定）
     full_X, y = fe.prepare_features(df)
     if len(full_X) < 20:
         logger.warning(f"Insufficient training samples: {len(full_X)}")
-        return {"success": True, "data": {"signal": None, "message": "训练数据不足", "strategy": strategy_name, "price": round(current_price, 2)}}
+        return {"success": True, "data": {"signal": None, "message": "训练数据不足",
+                "strategy": strategy_name, "price": round(current_price, 2)}}
 
-    from sklearn.linear_model import Ridge
-    from sklearn.preprocessing import StandardScaler
-    import numpy as np
+    # 从同一份特征矩阵取最后一行为预测样本（无需二次特征计算）
+    X_latest = full_X.iloc[-1:]
 
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(full_X)
-    model = Ridge(alpha=1.0)
-    model.fit(X_scaled, y)
+    # CPU密集操作移出 event loop
+    def _train_and_predict():
+        import os, pickle
+        from sklearn.linear_model import Ridge
+        from sklearn.preprocessing import StandardScaler
+        import numpy as np
 
-    # 预测最新数据
-    X_latest = X.iloc[-1:]
-    X_latest_scaled = scaler.transform(X_latest)
-    predicted_change = float(model.predict(X_latest_scaled)[0])
+        os.makedirs(model_dir, exist_ok=True)
+        model_path = os.path.join(model_dir, "ml_ridge_latest.pkl")
+
+        # 尝试加载缓存的模型（当天训练过的）
+        loaded = False
+        if os.path.exists(model_path):
+            try:
+                age = __import__("datetime").datetime.fromtimestamp(
+                    os.path.getmtime(model_path))
+                age_days = (__import__("datetime").datetime.now() - age).days
+                if age_days == 0:
+                    with open(model_path, "rb") as f:
+                        cache = pickle.load(f)
+                    scaler, model, feat_cols = (
+                        cache["scaler"], cache["model"], cache["features"])
+                    # 验证特征列匹配
+                    if list(X_latest.columns) == feat_cols:
+                        X_scaled = scaler.transform(X_latest)
+                        pred = float(model.predict(X_scaled)[0])
+                        return pred, cache.get("confidence_factor", 1.0)
+                    else:
+                        logger.info("特征列变化，重新训练")
+            except Exception as e:
+                logger.warning(f"缓存模型加载失败: {e}")
+
+        # 训练新模型
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(full_X)
+        model = Ridge(alpha=1.0, random_state=42)
+        model.fit(X_scaled, y)
+
+        # 评估方向准确率作为置信度校准
+        y_pred = model.predict(X_scaled)
+        da = float(np.mean(np.sign(y.values) == np.sign(y_pred)))
+        confidence_factor = max(0.3, min(1.0, da))
+
+        # 缓存
+        with open(model_path, "wb") as f:
+            pickle.dump({
+                "scaler": scaler, "model": model,
+                "features": list(full_X.columns),
+                "confidence_factor": confidence_factor,
+                "trained_at": __import__("datetime").datetime.now().isoformat(),
+            }, f)
+        logger.info(f"ML模型已训练保存: {model_path} (DA={da:.3f})")
+
+        X_latest_scaled = scaler.transform(X_latest)
+        pred = float(model.predict(X_latest_scaled)[0])
+        return pred, confidence_factor
+
+    # 用 executor 跑 CPU 密集训练/预测
+    import asyncio
+    loop = asyncio.get_event_loop()
+    predicted_change, confidence_factor = await loop.run_in_executor(
+        None, _train_and_predict)
 
     # 生成信号
     threshold = 0.002  # 0.2%
-    confidence = min(0.9, abs(predicted_change) / 0.02)
+    raw_confidence = min(0.9, abs(predicted_change) / 0.02)
+    confidence = round(raw_confidence * confidence_factor, 2)
 
     signal = None
     if predicted_change > threshold:
@@ -742,7 +792,7 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
             strategy_id=strategy_name, strategy_name=strategy_name,
             symbol="AU0", direction=SignalDirection.LONG,
             price=round(current_price, 2), volume=1, stop_loss=sl,
-            confidence=round(confidence, 2),
+            confidence=confidence,
             reason=f"ML预测涨{predicted_change*100:.2f}% (Ridge+{'宏观' if has_macro else '技术'}因子)",
             created_at=datetime.now(),
         )
@@ -753,13 +803,15 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
             strategy_id=strategy_name, strategy_name=strategy_name,
             symbol="AU0", direction=SignalDirection.SHORT,
             price=round(current_price, 2), volume=1, stop_loss=sl,
-            confidence=round(confidence, 2),
+            confidence=confidence,
             reason=f"ML预测跌{predicted_change*100:.2f}% (Ridge+{'宏观' if has_macro else '技术'}因子)",
             created_at=datetime.now(),
         )
 
     if signal is None:
-        return {"success": True, "data": {"signal": None, "message": f"ML预测{predicted_change*100:.2f}%，未达阈值", "strategy": strategy_name, "price": round(current_price, 2)}}
+        return {"success": True, "data": {"signal": None, "message":
+                f"ML预测{predicted_change*100:.2f}%，未达阈值",
+                "strategy": strategy_name, "price": round(current_price, 2)}}
 
     # 保存、风控、输出
     from backend.gold.data.storage import GoldDataStore
@@ -772,11 +824,9 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
     risk_checker = RiskChecker()
     positions = await query_ctp_positions_raw()
     account = await query_ctp_account_raw()
-    # 用 CTP 余额作为当前权益，避免回撤误判
     current_equity = account.get("balance") if account else None
     risk_result = risk_checker.check(signal, positions=positions, account=account,
                                      current_equity=current_equity)
-    # 仅风控通过时才计数
     if risk_result.passed:
         risk_checker.record_signal(signal)
 
