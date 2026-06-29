@@ -29,6 +29,29 @@ class StrategyContext:
         raise NotImplementedError
 
 
+class SignalStrategyContext(StrategyContext):
+    """信号模式策略上下文 — 仅记录信号，不撮合
+
+    用于实时信号生成，不需要回测的资金管理/持仓跟踪/撮合逻辑。
+    """
+
+    def __init__(self):
+        self._signals: list[GoldSignal] = []
+
+    @property
+    def mode(self) -> str:
+        return "signal"
+
+    def on_signal(self, signal: GoldSignal):
+        self._signals.append(signal)
+
+    def get_position(self, symbol: str) -> Optional[GoldPosition]:
+        return None
+
+    def get_balance(self) -> float:
+        return 0.0
+
+
 class StrategyBase(ABC):
     """
     策略基类 — 不依赖VeighNa，轻量设计
