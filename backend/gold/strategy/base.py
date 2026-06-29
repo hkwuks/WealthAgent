@@ -92,6 +92,14 @@ class StrategyBase(ABC):
     def on_bar(self, bar: GoldBarData):
         ...
 
+    def reset_for_signal(self):
+        """
+        重置策略状态用于信号生成模式
+        （回测模式累积的持仓、开仓价不应影响实时信号生成）
+        子类覆盖以重置自己的内部状态。
+        """
+        self._signals = []
+
     def emit_signal(self, direction: SignalDirection, symbol: str,
                     price: float, volume: int = 1,
                     stop_loss: float = None, take_profit: float = None,
@@ -105,10 +113,10 @@ class StrategyBase(ABC):
             strategy_name=self.strategy_name,
             symbol=symbol,
             direction=direction,
-            price=price,
+            price=round(price, 2),
             volume=volume,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
+            stop_loss=round(stop_loss, 2) if stop_loss is not None else None,
+            take_profit=round(take_profit, 2) if take_profit is not None else None,
             confidence=confidence,
             reason=reason,
             created_at=now,

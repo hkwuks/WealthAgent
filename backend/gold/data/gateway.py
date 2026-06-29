@@ -53,6 +53,13 @@ class GoldDataGateway:
         if bars:
             self.store.save_bars(bars, period)
 
+            # 刷新路径也做数据质量检查
+            if not skip_quality_check:
+                qc = DataQualityChecker()
+                report = qc.check(bars)
+                if not report.passed:
+                    logger.warning(f"已刷新数据质量问题: {report.summary}")
+
         # 重新从存储查询（含旧数据+新数据）
         result = self.store.get_bars(symbol, period, start, end, limit)
         return result if result else bars
