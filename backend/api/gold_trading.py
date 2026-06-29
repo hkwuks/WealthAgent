@@ -498,22 +498,37 @@ async def generate_signal(
         raise HTTPException(status_code=400, detail="Insufficient data for signal generation")
 
     from backend.gold.core.models import SignalDirection
-    from backend.gold.backtest.engine import Backtester
+    from backend.gold.strategy.base import SignalStrategyContext
 
     # ML策略走直接预测路径（不用全量回测，避免宏观特征NaN问题）
     if strategy_name == "ml_predictor":
         return await _generate_ml_signal(strategy_name, bars, gateway, cls)
 
     strategy = cls()
-    backtester = Backtester()
-    capital = GoldSettings().backtest_capital
+    context = SignalStrategyContext()
+    strategy.set_context(context)
+    strategy.on_init(context)
 
-    # 用回测引擎完整跑一遍（策略状态机需要全量历史构建）
-    result = backtester.run(strategy, bars, capital=capital)
-    signals = result.get("signals", [])
+    # 预热：用 bars[:-1] 构建策略状态（布林、RSI、ATR 需要历史窗口）
+    for bar in bars[:-1]:
+        strategy.on_bar(bar)
+
+    # 重置持仓状态 — 信号生成只看当前是否满足入场条件，不看历史回测持仓
+    strategy._position = 0
+
+    # 记录当前信号数，用于切分最后一根 bar 产生的新信号
+    before = len(context._signals)
     current_price = bars[-1].close
 
-    if not signals:
+    # 运行最后一根 bar → 真正的"当前"信号
+    strategy.on_bar(bars[-1])
+
+    # 只取最后一根 bar 产生的入场信号（LONG/SHORT），平仓信号过滤掉
+    new_signals = context._signals[before:]
+    open_signals = [s for s in new_signals
+                    if s.direction in (SignalDirection.LONG, SignalDirection.SHORT)]
+
+    if not open_signals:
         return {
             "success": True,
             "data": {
@@ -524,27 +539,8 @@ async def generate_signal(
             },
         }
 
-    signal_data = signals[-1]
-    # 复原为 GoldSignal 对象
-    from backend.gold.core.models import GoldSignal
-    if isinstance(signal_data, dict):
-        signal_data = GoldSignal(**signal_data)
-
-    # 止损偏移量（基于原始信号，不是覆盖后的价格）
-    orig_price = signal_data.price
-    orig_stop_loss = signal_data.stop_loss
-
-    # 用当前最新价格覆盖
-    signal_data.price = round(current_price, 2)
-    # 止损按比例偏移
-    if orig_stop_loss:
-        offset = abs(orig_stop_loss - orig_price)
-        if signal_data.direction == SignalDirection.LONG:
-            signal_data.stop_loss = round(current_price - offset, 2)
-        else:
-            signal_data.stop_loss = round(current_price + offset, 2)
-
-    # 用当前时间覆盖
+    signal_data = open_signals[-1]
+    # 信号价格来自策略自身的 bar.close，无需覆盖；created_at 刷新为当前时间
     now = datetime.now()
     signal_data.created_at = now
     signal_data.signal_id = f"{strategy_name}_{now.strftime('%Y%m%d%H%M%S')}_gen"
@@ -568,9 +564,6 @@ async def generate_signal(
     execution = None
     if auto_execute and risk_result.passed:
         execution = await _execute_signal_to_ctp(store, signal_data)
-        # 用 CTP 账户余额更新权益，而非价格
-        if account and account.get("balance"):
-            risk_checker.set_equity(account["balance"])
 
     # 输出交易建议
     signal_output = SignalOutput()
