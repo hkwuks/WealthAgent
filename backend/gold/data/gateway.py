@@ -158,7 +158,7 @@ class GoldDataGateway:
 
         bars = []
         for _, row in df.iterrows():
-            dt = row.get("日期") or row.get("时间") or row.get("datetime")
+            dt = row.get("日期") or row.get("时间") or row.get("datetime") or row.get("date")
             if isinstance(dt, str):
                 dt = pd.to_datetime(dt)
             elif hasattr(dt, 'to_pydatetime'):
@@ -175,15 +175,43 @@ class GoldDataGateway:
                 close=float(row.get("收盘价", row.get("close", 0))),
                 volume=float(row.get("成交量", row.get("volume", 0))),
                 turnover=float(row.get("成交额", row.get("turnover", 0))),
-                open_interest=float(row.get("持仓量", row.get("open_interest", 0))),
+                open_interest=float(row.get("持仓量", row.get("hold", row.get("open_interest", 0)))),
             )
             bars.append(bar)
         return bars
 
-    async def get_gold_etf_price(self, code: str = "518880") -> dict:
-        """获取黄金ETF实时价格 — 复用现有market_data.py"""
-        from backend.market_data import market_data_service
-        return await market_data_service.get_etf_price(code)
+    async def get_realtime_quote(self, symbol: str = "AU0") -> dict:
+        """获取期货实时行情 — 使用 AkShare futures_zh_spot"""
+        try:
+            import akshare as ak
+        except ImportError:
+            logger.warning("akshare not installed, skip realtime quote")
+            return {}
+
+        try:
+            df = ak.futures_zh_spot(symbol=symbol)
+            if df is None or df.empty:
+                return {}
+
+            row = df.iloc[0]
+            return {
+                "symbol": symbol,
+                "name": row.get("symbol", ""),
+                "time": str(row.get("time", "")),
+                "open": float(row.get("open", 0)),
+                "high": float(row.get("high", 0)),
+                "low": float(row.get("low", 0)),
+                "current_price": float(row.get("current_price", 0)),
+                "bid_price": float(row.get("bid_price", 0)),
+                "ask_price": float(row.get("ask_price", 0)),
+                "volume": float(row.get("volume", 0)),
+                "hold": float(row.get("hold", 0)),
+                "last_settle": float(row.get("last_settle_price", 0)),
+                "source": "akshare_spot",
+            }
+        except Exception as e:
+            logger.warning(f"Realtime quote fetch failed: {e}")
+            return {}
 
     async def get_macro_data(self, start: str = "2024-01-01", end: str = None) -> pd.DataFrame:
         """获取宏观指标数据（DXY, VIX, US10Y）用于ML预测
