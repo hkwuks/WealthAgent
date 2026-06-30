@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.conda/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+
+# Data files (contain user portfolio data)
+data/funds.json
+
+# Environment variables
+.env
+.env.local
+
+# MCP
+mcp_config.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs (not committed)
+docs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Test code (not committed)
+tests/
+backend/gold/tests/
+
+# Frontend ignore file (should not be committed)
+frontend/.gitignore
