@@ -29,6 +29,29 @@ class StrategyContext:
         raise NotImplementedError
 
 
+class SignalStrategyContext(StrategyContext):
+    """信号模式策略上下文 — 仅记录信号，不撮合
+
+    用于实时信号生成，不需要回测的资金管理/持仓跟踪/撮合逻辑。
+    """
+
+    def __init__(self):
+        self._signals: list[GoldSignal] = []
+
+    @property
+    def mode(self) -> str:
+        return "signal"
+
+    def on_signal(self, signal: GoldSignal):
+        self._signals.append(signal)
+
+    def get_position(self, symbol: str) -> Optional[GoldPosition]:
+        return None
+
+    def get_balance(self) -> float:
+        return 0.0
+
+
 class StrategyBase(ABC):
     """
     策略基类 — 不依赖VeighNa，轻量设计
@@ -69,6 +92,14 @@ class StrategyBase(ABC):
     def on_bar(self, bar: GoldBarData):
         ...
 
+    def reset_for_signal(self):
+        """
+        重置策略状态用于信号生成模式
+        （回测模式累积的持仓、开仓价不应影响实时信号生成）
+        子类覆盖以重置自己的内部状态。
+        """
+        self._signals = []
+
     def emit_signal(self, direction: SignalDirection, symbol: str,
                     price: float, volume: int = 1,
                     stop_loss: float = None, take_profit: float = None,
@@ -82,10 +113,10 @@ class StrategyBase(ABC):
             strategy_name=self.strategy_name,
             symbol=symbol,
             direction=direction,
-            price=price,
+            price=round(price, 2),
             volume=volume,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
+            stop_loss=round(stop_loss, 2) if stop_loss is not None else None,
+            take_profit=round(take_profit, 2) if take_profit is not None else None,
             confidence=confidence,
             reason=reason,
             created_at=now,
