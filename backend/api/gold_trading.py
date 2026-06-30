@@ -941,6 +941,36 @@ async def get_bars_for_chart(
     if not bars:
         raise HTTPException(status_code=404, detail="No bar data available")
 
+    # 日线：尝试用实时行情更新最后一根K线
+    if period == "d":
+        try:
+            rt = await gateway.get_realtime_quote(symbol)
+            if rt and rt.get("current_price", 0) > 0:
+                from backend.gold.core.models import GoldBarData
+                from datetime import datetime
+                today = datetime.now().date()
+                # 如果最后一根K线是今天的，更新它；否则追加一根新的
+                last_bar = bars[-1]
+                if hasattr(last_bar.datetime, 'date') and last_bar.datetime.date() == today:
+                    # 更新今天的K线
+                    bars[-1] = GoldBarData(
+                        symbol=symbol, exchange="SHFE", period=period,
+                        datetime=last_bar.datetime,
+                        open=rt["open"], high=rt["high"], low=rt["low"],
+                        close=rt["current_price"], volume=rt["volume"],
+                    )
+                else:
+                    # 追加今天的实时K线
+                    now_dt = datetime.combine(today, datetime.min.time())
+                    bars.append(GoldBarData(
+                        symbol=symbol, exchange="SHFE", period=period,
+                        datetime=now_dt,
+                        open=rt["open"], high=rt["high"], low=rt["low"],
+                        close=rt["current_price"], volume=rt["volume"],
+                    ))
+        except Exception as e:
+            logger.warning(f"Realtime bar update failed: {e}")
+
     # 计算MA指标用于图表
     closes = [b.close for b in bars]
     def ma(arr, n):
@@ -997,10 +1027,27 @@ async def get_market_data():
         latest = bars[-1]
         prev = bars[-2] if len(bars) > 1 else latest
 
-        price = latest.close
-        prev_price = prev.close
-        change = price - prev_price
-        change_pct = (change / prev_price * 100) if prev_price > 0 else 0
+        # 尝试获取实时行情，覆盖昨天的收盘价
+        realtime = await gateway.get_realtime_quote("AU0")
+        if realtime and realtime.get("current_price", 0) > 0:
+            price = realtime["current_price"]
+            open_price = realtime["open"]
+            high_price = realtime["high"]
+            low_price = realtime["low"]
+            volume = realtime["volume"]
+            # 涨跌幅基于昨日结算价
+            prev_price = realtime.get("last_settle", prev.close)
+            change = price - prev_price
+            change_pct = (change / prev_price * 100) if prev_price > 0 else 0
+        else:
+            price = latest.close
+            open_price = latest.open
+            high_price = latest.high
+            low_price = latest.low
+            volume = latest.volume
+            prev_price = prev.close
+            change = price - prev_price
+            change_pct = (change / prev_price * 100) if prev_price > 0 else 0
 
         high_20 = max(b.high for b in bars[-20:])
         low_20 = min(b.low for b in bars[-20:])
@@ -1039,10 +1086,10 @@ async def get_market_data():
                 "price": round(price, 2),
                 "change": round(change, 2),
                 "change_pct": round(change_pct, 2),
-                "high": round(latest.high, 2),
-                "low": round(latest.low, 2),
-                "open": round(latest.open, 2),
-                "volume": latest.volume,
+                "open": round(open_price, 2),
+                "high": round(high_price, 2),
+                "low": round(low_price, 2),
+                "volume": volume,
                 "high_20": round(high_20, 2),
                 "low_20": round(low_20, 2),
                 "high_60": round(high_60, 2),
