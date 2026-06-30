@@ -419,10 +419,11 @@ class CtpClient:
         field.OrderRef = str(ref)
         field.UserID = self._cfg.user_id
 
+        # ponytail: openctp TTS 用字符串代替 char 数组
         if direction in (SignalDirection.LONG, SignalDirection.SHORT):
-            field.CombOffsetFlag[0] = _THOST_F_OPEN
+            field.CombOffsetFlag = _THOST_F_OPEN
         else:
-            field.CombOffsetFlag[0] = _THOST_F_CLOSE
+            field.CombOffsetFlag = _THOST_F_CLOSE
 
         if direction in (SignalDirection.LONG, SignalDirection.CLOSE_SHORT):
             field.Direction = _THOST_OPT_LONG
@@ -430,9 +431,9 @@ class CtpClient:
             field.Direction = _THOST_OPT_SHORT
 
         field.OrderPriceType = "2"  # 限价
-        field.CombHedgeFlag[0] = "1"  # 投机
+        field.CombHedgeFlag = "1"  # 投机
         field.ContingentCondition = "1"  # 立即
-        field.ForceCloseReason[0] = "0"
+        field.ForceCloseReason = "0"
         field.IsAutoSuspend = 0
         field.TimeCondition = "3"  # 当日有效
         field.VolumeCondition = "1"

@@ -1020,15 +1020,15 @@ async def get_market_data():
         # ===== 宏观指标数据 (DXY, VIX, US10Y, TIPS, Breakeven) =====
         macro = {}
         try:
-            df = get_gold_training_data("GC", lookback_days=500)
-            if not df.empty:
-                row = df.iloc[-1]
+            from backend.market_data import market_data_service
+            macro_raw = await market_data_service.get_macro_indicators()
+            if macro_raw:
                 macro = {
-                    "dxy": round(row["DXY_value"], 2) if "DXY_value" in row and pd.notna(row["DXY_value"]) else None,
-                    "vix": round(row["VIX_value"], 2) if "VIX_value" in row and pd.notna(row["VIX_value"]) else None,
-                    "us10y": round(row["US10Y_value"], 2) if "US10Y_value" in row and pd.notna(row["US10Y_value"]) else None,
-                    "tips": round(row["TIPS_value"], 2) if "TIPS_value" in row and pd.notna(row["TIPS_value"]) else None,
-                    "breakeven": round(row["BREAKEVEN_level"], 2) if "BREAKEVEN_level" in row and pd.notna(row["BREAKEVEN_level"]) else None,
+                    "dxy": round(macro_raw["dxy"], 2) if macro_raw.get("dxy") is not None else None,
+                    "vix": round(macro_raw["vix"], 2) if macro_raw.get("vix") is not None else None,
+                    "us10y": round(macro_raw["us10y"], 4) if macro_raw.get("us10y") is not None else None,
+                    "tips": round(macro_raw["tips"], 4) if macro_raw.get("tips") is not None else None,
+                    "breakeven": round(macro_raw["breakeven"], 4) if macro_raw.get("breakeven") is not None else None,
                 }
         except Exception as e:
             logger.warning(f"Macro data fetch failed: {e}")
