@@ -879,6 +879,9 @@ export class GoldTradingUI {
     const price = data.price
     const changePct = data.change_pct
 
+    // 保存当前价格到全局，供持仓盈亏计算使用
+    (window as any).__lastMarketPrice = price
+
     const set = (id: string, text: string, cls?: string) => {
       const el = document.getElementById(id)
       if (el) {
@@ -946,9 +949,8 @@ export class GoldTradingUI {
     const btn = document.getElementById('sig-generate-btn') as HTMLButtonElement
     if (btn) { btn.disabled = true; btn.textContent = '...' }
 
-    // 定时模式 → 自动执行；手动点击 → 不自动执行
-    const autoInterval = parseInt((document.getElementById('sig-auto-select') as HTMLSelectElement)?.value || '0', 10)
-    const autoExecute = autoInterval > 0
+    // 手动点击也自动执行到CTP（如果已连接）
+    const autoExecute = true
 
     try {
       const resp = await api.generateTradingSignal(strategyName, 'AU0', autoExecute)
@@ -959,7 +961,13 @@ export class GoldTradingUI {
           // 执行后刷新 CTP 数据
           this.loadCtpData()
         } else if (autoExecute) {
-          toast.info('信号已生成（自动执行未触发）')
+          // 显示风控拒绝原因
+          const riskReason = resp.data.risk_check?.reason
+          if (riskReason) {
+            toast.warning(`自动执行未触发: ${riskReason}`)
+          } else {
+            toast.info('信号已生成（自动执行未触发）')
+          }
         } else {
           toast.success('信号已生成')
         }
@@ -1006,9 +1014,9 @@ export class GoldTradingUI {
           ${executed
             ? `<span class="scc-item" style="color:#10b981">✅ 已执行 ref=${exec.ctp_ref}</span>
                ${exec.sim_trade ? `<span class="scc-item">模拟成交 @¥${formatPrice(exec.sim_trade.price)}</span>` : ''}`
-            : !autoExecute && riskOK
+            : riskOK
               ? `<button class="btn btn-primary btn-xs" data-sig-execute="${data.signal_id || data.signal?.signal_id || ''}" style="font-size:11px;padding:2px 8px">▶ 执行到 SimNow</button>`
-              : `<span class="scc-item" style="color:#64748b">${exec?.reason || (riskOK ? '等待执行' : `风控未通过: ${data.risk_check?.reason || ''}`)}</span>`
+              : `<span class="scc-item" style="color:#64748b">风控未通过: ${data.risk_check?.reason || ''}</span>`
           }
         </div>
       </div>
@@ -1381,15 +1389,27 @@ export class GoldTradingUI {
         if (!list.length) {
           posEl.innerHTML = '<div class="empty-text">无持仓</div>'
         } else {
+          // 获取当前行情价格计算浮动盈亏（CTP返回的pnl在TTS环境可能为0）
+          const currentPrice = (window as any).__lastMarketPrice || 0
           posEl.innerHTML = '<table class="ctp-table"><thead><tr><th>合约</th><th>方向</th><th>手数</th><th>均价</th><th>盈亏</th></tr></thead><tbody>' +
-            list.map((p: any) => `
-              <tr>
+            list.map((p: any) => {
+              // 如果CTP返回的pnl有效就用它，否则自己计算
+              let pnl = p.pnl
+              if ((!pnl || pnl === 0) && currentPrice > 0 && p.avg_price > 0) {
+                const multiplier = 1000 // AU合约乘数：1000克/手
+                const priceDiff = p.direction === 'long'
+                  ? currentPrice - p.avg_price
+                  : p.avg_price - currentPrice
+                pnl = priceDiff * multiplier * p.volume
+              }
+              return `<tr>
                 <td>${p.symbol||'--'}</td>
                 <td class="${p.direction==='long'?'positive':'negative'}">${p.direction==='long'?'多':'空'}</td>
                 <td>${p.volume??0}</td>
                 <td>¥${formatPrice(p.avg_price)}</td>
-                <td class="${(p.pnl||0)>=0?'positive':'negative'}">${(p.pnl||0)>=0?'+':''}¥${fmtNum(p.pnl)}</td>
-              </tr>`).join('') +
+                <td class="${(pnl||0)>=0?'positive':'negative'}">${(pnl||0)>=0?'+':''}¥${fmtNum(pnl)}</td>
+              </tr>`
+            }).join('') +
             '</tbody></table>'
         }
       }
