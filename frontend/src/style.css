@@ -9,17 +9,17 @@
 }
 
 :root {
-  /* 主色调 - 白色为主，深灰蓝点缀交互元素 */
-  --primary-gradient: linear-gradient(135deg, #334155 0%, #475569 100%);
-  --primary-gradient-hover: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-  --primary-color: #475569;
-  --primary-hover: #334155;
-  --primary-light: rgba(51, 65, 85, 0.08);
-  --primary-glow: rgba(51, 65, 85, 0.2);
+  /* 主色调 - 渐变蓝色 */
+  --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --primary-gradient-hover: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
+  --primary-color: #667eea;
+  --primary-hover: #5a6fd6;
+  --primary-light: rgba(102, 126, 234, 0.1);
+  --primary-glow: rgba(102, 126, 234, 0.4);
 
   /* 辅助色 */
-  --accent-color: #94a3b8;
-  --accent-gradient: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
+  --accent-color: #f093fb;
+  --accent-gradient: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
 
   /* 功能色 */
   --success-color: #10b981;
@@ -31,10 +31,10 @@
   --info-color: #3b82f6;
   --info-gradient: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
 
-  /* 文本色 - 白色主题下加深保证对比度 */
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-tertiary: #64748b;
+  /* 文本色 */
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
   --text-inverse: #ffffff;
 
   /* 背景色 */
@@ -43,17 +43,17 @@
   --bg-tertiary: #eef1f5;
   --bg-gradient: linear-gradient(180deg, #f5f7fa 0%, #e8ecf1 100%);
 
-  /* 边框色 - 加深保证可见性 */
-  --border-color: #cbd5e1;
-  --border-light: #e2e8f0;
+  /* 边框色 */
+  --border-color: #e0e4ea;
+  --border-light: #eef1f5;
 
-  /* 阴影 - 加深层次感 */
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.08);
-  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.12), 0 2px 4px -1px rgba(0, 0, 0, 0.08);
-  --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.12), 0 4px 6px -2px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.14), 0 10px 10px -5px rgba(0, 0, 0, 0.06);
-  --shadow-xl: 0 25px 50px -12px rgba(0, 0, 0, 0.3);
-  --shadow-glow: 0 0 20px rgba(148, 163, 184, 0.15);
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  --shadow-xl: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  --shadow-glow: 0 0 20px rgba(102, 126, 234, 0.3);
 
   /* 圆角 */
   --radius-sm: 6px;
@@ -123,8 +123,8 @@ body {
     linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
     /* 中间层：装饰性光晕 */
-    radial-gradient(ellipse at 20% 20%, rgba(148, 163, 184, 0.06) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 80%, rgba(100, 116, 139, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 20% 20%, rgba(102, 126, 234, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 80%, rgba(118, 75, 162, 0.08) 0%, transparent 50%),
     /* 底层：主背景渐变 */
     var(--bg-gradient);
   background-size:
@@ -151,8 +151,8 @@ body::before {
   width: 200%;
   height: 200%;
   background:
-    radial-gradient(circle at 50% 50%, rgba(148, 163, 184, 0.03), transparent 60%),
-    radial-gradient(circle at 30% 70%, rgba(100, 116, 139, 0.03), transparent 60%);
+    radial-gradient(circle at 50% 50%, rgba(102, 126, 234, 0.04), transparent 60%),
+    radial-gradient(circle at 30% 70%, rgba(118, 75, 162, 0.04), transparent 60%);
   animation: backgroundFloat 20s ease-in-out infinite;
   pointer-events: none;
   z-index: -1;
@@ -520,11 +520,6 @@ body::before {
 .btn-sm {
   padding: 6px 12px;
   font-size: 13px;
-}
-
-.btn-xs {
-  padding: 3px 8px;
-  font-size: 11px;
 }
 
 .btn-lg {
@@ -1891,38 +1886,6 @@ tr:hover {
   color: var(--text-secondary);
 }
 
-/* 缓存时间控件 */
-.cache-controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.cache-ttl-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.cache-ttl-select {
-  padding: 4px 8px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 13px;
-  cursor: pointer;
-  outline: none;
-  transition: var(--transition-fast);
-}
-
-.cache-ttl-select:focus {
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 2px var(--primary-light);
-}
-
 .clear-cache-button:hover {
   background: var(--border-color);
   color: var(--text-primary);
@@ -2357,8 +2320,8 @@ body::after {
   right: 0;
   bottom: 0;
   background:
-    radial-gradient(circle at 90% 10%, rgba(148, 163, 184, 0.04), transparent 40%),
-    radial-gradient(circle at 10% 90%, rgba(100, 116, 139, 0.04), transparent 40%);
+    radial-gradient(circle at 90% 10%, rgba(102, 126, 234, 0.06), transparent 40%),
+    radial-gradient(circle at 10% 90%, rgba(118, 75, 162, 0.06), transparent 40%);
   pointer-events: none;
   z-index: -1;
   animation: backgroundGlow 15s ease-in-out infinite;
@@ -2385,1610 +2348,213 @@ body::after {
 /* ===================================
    黄金预测页面样式
    =================================== */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/* ===================================
-   黄金量化交易页面样式
-   =================================== */
-.gold-trading-page {
-  padding: 0;
+.gold-prediction-page {
+  padding: 20px;
 }
 
-.gold-trading-page .section-card {
-  background: var(--bg-primary);
-  border-radius: var(--radius-lg);
-  padding: 28px;
-  box-shadow: var(--shadow-md);
-  border: 1px solid var(--border-color);
+.gold-prediction-page .market-data-section {
+  margin-bottom: 30px;
 }
 
-.gold-trading-page .section-header {
-  margin-bottom: 28px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border-light);
-}
-
-.gold-trading-page .section-header h2 {
-  font-size: 22px;
-  font-weight: 700;
-  background: var(--primary-gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  margin: 0;
-}
-
-/* 策略卡片 */
-.gold-trading-page .strategy-cards {
+.gold-prediction-page .market-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 16px;
   margin-top: 16px;
 }
 
-.gold-trading-page .strategy-card {
-  background: var(--bg-secondary);
+.gold-prediction-page .market-card {
+  background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius);
   padding: 20px;
-  transition: var(--transition);
-  position: relative;
-  overflow: hidden;
-}
-
-.gold-trading-page .strategy-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: var(--primary-gradient);
-  opacity: 0;
+  text-align: center;
   transition: var(--transition);
 }
 
-.gold-trading-page .strategy-card:hover {
+.gold-prediction-page .market-card:hover {
   box-shadow: var(--shadow-md);
   transform: translateY(-2px);
-  border-color: var(--primary-color);
 }
 
-.gold-trading-page .strategy-card:hover::before {
-  opacity: 1;
-}
-
-.gold-trading-page .strategy-card-icon {
-  font-size: 28px;
+.gold-prediction-page .market-card-title {
+  font-size: 14px;
+  color: var(--text-secondary);
   margin-bottom: 8px;
 }
 
-.gold-trading-page .strategy-card-name {
-  font-size: 16px;
+.gold-prediction-page .market-card-value {
+  font-size: 24px;
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 4px;
 }
 
-.gold-trading-page .strategy-card-desc {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  line-height: 1.5;
+.gold-prediction-page .market-card-change {
+  font-size: 14px;
+  font-weight: 500;
 }
 
-/* 功能区块 */
-.gold-trading-page .trading-section {
-  background: var(--bg-secondary);
-  border-radius: var(--radius);
+.gold-prediction-page .market-card-change.positive {
+  color: #ef4444;
+}
+
+.gold-prediction-page .market-card-change.negative {
+  color: #10b981;
+}
+
+.gold-prediction-page .prediction-settings,
+.gold-prediction-page .backtest-settings {
+  margin-bottom: 30px;
   padding: 20px;
-  margin-bottom: 20px;
-  border: 1px solid var(--border-light);
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
 }
 
-.gold-trading-page .trading-section:last-child {
-  margin-bottom: 0;
-}
-
-.gold-trading-page .trading-section h3 {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-light);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* 设置行 */
-.gold-trading-page .settings-row {
+.gold-prediction-page .settings-row {
   display: flex;
   align-items: center;
   gap: 12px;
+  margin-top: 12px;
   flex-wrap: wrap;
 }
 
-.gold-trading-page .settings-row label {
-  font-size: 13px;
+.gold-prediction-page .settings-row label {
+  font-size: 14px;
   color: var(--text-secondary);
   font-weight: 500;
-  white-space: nowrap;
 }
 
-.gold-trading-page .settings-row select,
-.gold-trading-page .settings-row input[type="date"],
-.gold-trading-page .settings-row input[type="number"] {
+.gold-prediction-page .settings-row select {
   padding: 8px 12px;
-  border: 2px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 13px;
-  transition: var(--transition-fast);
-}
-
-.gold-trading-page .settings-row select:focus,
-.gold-trading-page .settings-row input:focus {
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 2px var(--primary-light);
-  outline: none;
-}
-
-.gold-trading-page .settings-row input[type="number"] {
-  width: 120px;
-}
-
-/* 结果区域 */
-.gold-trading-page .results-section {
-  margin-top: 16px;
-  animation: fadeIn 0.3s ease-out;
-}
-
-.gold-trading-page .results-section h3 {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 16px;
-}
-
-/* 信号卡片 */
-.gold-trading-page .signal-card {
-  background: var(--bg-primary);
-  border: 2px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 24px;
-  transition: var(--transition);
-}
-
-.gold-trading-page .signal-card.bullish {
-  border-color: var(--danger-color);
-  box-shadow: 0 0 20px rgba(239, 68, 68, 0.08);
-}
-
-.gold-trading-page .signal-card.bearish {
-  border-color: var(--success-color);
-  box-shadow: 0 0 20px rgba(16, 185, 129, 0.08);
-}
-
-.gold-trading-page .signal-card-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 16px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* 指标网格 */
-.gold-trading-page .metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 10px;
-  margin-top: 12px;
-}
-
-.gold-trading-page .metric-cell {
-  padding: 10px 12px;
-  background: var(--bg-secondary);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-light);
-}
-
-.gold-trading-page .metric-cell .label {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  margin-bottom: 4px;
-}
-
-.gold-trading-page .metric-cell .value {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.gold-trading-page .metric-cell .value.positive {
-  color: var(--danger-color);
-}
-
-.gold-trading-page .metric-cell .value.negative {
-  color: var(--success-color);
-}
-
-/* 回测报告卡片 */
-.gold-trading-page .report-card {
-  background: var(--bg-primary);
-  border: 2px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 24px;
-  transition: var(--transition);
-}
-
-.gold-trading-page .report-card.positive {
-  border-color: var(--danger-color);
-  box-shadow: 0 0 20px rgba(239, 68, 68, 0.08);
-}
-
-.gold-trading-page .report-card.negative {
-  border-color: var(--success-color);
-  box-shadow: 0 0 20px rgba(16, 185, 129, 0.08);
-}
-
-.gold-trading-page .report-card-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 16px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.gold-trading-page .report-meta {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-light);
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-/* 对比表格 */
-.gold-trading-page .compare-table-container {
-  overflow-x: auto;
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-}
-
-.gold-trading-page .compare-table {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--bg-primary);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.gold-trading-page .compare-table th {
-  background: var(--bg-tertiary);
-  padding: 12px 16px;
-  text-align: left;
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--text-secondary);
-  border-bottom: 2px solid var(--border-color);
-}
-
-.gold-trading-page .compare-table td {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-light);
-  font-size: 13px;
-  color: var(--text-primary);
-}
-
-.gold-trading-page .compare-table tbody tr:hover {
-  background: var(--bg-secondary);
-}
-
-.gold-trading-page .compare-ranking {
-  margin-top: 12px;
-  padding: 10px 14px;
-  background: var(--bg-secondary);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  color: var(--text-secondary);
-  border: 1px solid var(--border-light);
-}
-
-.gold-trading-page .compare-errors {
-  margin-top: 8px;
-  padding: 8px 12px;
-  background: rgba(239, 68, 68, 0.08);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  color: var(--danger-color);
-}
-
-/* 敏感性分析 */
-.gold-trading-page .sensitivity-group {
-  margin-bottom: 20px;
-}
-
-.gold-trading-page .sensitivity-group:last-child {
-  margin-bottom: 0;
-}
-
-.gold-trading-page .sensitivity-group h4 {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.gold-trading-page .sensitivity-badge {
-  display: inline-flex;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.gold-trading-page .sensitivity-badge.robust {
-  background: rgba(16, 185, 129, 0.1);
-  color: var(--success-color);
-}
-
-.gold-trading-page .sensitivity-badge.moderate {
-  background: rgba(245, 158, 11, 0.1);
-  color: var(--warning-color);
-}
-
-.gold-trading-page .sensitivity-badge.fragile {
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--danger-color);
-}
-
-.gold-trading-page .sensitivity-detail {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  margin-top: 4px;
-}
-
-/* 验证结果 */
-.gold-trading-page .validation-block {
-  margin-bottom: 20px;
-}
-
-.gold-trading-page .validation-block:last-child {
-  margin-bottom: 0;
-}
-
-.gold-trading-page .validation-block h4 {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 12px;
-}
-
-.gold-trading-page .sample-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.gold-trading-page .sample-box {
-  padding: 14px;
-  background: var(--bg-primary);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-light);
-}
-
-.gold-trading-page .sample-box .sample-label {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  margin-bottom: 6px;
-}
-
-.gold-trading-page .sample-box .sample-metrics {
-  font-size: 13px;
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
-.gold-trading-page .validation-summary {
-  margin-top: 10px;
-  padding: 10px 14px;
-  background: var(--bg-primary);
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  color: var(--text-primary);
-  border: 1px solid var(--border-light);
-}
-
-.gold-trading-page .validation-summary strong {
-  font-weight: 600;
-}
-
-/* 风控状态 */
-.gold-trading-page .risk-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 10px;
-}
-
-.gold-trading-page .risk-item {
-  padding: 14px;
-  background: var(--bg-primary);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-light);
-}
-
-.gold-trading-page .risk-item .risk-name {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  margin-bottom: 6px;
-}
-
-.gold-trading-page .risk-item .risk-detail {
-  font-size: 13px;
-  color: var(--text-primary);
-}
-
-.gold-trading-page .risk-item .risk-status {
-  font-weight: 600;
-}
-
-.gold-trading-page .risk-item .risk-status.active {
-  color: var(--success-color);
-}
-
-.gold-trading-page .risk-meta {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-/* 信号列表 */
-.gold-trading-page .signals-table-container {
-  overflow-x: auto;
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-  margin-top: 12px;
-}
-
-.gold-trading-page .signals-table {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--bg-primary);
-  border-radius: var(--radius);
-  overflow: hidden;
-  font-size: 12px;
-}
-
-.gold-trading-page .signals-table th {
-  background: var(--bg-tertiary);
-  padding: 10px 14px;
-  text-align: left;
-  font-weight: 600;
-  font-size: 12px;
-  color: var(--text-secondary);
-  border-bottom: 2px solid var(--border-color);
-}
-
-.gold-trading-page .signals-table td {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border-light);
-  color: var(--text-primary);
-}
-
-.gold-trading-page .signals-table tbody tr:hover {
-  background: var(--bg-secondary);
-}
-
-.gold-trading-page .signals-table .reason-col {
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 空状态 */
-.gold-trading-page .empty-text {
-  color: var(--text-tertiary);
-  font-size: 13px;
-  padding: 20px 0;
-}
-
-/* 参数区域 */
-.gold-trading-page .params-section {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-light);
-}
-
-.gold-trading-page .params-section h4 {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 8px;
-}
-
-/* ===================================
-   专业量化交易页面样式（全新）
-   =================================== */
-.quant-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-/* ---- 实时行情条 ---- */
-.quant-ticker {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius);
-  padding: 10px 16px 6px;
-  box-shadow: var(--shadow-sm);
-  margin-bottom: 12px;
-}
-
-.ticker-separator {
-  width: 1px;
-  height: 28px;
-  background: var(--border-light);
-  margin: 0 6px;
-  flex-shrink: 0;
-}
-
-.ticker-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 0 12px;
-  flex-shrink: 0;
-  min-width: 70px;
-}
-
-.ticker-item.ticker-main {
-  min-width: 140px;
-  align-items: flex-start;
-}
-
-.ticker-label {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  margin-bottom: 2px;
-  white-space: nowrap;
-}
-
-.ticker-price {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.ticker-change {
-  font-size: 14px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.ticker-change.up {
-  color: var(--danger-color);
-}
-
-.ticker-change.down {
-  color: var(--success-color);
-}
-
-.ticker-value {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-/* ---- K线图区域 ---- */
-.quant-chart-section {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  margin-bottom: 12px;
-}
-.chart-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-light);
-  flex-wrap: wrap;
-}
-
-.chart-symbol-label {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-right: 8px;
-}
-
-.chart-periods {
-  display: flex;
-  gap: 4px;
-}
-
-.chart-period-btn {
-  padding: 4px 12px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 500;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 14px;
   cursor: pointer;
-  transition: var(--transition-fast);
 }
 
-.chart-period-btn:hover {
-  border-color: var(--primary-color);
-  color: var(--primary-color);
-}
-
-.chart-period-btn.active {
-  background: var(--primary-gradient);
-  color: var(--text-inverse);
-  border-color: transparent;
-}
-
-.chart-indicators {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.chart-toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.gold-prediction-page .settings-row button {
   margin-left: auto;
 }
 
-.chart-update-time {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  white-space: nowrap;
+.gold-prediction-page .prediction-results,
+.gold-prediction-page .backtest-results {
+  margin-top: 30px;
 }
 
-.indicator-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  user-select: none;
-}
-
-.indicator-toggle input[type="checkbox"] {
-  accent-color: var(--primary-color);
-}
-
-.chart-container {
-  width: 100%;
-  height: 500px;
-}
-
-/* ---- 双面板布局 ---- */
-.quant-panels {
+.gold-prediction-page .prediction-cards {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.quant-panel {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 20px;
-  box-shadow: var(--shadow-sm);
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border-light);
-}
-
-.panel-header h3 {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.panel-body {
-  color: var(--text-secondary);
-}
-
-.panel-result {
-  margin-top: 12px;
-}
-
-/* ---- 信号卡片 ---- */
-.signal-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius);
-  padding: 16px;
-  margin-top: 10px;
-}
-
-.signal-card.bullish {
-  border-left: 4px solid var(--danger-color);
-}
-
-.signal-card.bearish {
-  border-left: 4px solid var(--success-color);
-}
-
-.signal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.signal-dir {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.signal-dir-badge {
-  display: inline-flex;
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.signal-dir-badge.long {
-  background: rgba(239, 68, 68, 0.12);
-  color: var(--danger-color);
-}
-
-.signal-dir-badge.short {
-  background: rgba(16, 185, 129, 0.12);
-  color: var(--success-color);
-}
-
-.signal-symbol {
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.signal-strategy {
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-.signal-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-}
-
-.signal-item {
-
-  padding: 8px 10px;
-  background: var(--bg-primary);
-  border-radius: var(--radius-sm);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.s-label {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.2px;
-}
-
-.s-value {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.s-value.price {
-  color: var(--primary-color);
-}
-
-.s-value.green {
-  color: var(--success-color);
-}
-
-.s-value.red {
-  color: var(--danger-color);
-}
-
-.signal-reason {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border-light);
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-/* ---- 紧凑信号卡片 ---- */
-.signal-card-compact {
-  margin-top: 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--border-light);
-  border-left: 3px solid var(--border-color);
-  font-size: 12px;
-}
-.signal-card-compact.bullish { border-left-color: var(--danger-color); }
-.signal-card-compact.bearish { border-left-color: var(--success-color); }
-.scc-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.scc-price { font-weight: 700; color: var(--text-primary); }
-.scc-item { color: var(--text-tertiary); font-size: 11px; }
-.scc-strategy { margin-left: auto; color: var(--text-tertiary); font-size: 11px; }
-.scc-reason {
-  margin-top: 4px;
-  padding-top: 4px;
-  border-top: 1px solid var(--border-color);
-  font-size: 11px;
-  color: var(--text-tertiary);
-  line-height: 1.4;
-}
-
-/* ---- 迷你信号列表 ---- */
-.signal-mini {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--border-light);
-  font-size: 11px;
-}
-
-.signal-mini.long {
-  border-left: 3px solid var(--danger-color);
-}
-
-.signal-mini.short {
-  border-left: 3px solid var(--success-color);
-}
-
-.sm-row1, .sm-row2 {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.sig-dir {
-  font-weight: 700;
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 6px;
-  line-height: 1.3;
-}
-
-.sig-dir.long {
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--danger-color);
-}
-
-.sig-dir.short {
-  background: rgba(16, 185, 129, 0.1);
-  color: var(--success-color);
-}
-
-.sig-price {
-  font-weight: 600;
-  color: var(--text-primary);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.sig-strategy {
-  color: var(--text-tertiary);
-  font-size: 10px;
-  max-width: 60px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sig-time {
-  color: var(--text-tertiary);
-  font-size: 10px;
-}
-
-/* ---- 回测报告 ---- */
-.bt-report {
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius);
-  padding: 16px;
-  background: var(--bg-secondary);
-  transition: var(--transition);
-}
-
-.bt-report.positive {
-  border-left: 4px solid var(--danger-color);
-}
-
-.bt-report.negative {
-  border-left: 4px solid var(--success-color);
-}
-
-.bt-metrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 6px;
-}
-
-.bt-metric {
-  padding: 6px 8px;
-  background: var(--bg-primary);
-  border-radius: var(--radius-sm);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.bt-label {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.2px;
-}
-
-.bt-value {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.bt-value.positive {
-  color: var(--danger-color);
-}
-
-.bt-value.negative {
-  color: var(--success-color);
-}
-
-/* ---- 对比表格 ---- */
-.cmp-table {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--bg-primary);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  font-size: 12px;
-}
-
-.cmp-table th {
-  background: var(--bg-tertiary);
-  padding: 8px 12px;
-  text-align: left;
-  font-weight: 600;
-  font-size: 12px;
-  color: var(--text-secondary);
-  border-bottom: 2px solid var(--border-color);
-}
-
-.cmp-table td {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-light);
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.cmp-table tbody tr:hover {
-  background: var(--bg-secondary);
-}
-
-.cmp-table.small {
-  font-size: 11px;
-}
-
-.cmp-table.small th,
-.cmp-table.small td {
-  padding: 6px 8px;
-}
-
-.cmp-label {
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.cmp-ranking {
-  margin-top: 8px;
-  padding: 8px 12px;
-  background: var(--bg-secondary);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  color: var(--text-secondary);
-  border: 1px solid var(--border-light);
-}
-
-/* ---- 高级分析 ---- */
-.quant-section {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 20px;
-  box-shadow: var(--shadow-sm);
-  margin-bottom: 12px;
-}
-
-.quant-advanced {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 20px;
+  margin-top: 20px;
 }
 
-.advanced-block h4 {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 10px;
-}
-
-/* 敏感性分析 */
-.sens-group {
-  margin-bottom: 14px;
-}
-
-.sens-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 6px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.sens-badge {
-  display: inline-flex;
-  padding: 2px 8px;
-  border-radius: 8px;
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.sens-badge.robust {
-  background: rgba(16, 185, 129, 0.1);
-  color: var(--success-color);
-}
-
-.sens-badge.moderate {
-  background: rgba(245, 158, 11, 0.1);
-  color: var(--warning-color);
-}
-
-.sens-badge.fragile {
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--danger-color);
-}
-
-/* 验证 */
-.val-row {
-  padding: 10px 14px;
-  background: var(--bg-secondary);
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  color: var(--text-primary);
-  margin-bottom: 8px;
-  border: 1px solid var(--border-light);
-}
-
-/* 风控 */
-.risk-mini {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  margin-bottom: 6px;
-  font-size: 12px;
-}
-
-.risk-active {
-  margin-left: auto;
-  font-weight: 600;
-  color: var(--success-color);
-}
-
-/* 表单行 */
-.form-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.form-row select,
-.form-row input[type="date"],
-.form-row input[type="number"] {
-  padding: 6px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
+.gold-prediction-page .prediction-card {
   background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 13px;
-  transition: var(--transition-fast);
-}
-
-.form-row select:focus,
-.form-row input:focus {
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 2px var(--primary-light);
-  outline: none;
-}
-
-.form-row label {
-  font-size: 12px;
-  color: var(--text-secondary);
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.empty-text {
-  padding: 20px;
-  text-align: center;
-  color: var(--text-tertiary);
-  font-size: 13px;
-}
-
-/* ---- 响应式 ---- */
-@media (max-width: 1200px) {
-  .quant-panels {
-    grid-template-columns: 1fr;
-  }
-  .quant-advanced {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 768px) {
-  .quant-ticker {
-    flex-wrap: nowrap;
-    padding: 8px 10px;
-  }
-  .ticker-price {
-    font-size: 16px;
-  }
-  .chart-container {
-    height: 350px;
-  }
-  .chart-indicators {
-    margin-left: 0;
-  }
-  .chart-toolbar {
-    gap: 8px;
-  }
-  .analysis-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-  .bt-metrics {
-    grid-template-columns: repeat(3, 1fr);
-  }
-  .signal-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-/* 清除旧黄金量化页面样式（以新样式覆盖） */
-.gold-trading-page {
-  padding: 0;
-}
-
-.gold-trading-page .section-card {
-  background: transparent;
-  padding: 0;
-  box-shadow: none;
-  border: none;
-}
-
-.gold-trading-page .section-header {
-  display: none;
-}
-
-/* ===== K线技术解读 ===== */
-.quant-analysis {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
+  border: 2px solid var(--border-color);
   border-radius: var(--radius-lg);
-  padding: 20px;
-  box-shadow: var(--shadow-sm);
-  margin-top: 16px;
+  padding: 24px;
+  transition: var(--transition);
+}
+
+.gold-prediction-page .prediction-card.positive {
+  border-color: #ef4444;
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.1);
+}
+
+.gold-prediction-page .prediction-card.negative {
+  border-color: #10b981;
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.1);
+}
+
+.gold-prediction-page .prediction-model {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
   margin-bottom: 12px;
 }
-.analysis-loading {
-  color: var(--text-tertiary);
-  font-size: 13px;
-  padding: 12px 0;
-  text-align: center;
-}
-.analysis-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr 1fr;
-  gap: 12px;
-}
-.analysis-card {
-  background: var(--bg-secondary, #f8fafc);
-  border: 1px solid var(--border-light, #e2e8f0);
-  border-radius: 8px;
-  padding: 12px;
-}
-.analysis-card-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border-light, #e2e8f0);
-}
-.analysis-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-.analysis-table tr + tr {
-  border-top: 1px solid var(--border-color);
-}
-.analysis-table td {
-  padding: 4px 0;
-  color: var(--text-secondary, #64748b);
-}
-.analysis-table td:last-child {
-  text-align: right;
-  font-weight: 500;
-  color: var(--text-primary, #0f172a);
-  white-space: nowrap;
-}
-/* 涨跌颜色 */
-.bullish { color: #ef4444 !important; }
-.bearish { color: #10b981 !important; }
-.neutral { color: var(--text-primary) !important; }
-.analysis-table td.bullish b,
-.analysis-table td.bearish b {
-  font-weight: 700;
-}
-/* 信号标签 */
-.signal-tag {
-  display: inline-block;
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 8px;
-  margin-left: 3px;
-  font-weight: 500;
-}
-.tag-oversold { background: rgba(16,185,129,0.15); color: #10b981; }
-.tag-overbought { background: rgba(239,68,68,0.15); color: #ef4444; }
-.tag-neutral { background: rgba(100,116,139,0.12); color: #64748b; }
-/* 形态标签 */
-.pattern-cell {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-.analysis-pattern-tag {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 8px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-.pattern-bull { background: rgba(239,68,68,0.12); color: #ef4444; }
-.pattern-bear { background: rgba(16,185,129,0.12); color: #10b981; }
-.pattern-doji { background: rgba(245,158,11,0.12); color: #f59e0b; }
-.pattern-none { color: var(--text-tertiary); background: transparent; font-size: 11px; }
-/* 综合研判 */
-.analysis-judgment {
-  margin-top: 12px;
-  padding: 12px 14px;
-  background: linear-gradient(135deg, rgba(59,130,246,0.06), rgba(139,92,246,0.06));
-  border: 1px solid rgba(59,130,246,0.12);
-  border-radius: 8px;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-.judgment-icon {
-  font-size: 16px;
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-.judgment-text {
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-primary);
-}
-/* 暗色适配 */
-.dark-mode .analysis-card { background: rgba(51,65,85,0.3); border-color: var(--border-color); }
-.dark-mode .analysis-judgment { background: linear-gradient(135deg, rgba(59,130,246,0.08), rgba(139,92,246,0.08)); }
-.dark-mode .tag-neutral { background: rgba(148,163,184,0.15); color: #94a3b8; }
 
-/* ===== 策略对比面板 ===== */
-.strategy-compare { color: var(--text-secondary); }
-.compare-header {
+.gold-prediction-page .prediction-icon {
+  font-size: 32px;
+  margin-bottom: 16px;
+}
+
+.gold-prediction-page .prediction-item {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 14px;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.compare-regime { display: flex; flex-direction: column; gap: 6px; }
-.regime-desc { font-size: 13px; color: var(--text-secondary); }
-.compare-indicators { display: flex; gap: 8px; flex-wrap: wrap; }
-.indicator-chip {
-  font-size: 11px;
-  padding: 2px 8px;
-  background: var(--bg-tertiary, #eef1f5);
-  border-radius: 6px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-.indicator-chip b { color: var(--text-primary); margin-right: 2px; }
-.compare-best { font-size: 14px; font-weight: 600; color: var(--text-primary); white-space: nowrap; }
-.best-strategy-name { color: #f59e0b; }
-.regime-badge {
-  display: inline-block;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 2px 12px;
-  border-radius: 12px;
-}
-.regime-bull { background: rgba(239,68,68,0.12); color: #ef4444; }
-.regime-bear { background: rgba(16,185,129,0.12); color: #10b981; }
-.regime-oversold { background: rgba(16,185,129,0.12); color: #10b981; }
-.regime-overbought { background: rgba(239,68,68,0.12); color: #ef4444; }
-.regime-neutral { background: rgba(100,116,139,0.12); color: #64748b; }
-.compare-cards {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 12px;
-}
-.compare-card {
-  background: var(--bg-secondary, #f8fafc);
-  border: 1px solid var(--border-light, #e2e8f0);
-  border-radius: 10px;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.compare-card-top {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.compare-icon { font-size: 16px; }
-.compare-card-title { font-size: 13px; font-weight: 600; color: var(--text-primary); flex: 1; }
-.compare-score { font-size: 20px; font-weight: 700; }
-.score-high { color: #10b981; }
-.score-mid { color: #f59e0b; }
-.score-low { color: #64748b; }
-.score-unit { font-size: 11px; font-weight: 400; }
-.compare-bar-bg {
-  height: 5px;
-  background: var(--border-color, #e2e8f0);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.compare-bar {
-  height: 100%;
-  border-radius: 4px;
-  transition: width 0.6s ease;
-}
-.bar-high { background: linear-gradient(90deg, #10b981, #34d399); }
-.bar-mid { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
-.bar-low { background: linear-gradient(90deg, #64748b, #94a3b8); }
-.compare-tags { display: flex; gap: 4px; flex-wrap: wrap; }
-.compare-tag {
-  font-size: 10px;
-  padding: 1px 6px;
-  background: rgba(59,130,246,0.08);
-  color: #3b82f6;
-  border-radius: 6px;
-  white-space: nowrap;
-}
-.compare-desc { font-size: 12px; color: var(--text-tertiary); line-height: 1.4; }
-.compare-reasons {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin-top: auto;
-  padding-top: 6px;
-  border-top: 1px solid var(--border-color);
-}
-.compare-reason {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  line-height: 1.4;
-}
-.dark-mode .compare-card { background: rgba(51,65,85,0.3); border-color: var(--border-color); }
-
-@media (max-width: 1024px) {
-  .compare-cards { grid-template-columns: 1fr 1fr; }
-}
-@media (max-width: 768px) {
-  .compare-cards { grid-template-columns: 1fr; }
-  .compare-header { flex-direction: column; align-items: flex-start; }
-  .compare-best { align-self: flex-start; }
-}
-
-/* ===== CTP/SimNow 模拟交易 ===== */
-.ctp-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 16px;
-  margin-top: 12px;
-}
-
-.ctp-card {
-  background: var(--bg-secondary, #f8fafc);
-  border: 1px solid var(--border-light, #e2e8f0);
-  border-radius: 10px;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-}
-
-.ctp-card-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 10px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.ctp-card-body {
-  flex: 1;
-  min-height: 60px;
-}
-
-.ctp-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 2px 12px;
-  border-radius: 12px;
-}
-.ctp-on { background: rgba(16,185,129,0.12); color: #10b981; }
-.ctp-mid { background: rgba(245,158,11,0.12); color: #f59e0b; }
-.ctp-off { background: rgba(100,116,139,0.12); color: #64748b; }
-
-.ctp-account-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.ctp-account-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.ctp-a-label {
-  font-size: 11px;
-  color: var(--text-tertiary);
-}
-
-.ctp-a-value {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.ctp-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.ctp-table th {
-  text-align: left;
-  padding: 4px 6px;
-  color: var(--text-tertiary);
-  font-weight: 500;
-  font-size: 11px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.ctp-table td {
-  padding: 4px 6px;
-  color: var(--text-primary);
+  padding: 8px 0;
   border-bottom: 1px solid var(--border-light);
 }
 
-.ctp-table.small td,
-.ctp-table.small th {
-  padding: 3px 4px;
-  font-size: 11px;
+.gold-prediction-page .prediction-item:last-child {
+  border-bottom: none;
 }
 
-.ctp-time {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  white-space: nowrap;
+.gold-prediction-page .prediction-item .label {
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 
-.positive { color: #ef4444 !important; }
-.negative { color: #10b981 !important; }
+.gold-prediction-page .prediction-item .value {
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 14px;
+}
 
-.dark-mode .ctp-card { background: rgba(51,65,85,0.3); border-color: var(--border-color); }
+.gold-prediction-page .prediction-item .value.positive {
+  color: #ef4444;
+}
 
-@media (max-width: 1024px) {
-  .ctp-grid { grid-template-columns: 1fr; }
+.gold-prediction-page .prediction-item .value.negative {
+  color: #10b981;
+}
+
+.gold-prediction-page #backtest-chart,
+.gold-prediction-page #trend-backtest-chart {
+  width: 100%;
+  height: 400px;
+  margin: 20px 0;
+  background: var(--bg-primary);
+  border-radius: var(--radius);
+}
+
+.gold-prediction-page .metrics-table-container {
+  overflow-x: auto;
+  margin-top: 20px;
+}
+
+.gold-prediction-page .metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-primary);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.gold-prediction-page .metrics-table thead {
+  background: var(--bg-secondary);
+}
+
+.gold-prediction-page .metrics-table th,
+.gold-prediction-page .metrics-table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.gold-prediction-page .metrics-table th {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.gold-prediction-page .metrics-table td {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.gold-prediction-page .metrics-table tbody tr:hover {
+  background: var(--bg-secondary);
 }

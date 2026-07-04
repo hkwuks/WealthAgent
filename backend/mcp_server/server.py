@@ -174,236 +174,90 @@ def _register_tools(mcp: FastMCP):
         """获取支持的指数列表"""
         return await tools.get_supported_indices()
 
-    # ===== 黄金量化交易 MCP Tools =====
-
     @mcp.tool()
-    async def get_gold_strategies() -> dict:
-        """获取黄金量化策略列表及描述"""
-        return await tools.get_gold_strategies()
-
-    @mcp.tool()
-    async def get_gold_signals(strategy_name: str = None, limit: int = 20) -> dict:
+    async def get_gold_prediction(symbol: str = "GC", horizon_days: int = 1, model_type: str = "lightgbm") -> dict:
         """
-        获取最近黄金交易建议信号
+        获取黄金价格预测
 
         Args:
-            strategy_name: 策略名称过滤（可选）
-            limit: 返回数量限制（默认20）
+            symbol: 黄金交易代码（默认 GC）
+            horizon_days: 预测天数（1, 5, 20）
+            model_type: 模型类型（lightgbm, xgboost, ridge）
         """
-        return await tools.get_gold_signals(strategy_name, limit)
+        return await tools.get_gold_prediction(symbol, horizon_days, model_type)
 
     @mcp.tool()
-    async def run_gold_strategy_backtest(strategy_name: str = "trend_following",
-                                          start_date: str = "2024-01-01",
-                                          end_date: str = "2024-12-31",
-                                          capital: float = 1000000) -> dict:
+    async def get_gold_tb_prediction(symbol: str = "GC", model_type: str = "lightgbm") -> dict:
         """
-        运行黄金量化策略回测（趋势跟踪/均值回归/ML预测）
+        获取 Triple-Barrier 方向预测（看涨/看跌概率+止盈止损价格）
 
         Args:
-            strategy_name: 策略名称（trend_following/mean_reversion/ml_predictor）
-            start_date: 开始日期（默认2024-01-01）
-            end_date: 结束日期（默认2024-12-31）
-            capital: 回测资金（默认1000000）
+            symbol: 黄金交易代码（默认 GC）
+            model_type: 模型类型（lightgbm, xgboost, ridge）
         """
-        return await tools.run_gold_strategy_backtest(strategy_name, start_date, end_date, capital)
+        return await tools.get_gold_tb_prediction(symbol, model_type)
 
     @mcp.tool()
-    async def compare_gold_strategies(strategy_names: str = "trend_following,mean_reversion,ml_predictor",
-                                       start_date: str = "2024-01-01",
-                                       end_date: str = "2024-12-31") -> dict:
+    async def get_gold_price() -> dict:
+        """获取当前黄金价格和宏观指标"""
+        return await tools.get_gold_price()
+
+    @mcp.tool()
+    async def run_gold_backtest(years: int = 1, model_types: str = "lightgbm,xgboost,ridge", method: str = "walk_forward") -> dict:
         """
-        多策略对比回测
+        运行黄金预测模型回测
 
         Args:
-            strategy_names: 策略名称，逗号分隔
-            start_date: 开始日期
-            end_date: 结束日期
+            years: 回测年数（1, 2, 3）
+            model_types: 模型类型，逗号分隔（默认所有模型）
+            method: 回测方法（walk_forward 或 cpcv）
         """
-        names = [s.strip() for s in strategy_names.split(",")]
-        return await tools.compare_gold_strategies(names, start_date, end_date)
+        return await tools.run_gold_backtest(years, model_types, method)
 
     @mcp.tool()
-    async def get_gold_risk_status() -> dict:
-        """获取黄金交易风控状态"""
-        return await tools.get_gold_risk_status()
-
-    # ===== 补齐的黄金量化 MCP Tools =====
-
-    @mcp.tool()
-    async def get_gold_status() -> dict:
-        """获取黄金量化交易系统状态"""
-        return await tools.get_gold_status()
-
-    @mcp.tool()
-    async def get_gold_strategy_detail(strategy_name: str) -> dict:
+    async def get_gold_drift_status(model_type: str = None, horizon_days: int = None) -> dict:
         """
-        获取策略详情
+        获取模型漂移检测状态
 
         Args:
-            strategy_name: 策略名称
+            model_type: 模型类型（可选，lightgbm/xgboost/ridge）
+            horizon_days: 预测周期（可选，1/5/20）
         """
-        return await tools.get_gold_strategy_detail(strategy_name)
+        return await tools.get_gold_drift_status(model_type, horizon_days)
 
     @mcp.tool()
-    async def run_gold_sensitivity(strategy_name: str, symbol: str = "AU0",
-                                   period: str = "d", start_date: str = None,
-                                   end_date: str = None, capital: float = 1_000_000,
-                                   param_ranges: dict = None) -> dict:
+    async def get_gold_factor_importance(model_type: str = "lightgbm", horizon_days: int = 1) -> dict:
         """
-        运行参数敏感性分析
+        获取黄金预测因子重要性
 
         Args:
-            strategy_name: 策略名称
-            symbol: 合约代码（默认 AU0）
-            period: K线周期（默认 d）
-            start_date: 开始日期
-            end_date: 结束日期
-            capital: 起始资金
-            param_ranges: 参数范围 {"param_name": [value1, value2, ...]}
+            model_type: 模型类型（默认 lightgbm）
+            horizon_days: 预测周期（默认 1）
         """
-        return await tools.run_gold_sensitivity(strategy_name, symbol, period, start_date, end_date, capital, param_ranges)
+        return await tools.get_gold_factor_importance(model_type, horizon_days)
 
     @mcp.tool()
-    async def run_gold_validation(strategy_name: str, symbol: str = "AU0",
-                                  period: str = "d", start_date: str = None,
-                                  end_date: str = None, capital: float = 1_000_000,
-                                  in_sample_ratio: float = 0.7, scenario_name: str = None) -> dict:
+    async def get_gold_trend_signal(symbol: str = "GC") -> dict:
         """
-        运行策略验证（In/Out 样本 + 场景验证）
+        获取黄金趋势跟踪信号（MA交叉+ATR止损）
 
         Args:
-            strategy_name: 策略名称
-            symbol: 合约代码
-            period: K线周期
-            start_date: 开始日期
-            end_date: 结束日期
-            capital: 起始资金
-            in_sample_ratio: 样本内比例（默认 0.7）
-            scenario_name: 场景名称（可选）
+            symbol: 黄金交易代码（默认 GC）
         """
-        return await tools.run_gold_validation(strategy_name, symbol, period, start_date, end_date, capital, in_sample_ratio, scenario_name)
+        return await tools.get_gold_trend_signal(symbol)
 
     @mcp.tool()
-    async def run_gold_walk_forward(strategy_name: str, symbol: str = "AU0",
-                                    period: str = "d", start_date: str = None,
-                                    end_date: str = None, capital: float = 1_000_000,
-                                    train_window: int = 252, test_window: int = 20) -> dict:
+    async def run_gold_trend_backtest(years: int = 2, fast_ma: int = 50, slow_ma: int = 200, sl_multiplier: float = 2.0) -> dict:
         """
-        运行 Walk-Forward 滚动窗口回测
+        运行趋势跟踪策略回测
 
         Args:
-            strategy_name: 策略名称
-            symbol: 合约代码
-            period: K线周期
-            start_date: 开始日期
-            end_date: 结束日期
-            capital: 起始资金
-            train_window: 训练窗口大小（默认 252）
-            test_window: 测试窗口大小（默认 20）
+            years: 回测年数
+            fast_ma: 快速MA天数（默认50）
+            slow_ma: 慢速MA天数（默认200）
+            sl_multiplier: ATR止损倍数（默认2.0）
         """
-        return await tools.run_gold_walk_forward(strategy_name, symbol, period, start_date, end_date, capital, train_window, test_window)
-
-    @mcp.tool()
-    async def run_gold_cpcv(strategy_name: str, symbol: str = "AU0",
-                            period: str = "d", start_date: str = None,
-                            end_date: str = None, capital: float = 1_000_000,
-                            n_groups: int = 6, k_test: int = 2) -> dict:
-        """
-        运行 CPCV 组合交叉验证回测
-
-        Args:
-            strategy_name: 策略名称
-            symbol: 合约代码
-            period: K线周期
-            start_date: 开始日期
-            end_date: 结束日期
-            capital: 起始资金
-            n_groups: 分组数（默认 6）
-            k_test: 测试组数（默认 2）
-        """
-        return await tools.run_gold_cpcv(strategy_name, symbol, period, start_date, end_date, capital, n_groups, k_test)
-
-    @mcp.tool()
-    async def run_gold_monte_carlo(strategy_name: str, symbol: str = "AU0",
-                                   period: str = "d", start_date: str = None,
-                                   end_date: str = None, capital: float = 1_000_000,
-                                   n_simulations: int = 1000) -> dict:
-        """
-        运行 Monte Carlo 模拟
-
-        Args:
-            strategy_name: 策略名称
-            symbol: 合约代码
-            period: K线周期
-            start_date: 开始日期
-            end_date: 结束日期
-            capital: 起始资金
-            n_simulations: 模拟次数（默认 1000）
-        """
-        return await tools.run_gold_monte_carlo(strategy_name, symbol, period, start_date, end_date, capital, n_simulations)
-
-    @mcp.tool()
-    async def run_gold_triple_barrier_label(symbol: str = "AU0", period: str = "d",
-                                            start_date: str = None, end_date: str = None,
-                                            tp_multiplier: float = 1.5, sl_multiplier: float = 1.0,
-                                            max_holding_days: int = 5) -> dict:
-        """
-        运行 Triple-Barrier 三屏障标注
-
-        Args:
-            symbol: 合约代码
-            period: K线周期
-            start_date: 开始日期
-            end_date: 结束日期
-            tp_multiplier: 止盈倍数（默认 1.5）
-            sl_multiplier: 止损倍数（默认 1.0）
-            max_holding_days: 最大持有天数（默认 5）
-        """
-        return await tools.run_gold_triple_barrier_label(symbol, period, start_date, end_date, tp_multiplier, sl_multiplier, max_holding_days)
-
-    @mcp.tool()
-    async def get_gold_feature_importance(strategy_name: str = "ml_predictor") -> dict:
-        """
-        获取 ML 策略特征重要性
-
-        Args:
-            strategy_name: 策略名称（默认 ml_predictor）
-        """
-        return await tools.get_gold_feature_importance(strategy_name)
-
-    @mcp.tool()
-    async def generate_gold_signal(strategy_name: str, symbol: str = "AU0") -> dict:
-        """
-        触发黄金交易信号生成
-
-        Args:
-            strategy_name: 策略名称
-            symbol: 合约代码（默认 AU0）
-        """
-        return await tools.generate_gold_signal(strategy_name, symbol)
-
-    @mcp.tool()
-    async def get_gold_market_data() -> dict:
-        """获取黄金市场数据仪表盘"""
-        return await tools.get_gold_market_data()
-
-    @mcp.tool()
-    async def get_gold_analysis(symbol: str = "AU0", period: str = "d", limit: int = 500) -> dict:
-        """
-        获取 K 线技术分析解读
-
-        Args:
-            symbol: 合约代码（默认 AU0）
-            period: K线周期（默认 d）
-            limit: 数据条数（默认 500）
-        """
-        return await tools.get_gold_analysis(symbol, period, limit)
-
-    @mcp.tool()
-    async def get_gold_config() -> dict:
-        """获取黄金交易配置参数"""
-        return await tools.get_gold_config()
+        return await tools.run_gold_trend_backtest(years, fast_ma, slow_ma, sl_multiplier)
 
 
 def _register_resources(mcp: FastMCP):

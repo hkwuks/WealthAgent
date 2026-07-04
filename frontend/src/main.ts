@@ -2,7 +2,7 @@ import './style.css'
 import { toast } from './toast'
 import { fundManagerUI } from './fundManagerUI'
 import { marketDataUI } from './marketDataUI'
-import { goldTradingUI } from './goldTradingUI'
+import { goldPredictionUI } from './goldPredictionUI'
 
 toast.init();
 
@@ -63,21 +63,21 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <span class="tab-button-icon">💼</span>
         基金管理
       </button>
-      <button class="tab-button" data-tab="gold-trading" role="tab" aria-selected="false">
-        <span class="tab-button-icon">📊</span>
-        黄金量化
-      </button>
       <button class="tab-button" data-tab="market-data" role="tab" aria-selected="false">
         <span class="tab-button-icon">🌍</span>
         市场数据
+      </button>
+      <button class="tab-button" data-tab="gold-prediction" role="tab" aria-selected="false">
+        <span class="tab-button-icon">🥇</span>
+        黄金预测
       </button>
     </nav>
 
     <!-- 标签内容区域 -->
     <main>
       <div class="tab-content active" id="fund-manager-container" role="tabpanel"></div>
-      <div class="tab-content" id="gold-trading-container" role="tabpanel"></div>
       <div class="tab-content" id="market-data-container" role="tabpanel"></div>
+      <div class="tab-content" id="gold-prediction-container" role="tabpanel"></div>
     </main>
   </div>
 `
@@ -102,9 +102,9 @@ async function initApp() {
   const marketDataContainer = document.querySelector<HTMLDivElement>('#market-data-container')!
   marketDataUI.init(marketDataContainer)
 
-  // 初始化黄金量化交易界面
-  const goldTradingContainer = document.querySelector<HTMLDivElement>('#gold-trading-container')!
-  goldTradingUI.init(goldTradingContainer)
+  // 初始化黄金预测界面
+  const goldPredictionContainer = document.querySelector<HTMLDivElement>('#gold-prediction-container')!
+  goldPredictionUI.init(goldPredictionContainer)
 }
 
 initApp().catch(console.error)
@@ -145,11 +145,6 @@ function setupTabSwitching() {
 
       targetContent.classList.add('active')
       targetContent.style.display = 'block'
-
-      // 通知黄金量化Tab初始化图表
-      if (tabId === 'gold-trading') {
-        goldTradingUI.onActivated()
-      }
 
       // 添加动画效果
       targetContent.style.animation = 'none'

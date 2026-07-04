@@ -534,143 +534,37 @@ class ApiService {
       }
     }
   }
-  // 黄金量化交易 API
-  async getTradingStatus(): Promise<{ status: string; mode: string; strategies: string[] }> {
-    return this.request<{ status: string; mode: string; strategies: string[] }>('/gold/trading/status');
+  // 黄金预测相关 API
+  async getGoldCurrent(): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>('/gold/current');
   }
 
-  async getTradingStrategies(): Promise<{ success: boolean; data: any[] }> {
-    return this.request<{ success: boolean; data: any[] }>('/gold/trading/strategies');
-  }
-
-  async getTradingStrategyDetail(name: string): Promise<{ success: boolean; data: any }> {
-    return this.request<{ success: boolean; data: any }>(`/gold/trading/strategies/${name}`);
-  }
-
-  async runTradingBacktest(params: {
-    strategy_name: string; symbol?: string; period?: string;
-    start_date?: string; end_date?: string; capital?: number; params?: Record<string, any>;
-  }): Promise<{ success: boolean; data: any }> {
-    return this.request<{ success: boolean; data: any }>('/gold/trading/backtest', {
+  async predictGoldPrice(horizonDays: number, modelType: string = 'lightgbm'): Promise<{ success: boolean; data: any; error_message?: string }> {
+    return this.request<{ success: boolean; data: any; error_message?: string }>(`/gold/predict?symbol=GC&horizon_days=${horizonDays}&model_type=${modelType}`, {
       method: 'POST',
-      body: JSON.stringify(params),
-    }, 120000);
+    });
   }
 
-  async compareStrategies(params: {
-    strategy_names: string[]; symbol?: string; period?: string;
-    start_date?: string; end_date?: string; capital?: number;
-  }): Promise<{ success: boolean; data: any }> {
-    return this.request<{ success: boolean; data: any }>('/gold/trading/compare', {
+  async runGoldBacktest(years: number, horizonDays: number = 1, method: string = 'walk_forward'): Promise<{ success: boolean; data: any; error_message?: string }> {
+    return this.request<{ success: boolean; data: any; error_message?: string }>(`/gold/backtest?years=${years}&horizon_days=${horizonDays}&method=${method}`, {
       method: 'POST',
-      body: JSON.stringify(params),
-    }, 180000);
-  }
-
-  async getTradingSignals(strategyName?: string, limit?: number): Promise<{ success: boolean; data: any[] }> {
-    const params = new URLSearchParams();
-    if (strategyName) params.set('strategy_name', strategyName);
-    if (limit) params.set('limit', String(limit));
-    const qs = params.toString();
-    return this.request<{ success: boolean; data: any[] }>(`/gold/trading/signals${qs ? '?' + qs : ''}`);
-  }
-
-  async syncGoldBars(symbol?: string, period?: string, startDate?: string, endDate?: string): Promise<{ success: boolean; data: any }> {
-    const params = new URLSearchParams();
-    if (symbol) params.set('symbol', symbol);
-    if (period) params.set('period', period);
-    if (startDate) params.set('start_date', startDate);
-    if (endDate) params.set('end_date', endDate);
-    return this.request<{ success: boolean; data: any }>(`/gold/trading/sync-data?${params.toString()}`, {
-      method: 'POST',
-    }, 60000);
-  }
-
-  async getTradingConfig(): Promise<{ success: boolean; data: any }> {
-    return this.request<{ success: boolean; data: any }>('/gold/trading/config');
-  }
-
-  async generateTradingSignal(strategyName: string, symbol?: string, autoExecute?: boolean): Promise<{ success: boolean; data: any }> {
-    const params = new URLSearchParams({ strategy_name: strategyName, symbol: symbol || 'AU0' })
-    if (autoExecute) params.set('auto_execute', 'true')
-    return this.request<{ success: boolean; data: any }>(`/gold/trading/signal/generate?${params.toString()}`, {
-      method: 'POST',
-    }, 60000);
-  }
-
-  async executeTradingSignal(signalId: string): Promise<{ success: boolean; data: any }> {
-    return this.request<{ success: boolean; data: any }>(`/gold/trading/signal/execute?signal_id=${signalId}`, {
-      method: 'POST',
-    }, 30000);
-  }
-
-  async runSensitivity(params: {
-    strategy_name: string; symbol?: string; period?: string;
-    start_date?: string; end_date?: string; capital?: number; param_ranges?: Record<string, number[]>;
-  }): Promise<{ success: boolean; data: any }> {
-    return this.request<{ success: boolean; data: any }>('/gold/trading/backtest/sensitivity', {
-      method: 'POST',
-      body: JSON.stringify(params),
     }, 300000);
   }
 
-  async runValidation(params: {
-    strategy_name: string; symbol?: string; period?: string;
-    start_date?: string; end_date?: string; capital?: number;
-    in_sample_ratio?: number; scenario_name?: string;
-  }): Promise<{ success: boolean; data: any }> {
-    return this.request<{ success: boolean; data: any }>('/gold/trading/backtest/validation', {
+  async predictGoldTB(modelType: string = 'lightgbm'): Promise<{ success: boolean; data: any; error_message?: string }> {
+    return this.request<{ success: boolean; data: any; error_message?: string }>(`/gold/predict-tb?symbol=GC&model_type=${modelType}`, {
       method: 'POST',
-      body: JSON.stringify(params),
+    });
+  }
+
+  async runGoldTrendBacktest(years: number, fastMa: number = 50, slowMa: number = 200, slMultiplier: number = 2.0): Promise<{ success: boolean; data: any; error_message?: string }> {
+    return this.request<{ success: boolean; data: any; error_message?: string }>(`/gold/backtest-trend?years=${years}&fast_ma=${fastMa}&slow_ma=${slowMa}&sl_multiplier=${slMultiplier}`, {
+      method: 'POST',
     }, 300000);
   }
 
-  async getRiskStatus(): Promise<{ success: boolean; data: any }> {
-    return this.request<{ success: boolean; data: any }>('/gold/trading/risk/status');
-  }
-
-  async getGoldBars(symbol?: string, period?: string, limit?: number, startDate?: string, endDate?: string): Promise<{ success: boolean; data: any }> {
-    const params = new URLSearchParams({
-      symbol: symbol || 'AU0',
-      period: period || 'd',
-      limit: String(limit || 200),
-    });
-    if (startDate) params.set('start_date', startDate);
-    if (endDate) params.set('end_date', endDate);
-    return this.request<{ success: boolean; data: any }>(`/gold/trading/bars?${params.toString()}`, {}, 30000);
-  }
-
-  async getGoldAnalysis(symbol?: string, period?: string, limit?: number): Promise<{ success: boolean; data: any }> {
-    const params = new URLSearchParams({
-      symbol: symbol || 'AU0',
-      period: period || 'd',
-      limit: String(limit || 500),
-    });
-    return this.request<{ success: boolean; data: any }>(`/gold/trading/analysis?${params.toString()}`, {}, 15000);
-  }
-
-  async getGoldStrategyComparison(symbol?: string): Promise<{ success: boolean; data: any }> {
-    const params = symbol ? `?symbol=${symbol}` : '';
-    return this.request<{ success: boolean; data: any }>(`/gold/trading/strategy-comparison${params}`, {}, 15000);
-  }
-
-  async getGoldMarketData(): Promise<{ success: boolean; data: any }> {
-    return this.request<{ success: boolean; data: any }>('/gold/trading/market-data', {}, 15000);
-  }
-
-  // ===== 模拟交易 API（支持 SimNow / openctp / QMT 切换） =====
-  async getCtpData(): Promise<{ success: boolean; data: any }> {
-    return this.request<{ success: boolean; data: any }>('/gold/trading/ctp/data', {}, 20000);
-  }
-
-  async getTradingModes(): Promise<{ success: boolean; data: { modes: any[]; current: string } }> {
-    return this.request<{ success: boolean; data: { modes: any[]; current: string } }>('/gold/trading/modes', {}, 5000);
-  }
-
-  async setTradingMode(mode: string): Promise<{ success: boolean; data: any }> {
-    return this.request<{ success: boolean; data: any }>(`/gold/trading/mode?mode=${mode}`, {
-      method: 'POST',
-    }, 10000);
+  async getGoldTrendSignal(): Promise<{ success: boolean; data: any }> {
+    return this.request<{ success: boolean; data: any }>('/gold/trend-signal?symbol=GC');
   }
 }
 

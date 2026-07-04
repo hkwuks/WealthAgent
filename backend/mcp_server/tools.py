@@ -174,259 +174,94 @@ class FundValuationTools:
             logger.error(f"获取指数列表失败：{e}")
             return {"success": False, "message": f"获取指数列表失败：{str(e)}", "data": None}
 
-    # ===== 黄金量化交易 MCP Tools =====
-
-    async def get_gold_strategies(self) -> dict:
-        """获取黄金量化策略列表及描述"""
-        logger.info(f"[MCP Tool] get_gold_strategies")
+    async def get_gold_prediction(self, symbol: str = "GC", horizon_days: int = 1, model_type: str = "lightgbm") -> dict:
+        """获取黄金价格预测"""
+        logger.info(f"[MCP Tool] get_gold_prediction: symbol={symbol}, horizon={horizon_days}, model={model_type}")
         try:
-            result = await self._request("GET", "/gold/trading/strategies")
+            result = await self._request("POST", f"/gold/predict?symbol={symbol}&horizon_days={horizon_days}&model_type={model_type}")
             return result
         except Exception as e:
-            logger.error(f"获取策略列表失败：{e}")
-            return {"success": False, "message": f"获取策略列表失败：{str(e)}", "data": None}
+            logger.error(f"获取黄金预测失败：{e}")
+            return {"success": False, "message": f"获取黄金预测失败：{str(e)}", "data": None}
 
-    async def get_gold_signals(self, strategy_name: str = None, limit: int = 20) -> dict:
-        """获取最近黄金交易建议信号"""
-        logger.info(f"[MCP Tool] get_gold_signals: strategy={strategy_name}, limit={limit}")
+    async def get_gold_tb_prediction(self, symbol: str = "GC", model_type: str = "lightgbm") -> dict:
+        """获取 Triple-Barrier 方向预测"""
+        logger.info(f"[MCP Tool] get_gold_tb_prediction: symbol={symbol}, model={model_type}")
         try:
-            params = [f"limit={limit}"]
-            if strategy_name:
-                params.append(f"strategy_name={strategy_name}")
-            result = await self._request("GET", f"/gold/trading/signals?{'&'.join(params)}")
+            result = await self._request("POST", f"/gold/predict-tb?symbol={symbol}&model_type={model_type}")
             return result
         except Exception as e:
-            logger.error(f"获取交易信号失败：{e}")
-            return {"success": False, "message": f"获取交易信号失败：{str(e)}", "data": None}
+            logger.error(f"获取TB预测失败：{e}")
+            return {"success": False, "message": f"获取TB预测失败：{str(e)}", "data": None}
 
-    async def run_gold_strategy_backtest(self, strategy_name: str = "trend_following",
-                                          start_date: str = "2024-01-01",
-                                          end_date: str = "2024-12-31",
-                                          capital: float = 1000000) -> dict:
-        """运行黄金量化策略回测"""
-        logger.info(f"[MCP Tool] run_gold_strategy_backtest: strategy={strategy_name}")
+    async def get_gold_price(self) -> dict:
+        """获取当前黄金价格和宏观指标"""
+        logger.info(f"[MCP Tool] get_gold_price")
         try:
-            payload = {
-                "strategy_name": strategy_name,
-                "symbol": "AU0",
-                "period": "d",
-                "start_date": start_date,
-                "end_date": end_date,
-                "capital": capital,
-            }
-            result = await self._request("POST", "/gold/trading/backtest", json=payload)
+            result = await self._request("GET", "/gold/current")
             return result
         except Exception as e:
-            logger.error(f"策略回测失败：{e}")
-            return {"success": False, "message": f"策略回测失败：{str(e)}", "data": None}
+            logger.error(f"获取黄金价格失败：{e}")
+            return {"success": False, "message": f"获取黄金价格失败：{str(e)}", "data": None}
 
-    async def compare_gold_strategies(self, strategy_names: list[str] = None,
-                                      start_date: str = "2024-01-01",
-                                      end_date: str = "2024-12-31") -> dict:
-        """多策略对比回测"""
-        logger.info(f"[MCP Tool] compare_gold_strategies: {strategy_names}")
+    async def run_gold_backtest(self, years: int = 1, model_types: str = "lightgbm,xgboost,ridge", method: str = "walk_forward") -> dict:
+        """运行黄金预测模型回测"""
+        logger.info(f"[MCP Tool] run_gold_backtest: years={years}, models={model_types}, method={method}")
         try:
             payload = {
-                "strategy_names": strategy_names or ["trend_following", "mean_reversion", "ml_predictor"],
-                "symbol": "AU0",
-                "period": "d",
-                "start_date": start_date,
-                "end_date": end_date,
-                "capital": 1000000,
+                "years": years,
+                "model_types": model_types,
             }
-            result = await self._request("POST", "/gold/trading/compare", json=payload)
+            endpoint = f"/gold/backtest?years={years}&model_types={model_types}&method={method}"
+            result = await self._request("POST", endpoint, json=payload)
             return result
         except Exception as e:
-            logger.error(f"多策略对比失败：{e}")
-            return {"success": False, "message": f"多策略对比失败：{str(e)}", "data": None}
+            logger.error(f"运行黄金回测失败：{e}")
+            return {"success": False, "message": f"运行黄金回测失败：{str(e)}", "data": None}
 
-    async def get_gold_risk_status(self) -> dict:
-        """获取黄金交易风控状态"""
-        logger.info(f"[MCP Tool] get_gold_risk_status")
+    async def get_gold_drift_status(self, model_type: str = None, horizon_days: int = None) -> dict:
+        """获取模型漂移检测状态"""
+        logger.info(f"[MCP Tool] get_gold_drift_status: model={model_type}, horizon={horizon_days}")
         try:
-            result = await self._request("GET", "/gold/trading/risk/status")
+            params = []
+            if model_type:
+                params.append(f"model_type={model_type}")
+            if horizon_days:
+                params.append(f"horizon_days={horizon_days}")
+            query = f"/gold/drift-status?{'&'.join(params)}" if params else "/gold/drift-status"
+            result = await self._request("GET", query)
             return result
         except Exception as e:
-            logger.error(f"获取风控状态失败：{e}")
-            return {"success": False, "message": f"获取风控状态失败：{str(e)}", "data": None}
+            logger.error(f"获取漂移状态失败：{e}")
+            return {"success": False, "message": f"获取漂移状态失败：{str(e)}", "data": None}
 
-    # ===== 剩余黄金量化 MCP Tools（补齐） =====
-
-    async def get_gold_status(self) -> dict:
-        """获取黄金量化交易系统状态"""
-        logger.info(f"[MCP Tool] get_gold_status")
+    async def get_gold_factor_importance(self, model_type: str = "lightgbm", horizon_days: int = 1) -> dict:
+        """获取黄金预测因子重要性"""
+        logger.info(f"[MCP Tool] get_gold_factor_importance: model={model_type}, horizon={horizon_days}")
         try:
-            result = await self._request("GET", "/gold/trading/status")
+            result = await self._request("GET", f"/gold/factor-importance?model_type={model_type}&horizon_days={horizon_days}")
             return result
         except Exception as e:
-            logger.error(f"获取系统状态失败：{e}")
-            return {"success": False, "message": f"获取系统状态失败：{str(e)}", "data": None}
+            logger.error(f"获取因子重要性失败：{e}")
+            return {"success": False, "message": f"获取因子重要性失败：{str(e)}", "data": None}
 
-    async def get_gold_strategy_detail(self, strategy_name: str) -> dict:
-        """获取策略详情和参数"""
-        logger.info(f"[MCP Tool] get_gold_strategy_detail: {strategy_name}")
+    async def get_gold_trend_signal(self, symbol: str = "GC") -> dict:
+        """获取黄金趋势跟踪信号"""
+        logger.info(f"[MCP Tool] get_gold_trend_signal: symbol={symbol}")
         try:
-            result = await self._request("GET", f"/gold/trading/strategies/{strategy_name}")
+            result = await self._request("GET", f"/gold/trend-signal?symbol={symbol}")
             return result
         except Exception as e:
-            logger.error(f"获取策略详情失败：{e}")
-            return {"success": False, "message": f"获取策略详情失败：{str(e)}", "data": None}
+            logger.error(f"获取趋势信号失败：{e}")
+            return {"success": False, "message": f"获取趋势信号失败：{str(e)}", "data": None}
 
-    async def run_gold_sensitivity(self, strategy_name: str, symbol: str = "AU0",
-                                   period: str = "d", start_date: str = None,
-                                   end_date: str = None, capital: float = 1_000_000,
-                                   param_ranges: dict = None) -> dict:
-        """运行参数敏感性分析"""
-        logger.info(f"[MCP Tool] run_gold_sensitivity: {strategy_name}")
+    async def run_gold_trend_backtest(self, years: int = 2, fast_ma: int = 50, slow_ma: int = 200, sl_multiplier: float = 2.0) -> dict:
+        """运行趋势跟踪策略回测"""
+        logger.info(f"[MCP Tool] run_gold_trend_backtest: years={years}, fast={fast_ma}, slow={slow_ma}")
         try:
-            payload = {
-                "strategy_name": strategy_name, "symbol": symbol, "period": period,
-                "start_date": start_date, "end_date": end_date, "capital": capital,
-                "param_ranges": param_ranges or {},
-            }
-            result = await self._request("POST", "/gold/trading/backtest/sensitivity", json=payload)
+            endpoint = f"/gold/backtest-trend?years={years}&fast_ma={fast_ma}&slow_ma={slow_ma}&sl_multiplier={sl_multiplier}"
+            result = await self._request("POST", endpoint)
             return result
         except Exception as e:
-            logger.error(f"敏感性分析失败：{e}")
-            return {"success": False, "message": f"敏感性分析失败：{str(e)}", "data": None}
-
-    async def run_gold_validation(self, strategy_name: str, symbol: str = "AU0",
-                                  period: str = "d", start_date: str = None,
-                                  end_date: str = None, capital: float = 1_000_000,
-                                  in_sample_ratio: float = 0.7, scenario_name: str = None) -> dict:
-        """运行策略验证（In/Out 样本 + 场景验证）"""
-        logger.info(f"[MCP Tool] run_gold_validation: {strategy_name}")
-        try:
-            payload = {
-                "strategy_name": strategy_name, "symbol": symbol, "period": period,
-                "start_date": start_date, "end_date": end_date, "capital": capital,
-                "in_sample_ratio": in_sample_ratio, "scenario_name": scenario_name,
-            }
-            result = await self._request("POST", "/gold/trading/backtest/validation", json=payload)
-            return result
-        except Exception as e:
-            logger.error(f"策略验证失败：{e}")
-            return {"success": False, "message": f"策略验证失败：{str(e)}", "data": None}
-
-    async def run_gold_walk_forward(self, strategy_name: str, symbol: str = "AU0",
-                                    period: str = "d", start_date: str = None,
-                                    end_date: str = None, capital: float = 1_000_000,
-                                    train_window: int = 252, test_window: int = 20) -> dict:
-        """运行 Walk-Forward 滚动窗口回测"""
-        logger.info(f"[MCP Tool] run_gold_walk_forward: {strategy_name}")
-        try:
-            payload = {
-                "strategy_name": strategy_name, "symbol": symbol, "period": period,
-                "start_date": start_date, "end_date": end_date, "capital": capital,
-                "train_window": train_window, "test_window": test_window,
-            }
-            result = await self._request("POST", "/gold/trading/backtest/walk-forward", json=payload)
-            return result
-        except Exception as e:
-            logger.error(f"Walk-Forward 回测失败：{e}")
-            return {"success": False, "message": f"Walk-Forward 回测失败：{str(e)}", "data": None}
-
-    async def run_gold_cpcv(self, strategy_name: str, symbol: str = "AU0",
-                            period: str = "d", start_date: str = None,
-                            end_date: str = None, capital: float = 1_000_000,
-                            n_groups: int = 6, k_test: int = 2) -> dict:
-        """运行 CPCV 组合交叉验证回测"""
-        logger.info(f"[MCP Tool] run_gold_cpcv: {strategy_name}")
-        try:
-            payload = {
-                "strategy_name": strategy_name, "symbol": symbol, "period": period,
-                "start_date": start_date, "end_date": end_date, "capital": capital,
-                "n_groups": n_groups, "k_test": k_test,
-            }
-            result = await self._request("POST", "/gold/trading/backtest/cpcv", json=payload)
-            return result
-        except Exception as e:
-            logger.error(f"CPCV 回测失败：{e}")
-            return {"success": False, "message": f"CPCV 回测失败：{str(e)}", "data": None}
-
-    async def run_gold_monte_carlo(self, strategy_name: str, symbol: str = "AU0",
-                                   period: str = "d", start_date: str = None,
-                                   end_date: str = None, capital: float = 1_000_000,
-                                   n_simulations: int = 1000) -> dict:
-        """运行 Monte Carlo 模拟分析策略风险"""
-        logger.info(f"[MCP Tool] run_gold_monte_carlo: {strategy_name}")
-        try:
-            payload = {
-                "strategy_name": strategy_name, "symbol": symbol, "period": period,
-                "start_date": start_date, "end_date": end_date, "capital": capital,
-                "n_simulations": n_simulations,
-            }
-            result = await self._request("POST", "/gold/trading/backtest/monte-carlo", json=payload)
-            return result
-        except Exception as e:
-            logger.error(f"Monte Carlo 模拟失败：{e}")
-            return {"success": False, "message": f"Monte Carlo 模拟失败：{str(e)}", "data": None}
-
-    async def run_gold_triple_barrier_label(self, symbol: str = "AU0", period: str = "d",
-                                            start_date: str = None, end_date: str = None,
-                                            tp_multiplier: float = 1.5, sl_multiplier: float = 1.0,
-                                            max_holding_days: int = 5) -> dict:
-        """运行 Triple-Barrier 三屏障标注"""
-        logger.info(f"[MCP Tool] run_gold_triple_barrier_label")
-        try:
-            payload = {
-                "symbol": symbol, "period": period,
-                "start_date": start_date, "end_date": end_date,
-                "tp_multiplier": tp_multiplier, "sl_multiplier": sl_multiplier,
-                "max_holding_days": max_holding_days,
-            }
-            result = await self._request("POST", "/gold/trading/label/triple-barrier", json=payload)
-            return result
-        except Exception as e:
-            logger.error(f"Triple-Barrier 标注失败：{e}")
-            return {"success": False, "message": f"Triple-Barrier 标注失败：{str(e)}", "data": None}
-
-    async def get_gold_feature_importance(self, strategy_name: str = "ml_predictor") -> dict:
-        """获取 ML 策略特征重要性"""
-        logger.info(f"[MCP Tool] get_gold_feature_importance: {strategy_name}")
-        try:
-            result = await self._request("GET", f"/gold/trading/feature-importance?strategy_name={strategy_name}")
-            return result
-        except Exception as e:
-            logger.error(f"获取特征重要性失败：{e}")
-            return {"success": False, "message": f"获取特征重要性失败：{str(e)}", "data": None}
-
-    async def generate_gold_signal(self, strategy_name: str, symbol: str = "AU0") -> dict:
-        """手动触发黄金交易信号生成"""
-        logger.info(f"[MCP Tool] generate_gold_signal: {strategy_name}")
-        try:
-            result = await self._request("POST", f"/gold/trading/signal/generate?strategy_name={strategy_name}&symbol={symbol}")
-            return result
-        except Exception as e:
-            logger.error(f"生成交易信号失败：{e}")
-            return {"success": False, "message": f"生成交易信号失败：{str(e)}", "data": None}
-
-    async def get_gold_market_data(self) -> dict:
-        """获取黄金实时市场数据仪表盘"""
-        logger.info(f"[MCP Tool] get_gold_market_data")
-        try:
-            result = await self._request("GET", "/gold/trading/market-data")
-            return result
-        except Exception as e:
-            logger.error(f"获取市场数据失败：{e}")
-            return {"success": False, "message": f"获取市场数据失败：{str(e)}", "data": None}
-
-    async def get_gold_analysis(self, symbol: str = "AU0", period: str = "d", limit: int = 500) -> dict:
-        """获取 K 线技术分析解读"""
-        logger.info(f"[MCP Tool] get_gold_analysis")
-        try:
-            result = await self._request("GET", f"/gold/trading/analysis?symbol={symbol}&period={period}&limit={limit}")
-            return result
-        except Exception as e:
-            logger.error(f"获取技术分析失败：{e}")
-            return {"success": False, "message": f"获取技术分析失败：{str(e)}", "data": None}
-
-    async def get_gold_config(self) -> dict:
-        """获取黄金交易配置参数"""
-        logger.info(f"[MCP Tool] get_gold_config")
-        try:
-            result = await self._request("GET", "/gold/trading/config")
-            return result
-        except Exception as e:
-            logger.error(f"获取配置失败：{e}")
-            return {"success": False, "message": f"获取配置失败：{str(e)}", "data": None}
+            logger.error(f"趋势回测失败：{e}")
+            return {"success": False, "message": f"趋势回测失败：{str(e)}", "data": None}

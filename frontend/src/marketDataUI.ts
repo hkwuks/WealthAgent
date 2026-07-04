@@ -582,6 +582,7 @@ class MarketDataUI {
     const change = typeof data.change === 'number' ? (data.change >= 0 ? '+' : '') + data.change.toFixed(2) : '';
 
     return `
+      <div class="index-card">
         <h4>${data.name || '未知'}</h4>
         <p class="code">${data.code || ''}</p>
         <div class="price-info">
@@ -592,6 +593,7 @@ class MarketDataUI {
           </div>
         </div>
         <p class="timestamp">🕐 ${new Date().toLocaleString()}</p>
+      </div>
     `;
   }
 

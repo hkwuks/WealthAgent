@@ -33,13 +33,13 @@ class DataCacheService:
         初始化缓存服务
 
         Args:
-            data_dir: 数据文件存储目录，默认为项目根目录下的 data/backend/
+            data_dir: 数据文件存储目录，默认为 backend/data/
             default_ttl: 默认缓存时间（秒）
         """
-        # 默认使用项目根目录 data/backend/
+        # 默认使用 backend/data/ 目录
         if data_dir is None:
-            project_root = Path(__file__).parent.parent
-            data_dir = project_root / "data" / "backend"
+            backend_dir = Path(__file__).parent
+            data_dir = backend_dir / "data"
 
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)

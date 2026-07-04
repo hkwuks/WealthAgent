@@ -1,36 +1,12 @@
 import sys
 import os
-import locale as _locale
-
-# 尽早设置 GB18030 locale — openctp_ctp C++ DSO 导入时需要
-# 必须在 import openctp_ctp 之前完成
-for _p in ['/tmp/locale', '/usr/lib/locale', '/usr/share/locale']:
-    if os.path.isdir(os.path.join(_p, 'zh_CN.GB18030')):
-        os.environ['LOCPATH'] = _p
-        break
-os.environ['LANG'] = 'zh_CN.GB18030'
-os.environ['LC_ALL'] = 'zh_CN.GB18030'
-try:
-    _locale.setlocale(_locale.LC_ALL, 'zh_CN.GB18030')
-except _locale.Error:
-    pass
-
-# 尽早加载 .env 到 os.environ，确保所有 Settings 子类都能读到
-try:
-    from dotenv import load_dotenv
-    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
-    load_dotenv(env_path, override=True)
-except Exception:
-    pass
-
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from backend.config import settings
-from backend.api import funds, market, valuation, gold_trading
-from backend.gold.core.errors import GoldTradingError
+from backend.api import funds, market, valuation, gold
 from loguru import logger
 
 
@@ -162,12 +138,13 @@ app = FastAPI(
     description="""
 ## 智能理财Agent API
 
-提供基金信息查询、实时估值、市场数据等功能。
+提供基金信息查询、实时估值、黄金预测、市场数据等功能。
 
 ### 主要功能
 
 * **基金信息**: 获取基金基本信息、持仓、净值历史
 * **基金估值**: 实时估算基金净值涨跌
+* **黄金预测**: 机器学习预测黄金价格走势
 * **市场数据**: 获取股票、ETF、指数实时行情
 
 ### MCP (Model Context Protocol) 支持
@@ -206,7 +183,7 @@ app.add_middleware(
 app.include_router(funds.router, prefix=settings.API_PREFIX)
 app.include_router(market.router, prefix=settings.API_PREFIX)
 app.include_router(valuation.router, prefix=settings.API_PREFIX)
-app.include_router(gold_trading.router, prefix=settings.API_PREFIX)
+app.include_router(gold.router, prefix=settings.API_PREFIX)
 
 
 @app.get("/", tags=["系统"])
@@ -254,25 +231,21 @@ async def mcp_info():
                 "get_index_price",
                 "get_global_index_price",
                 "get_supported_indices",
-                # 黄金量化
-                "get_gold_strategies",
-                "get_gold_strategy_detail",
-                "get_gold_signals",
-                "generate_gold_signal",
-                "run_gold_strategy_backtest",
-                "compare_gold_strategies",
-                "run_gold_sensitivity",
-                "run_gold_validation",
-                "run_gold_walk_forward",
-                "run_gold_cpcv",
-                "run_gold_monte_carlo",
-                "get_gold_risk_status",
-                "get_gold_market_data",
-                "get_gold_analysis",
-                "get_gold_feature_importance",
-                "run_gold_triple_barrier_label",
-                "get_gold_status",
-                "get_gold_config",
+                # 黄金预测
+                "predict_gold_price",
+                "predict_gold_tb",
+                "retrain_gold_model",
+                "get_gold_history",
+                "sync_gold_data",
+                "get_gold_current",
+                "get_gold_factors",
+                "get_gold_drift_status",
+                "record_gold_actual",
+                "get_gold_factor_importance",
+                "get_gold_coverage",
+                "run_gold_backtest",
+                "run_gold_backtest_trend",
+                "get_gold_trend_signal",
             ],
             "resources": [
                 # 基金/市场
@@ -282,6 +255,10 @@ async def mcp_info():
                 "market://etf/{etf_code}",
                 "market://index/{index_code}",
                 "market://global-index/{index_code}",
+                # 黄金
+                "gold://current",
+                "gold://signal",
+                "gold://factors",
             ],
             "prompts": [
                 "analyze_fund",
@@ -290,15 +267,6 @@ async def mcp_info():
             ],
         }
     }
-
-
-@app.exception_handler(GoldTradingError)
-async def gold_trading_error_handler(request: Request, exc: GoldTradingError):
-    logger.warning(f"GoldTradingError: {exc}")
-    return JSONResponse(
-        status_code=400,
-        content={"success": False, **exc.to_dict()},
-    )
 
 
 @app.exception_handler(Exception)
