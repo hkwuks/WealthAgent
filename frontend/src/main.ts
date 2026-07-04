@@ -2,7 +2,7 @@ import './style.css'
 import { toast } from './toast'
 import { fundManagerUI } from './fundManagerUI'
 import { marketDataUI } from './marketDataUI'
-import { goldPredictionUI } from './goldPredictionUI'
+import { goldTradingUI } from './goldTradingUI'
 import { FundQuantUI } from './fundQuantUI'
 
 toast.init();
@@ -18,7 +18,6 @@ class ThemeManager {
     } else if (savedTheme === 'light') {
       document.body.classList.remove('dark-mode');
     } else {
-      // No saved preference: sync with OS preference
       if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
         document.body.classList.add('dark-mode');
       }
@@ -36,13 +35,10 @@ class ThemeManager {
   }
 }
 
-// 初始化主题
 ThemeManager.init();
 
-// 渲染主界面
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div class="app">
-    <!-- 头部导航 -->
     <header class="app-header">
       <div class="app-title">
         <div class="app-title-icon">📈</div>
@@ -52,43 +48,34 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         </div>
       </div>
       <div class="app-nav">
-        <button class="btn btn-ghost btn-icon" id="theme-toggle" title="切换主题">
-          🌓
-        </button>
+        <button class="btn btn-ghost btn-icon" id="theme-toggle" title="切换主题">🌓</button>
       </div>
     </header>
 
-    <!-- 标签页导航 -->
     <nav class="tabs" role="tablist">
       <button class="tab-button active" data-tab="fund-manager" role="tab" aria-selected="true">
-        <span class="tab-button-icon">💼</span>
-        基金管理
+        <span class="tab-button-icon">💼</span> 基金管理
+      </button>
+      <button class="tab-button" data-tab="gold-trading" role="tab" aria-selected="false">
+        <span class="tab-button-icon">📊</span> 黄金量化
       </button>
       <button class="tab-button" data-tab="market-data" role="tab" aria-selected="false">
-        <span class="tab-button-icon">🌍</span>
-        市场数据
-      </button>
-      <button class="tab-button" data-tab="gold-prediction" role="tab" aria-selected="false">
-        <span class="tab-button-icon">🥇</span>
-        黄金预测
+        <span class="tab-button-icon">🌍</span> 市场数据
       </button>
       <button class="tab-button" data-tab="fund-quant" role="tab" aria-selected="false">
-        <span class="tab-button-icon">📊</span>
-        基金量化
+        <span class="tab-button-icon">📈</span> 基金量化
       </button>
     </nav>
 
-    <!-- 标签内容区域 -->
     <main>
       <div class="tab-content active" id="fund-manager-container" role="tabpanel"></div>
+      <div class="tab-content" id="gold-trading-container" role="tabpanel"></div>
       <div class="tab-content" id="market-data-container" role="tabpanel"></div>
-      <div class="tab-content" id="gold-prediction-container" role="tabpanel"></div>
       <div class="tab-content" id="fund-quant-container" role="tabpanel"></div>
     </main>
   </div>
 `
 
-// 主题切换按钮事件
 const themeToggleBtn = document.getElementById('theme-toggle');
 if (themeToggleBtn) {
   themeToggleBtn.addEventListener('click', () => {
@@ -98,21 +85,16 @@ if (themeToggleBtn) {
   });
 }
 
-// 初始化界面
 async function initApp() {
-  // 初始化基金管理界面
   const fundManagerContainer = document.querySelector<HTMLDivElement>('#fund-manager-container')!
   fundManagerUI.init(fundManagerContainer).catch(console.error)
 
-  // 初始化市场数据界面
+  const goldTradingContainer = document.querySelector<HTMLDivElement>('#gold-trading-container')!
+  goldTradingUI.init(goldTradingContainer)
+
   const marketDataContainer = document.querySelector<HTMLDivElement>('#market-data-container')!
   marketDataUI.init(marketDataContainer)
 
-  // 初始化黄金预测界面
-  const goldPredictionContainer = document.querySelector<HTMLDivElement>('#gold-prediction-container')!
-  goldPredictionUI.init(goldPredictionContainer)
-
-  // 初始化基金量化界面
   const fundQuantContainer = document.querySelector<HTMLDivElement>('#fund-quant-container')!
   const fundQuantUI = new FundQuantUI()
   fundQuantUI.init(fundQuantContainer)
@@ -120,49 +102,61 @@ async function initApp() {
 
 initApp().catch(console.error)
 
-// 标签切换功能
 function setupTabSwitching() {
   const tabButtons = document.querySelectorAll<HTMLButtonElement>('.tab-button')
   const tabContents = document.querySelectorAll<HTMLDivElement>('.tab-content')
 
-  // 初始化显示状态
   tabContents.forEach(content => {
     if (!content.classList.contains('active')) {
       content.style.display = 'none'
     }
   })
 
+  function switchTab(tabId: string) {
+    tabButtons.forEach(btn => {
+      btn.classList.remove('active')
+      btn.setAttribute('aria-selected', 'false')
+    })
+    const targetBtn = document.querySelector<HTMLButtonElement>(`.tab-button[data-tab="${tabId}"]`)
+    if (targetBtn) {
+      targetBtn.classList.add('active')
+      targetBtn.setAttribute('aria-selected', 'true')
+    }
+
+    const targetContent = document.getElementById(`${tabId}-container`)
+    if (!targetContent) return
+
+    tabContents.forEach(content => {
+      content.classList.remove('active')
+      content.style.display = 'none'
+    })
+
+    targetContent.classList.add('active')
+    targetContent.style.display = 'block'
+
+    if (tabId === 'gold-trading') {
+      goldTradingUI.onActivated()
+    }
+
+    targetContent.style.animation = 'none'
+    targetContent.offsetHeight
+    targetContent.style.animation = 'fadeIn 0.3s ease-out'
+
+    localStorage.setItem('active_tab', tabId)
+  }
+
   tabButtons.forEach(button => {
     button.addEventListener('click', () => {
       const tabId = button.dataset.tab
       if (!tabId) return
-
-      // 更新标签按钮状态
-      tabButtons.forEach(btn => {
-        btn.classList.remove('active')
-        btn.setAttribute('aria-selected', 'false')
-      })
-      button.classList.add('active')
-      button.setAttribute('aria-selected', 'true')
-
-      // 更新标签内容状态
-      const targetContent = document.getElementById(`${tabId}-container`)
-      if (!targetContent) return
-
-      tabContents.forEach(content => {
-        content.classList.remove('active')
-        content.style.display = 'none'
-      })
-
-      targetContent.classList.add('active')
-      targetContent.style.display = 'block'
-
-      // 添加动画效果
-      targetContent.style.animation = 'none'
-      targetContent.offsetHeight // 触发重绘
-      targetContent.style.animation = 'fadeIn 0.3s ease-out'
+      switchTab(tabId)
     })
   })
+
+  const savedTab = localStorage.getItem('active_tab')
+  if (savedTab && document.querySelector(`.tab-button[data-tab="${savedTab}"]`)) {
+    switchTab(savedTab)
+  }
 }
 
 setupTabSwitching()

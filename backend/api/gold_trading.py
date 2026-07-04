@@ -498,22 +498,37 @@ async def generate_signal(
         raise HTTPException(status_code=400, detail="Insufficient data for signal generation")
 
     from backend.gold.core.models import SignalDirection
-    from backend.gold.backtest.engine import Backtester
+    from backend.gold.strategy.base import SignalStrategyContext
 
     # ML策略走直接预测路径（不用全量回测，避免宏观特征NaN问题）
     if strategy_name == "ml_predictor":
         return await _generate_ml_signal(strategy_name, bars, gateway, cls)
 
     strategy = cls()
-    backtester = Backtester()
-    capital = GoldSettings().backtest_capital
+    context = SignalStrategyContext()
+    strategy.set_context(context)
+    strategy.on_init(context)
 
-    # 用回测引擎完整跑一遍（策略状态机需要全量历史构建）
-    result = backtester.run(strategy, bars, capital=capital)
-    signals = result.get("signals", [])
+    # 预热：用 bars[:-1] 构建策略状态（布林、RSI、ATR 需要历史窗口）
+    for bar in bars[:-1]:
+        strategy.on_bar(bar)
+
+    # 重置持仓状态 — 信号生成只看当前是否满足入场条件，不看回测累积的持仓
+    strategy.reset_for_signal()
+
+    # 记录当前信号数，用于切分最后一根 bar 产生的新信号
+    before = len(context._signals)
     current_price = bars[-1].close
 
-    if not signals:
+    # 运行最后一根 bar → 真正的"当前"信号
+    strategy.on_bar(bars[-1])
+
+    # 只取最后一根 bar 产生的入场信号（LONG/SHORT），平仓信号过滤掉
+    new_signals = context._signals[before:]
+    open_signals = [s for s in new_signals
+                    if s.direction in (SignalDirection.LONG, SignalDirection.SHORT)]
+
+    if not open_signals:
         return {
             "success": True,
             "data": {
@@ -524,27 +539,8 @@ async def generate_signal(
             },
         }
 
-    signal_data = signals[-1]
-    # 复原为 GoldSignal 对象
-    from backend.gold.core.models import GoldSignal
-    if isinstance(signal_data, dict):
-        signal_data = GoldSignal(**signal_data)
-
-    # 止损偏移量（基于原始信号，不是覆盖后的价格）
-    orig_price = signal_data.price
-    orig_stop_loss = signal_data.stop_loss
-
-    # 用当前最新价格覆盖
-    signal_data.price = round(current_price, 2)
-    # 止损按比例偏移
-    if orig_stop_loss:
-        offset = abs(orig_stop_loss - orig_price)
-        if signal_data.direction == SignalDirection.LONG:
-            signal_data.stop_loss = round(current_price - offset, 2)
-        else:
-            signal_data.stop_loss = round(current_price + offset, 2)
-
-    # 用当前时间覆盖
+    signal_data = open_signals[-1]
+    # 信号价格来自策略自身的 bar.close，无需覆盖；created_at 刷新为当前时间
     now = datetime.now()
     signal_data.created_at = now
     signal_data.signal_id = f"{strategy_name}_{now.strftime('%Y%m%d%H%M%S')}_gen"
@@ -559,15 +555,15 @@ async def generate_signal(
     # 风控检查（含 CTP 方向/资金检查）
     risk_result = await _check_risk_with_ctp(signal_data)
 
-    # 记录信号到风控状态
+    # 记录信号到风控状态（仅风控通过时才计数）
     risk_checker = RiskChecker()
-    risk_checker.record_signal(signal_data)
+    if risk_result.passed:
+        risk_checker.record_signal(signal_data)
 
     # 自动执行
     execution = None
     if auto_execute and risk_result.passed:
         execution = await _execute_signal_to_ctp(store, signal_data)
-        risk_checker.set_equity(signal_data.price)  # 更新权益估算
 
     # 输出交易建议
     signal_output = SignalOutput()
@@ -677,10 +673,12 @@ _last_ctp_account_time: float = 0
 async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> dict:
     """ML策略信号生成 — 直接预测路径，绕过全量回测"""
     from backend.gold.core.models import GoldSignal, SignalDirection
-    from backend.gold.ml import GoldPricePredictor, FeatureEngineer, ModelType, PredictionHorizon
+    from backend.gold.ml import FeatureEngineer, ModelType
+    from backend.gold.ml.predictor import GoldPricePredictor
     from loguru import logger
 
     current_price = bars[-1].close
+    model_dir = "data/backend/models"
 
     # 获取宏观数据
     macro_df = await gateway.get_macro_data(start="2024-01-01")
@@ -707,36 +705,84 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
                 df[col] = df[col].ffill().bfill().fillna(0)
         logger.info(f"Merged macro data for ML prediction: {list(macro.columns)}")
 
-    # 特征工程
+    # 单次特征工程 — prepare_features 包含全部 create_* 调用
     fe = FeatureEngineer()
-    X = fe.prepare_features_for_prediction(df)
-    if len(X) < 10:
-        logger.warning(f"Insufficient feature samples: {len(X)}")
-        return {"success": True, "data": {"signal": None, "message": "特征数据不足", "strategy": strategy_name, "price": round(current_price, 2)}}
-
-    # 用全部数据训练一个小模型（Ridge，小样本稳定）
     full_X, y = fe.prepare_features(df)
     if len(full_X) < 20:
         logger.warning(f"Insufficient training samples: {len(full_X)}")
-        return {"success": True, "data": {"signal": None, "message": "训练数据不足", "strategy": strategy_name, "price": round(current_price, 2)}}
+        return {"success": True, "data": {"signal": None, "message": "训练数据不足",
+                "strategy": strategy_name, "price": round(current_price, 2)}}
 
-    from sklearn.linear_model import Ridge
-    from sklearn.preprocessing import StandardScaler
-    import numpy as np
+    # 从同一份特征矩阵取最后一行为预测样本（无需二次特征计算）
+    X_latest = full_X.iloc[-1:]
 
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(full_X)
-    model = Ridge(alpha=1.0)
-    model.fit(X_scaled, y)
+    # CPU密集操作移出 event loop
+    def _train_and_predict():
+        import os, pickle
+        from sklearn.linear_model import Ridge
+        from sklearn.preprocessing import StandardScaler
+        import numpy as np
 
-    # 预测最新数据
-    X_latest = X.iloc[-1:]
-    X_latest_scaled = scaler.transform(X_latest)
-    predicted_change = float(model.predict(X_latest_scaled)[0])
+        os.makedirs(model_dir, exist_ok=True)
+        model_path = os.path.join(model_dir, "ml_ridge_latest.pkl")
+
+        # 尝试加载缓存的模型（当天训练过的）
+        loaded = False
+        if os.path.exists(model_path):
+            try:
+                age = __import__("datetime").datetime.fromtimestamp(
+                    os.path.getmtime(model_path))
+                age_days = (__import__("datetime").datetime.now() - age).days
+                if age_days == 0:
+                    with open(model_path, "rb") as f:
+                        cache = pickle.load(f)
+                    scaler, model, feat_cols = (
+                        cache["scaler"], cache["model"], cache["features"])
+                    # 验证特征列匹配
+                    if list(X_latest.columns) == feat_cols:
+                        X_scaled = scaler.transform(X_latest)
+                        pred = float(model.predict(X_scaled)[0])
+                        return pred, cache.get("confidence_factor", 1.0)
+                    else:
+                        logger.info("特征列变化，重新训练")
+            except Exception as e:
+                logger.warning(f"缓存模型加载失败: {e}")
+
+        # 训练新模型
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(full_X)
+        model = Ridge(alpha=1.0, random_state=42)
+        model.fit(X_scaled, y)
+
+        # 评估方向准确率作为置信度校准
+        y_pred = model.predict(X_scaled)
+        da = float(np.mean(np.sign(y.values) == np.sign(y_pred)))
+        confidence_factor = max(0.3, min(1.0, da))
+
+        # 缓存
+        with open(model_path, "wb") as f:
+            pickle.dump({
+                "scaler": scaler, "model": model,
+                "features": list(full_X.columns),
+                "confidence_factor": confidence_factor,
+                "trained_at": __import__("datetime").datetime.now().isoformat(),
+            }, f)
+        logger.info(f"ML模型已训练保存: {model_path} (DA={da:.3f})")
+
+        X_latest_scaled = scaler.transform(X_latest)
+        pred = float(model.predict(X_latest_scaled)[0])
+        return pred, confidence_factor
+
+    # 用 executor 跑 CPU 密集训练/预测
+    import asyncio
+    loop = asyncio.get_event_loop()
+    predicted_change, confidence_factor = await loop.run_in_executor(
+        None, _train_and_predict)
 
     # 生成信号
     threshold = 0.002  # 0.2%
-    confidence = min(0.9, abs(predicted_change) / 0.02)
+    raw_confidence = min(0.9, abs(predicted_change) / 0.02)
+    confidence = round(raw_confidence * confidence_factor, 2)
 
     signal = None
     if predicted_change > threshold:
@@ -746,7 +792,7 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
             strategy_id=strategy_name, strategy_name=strategy_name,
             symbol="AU0", direction=SignalDirection.LONG,
             price=round(current_price, 2), volume=1, stop_loss=sl,
-            confidence=round(confidence, 2),
+            confidence=confidence,
             reason=f"ML预测涨{predicted_change*100:.2f}% (Ridge+{'宏观' if has_macro else '技术'}因子)",
             created_at=datetime.now(),
         )
@@ -757,13 +803,15 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
             strategy_id=strategy_name, strategy_name=strategy_name,
             symbol="AU0", direction=SignalDirection.SHORT,
             price=round(current_price, 2), volume=1, stop_loss=sl,
-            confidence=round(confidence, 2),
+            confidence=confidence,
             reason=f"ML预测跌{predicted_change*100:.2f}% (Ridge+{'宏观' if has_macro else '技术'}因子)",
             created_at=datetime.now(),
         )
 
     if signal is None:
-        return {"success": True, "data": {"signal": None, "message": f"ML预测{predicted_change*100:.2f}%，未达阈值", "strategy": strategy_name, "price": round(current_price, 2)}}
+        return {"success": True, "data": {"signal": None, "message":
+                f"ML预测{predicted_change*100:.2f}%，未达阈值",
+                "strategy": strategy_name, "price": round(current_price, 2)}}
 
     # 保存、风控、输出
     from backend.gold.data.storage import GoldDataStore
@@ -772,13 +820,15 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
 
     store = GoldDataStore()
     store.save_signal(signal)
-    signal_data.created_at = datetime.now()
 
     risk_checker = RiskChecker()
-    risk_checker.record_signal(signal)
     positions = await query_ctp_positions_raw()
     account = await query_ctp_account_raw()
-    risk_result = risk_checker.check(signal, positions=positions, account=account)
+    current_equity = account.get("balance") if account else None
+    risk_result = risk_checker.check(signal, positions=positions, account=account,
+                                     current_equity=current_equity)
+    if risk_result.passed:
+        risk_checker.record_signal(signal)
 
     signal_output = SignalOutput()
     advice = signal_output.output(signal, risk_result)
@@ -891,6 +941,36 @@ async def get_bars_for_chart(
     if not bars:
         raise HTTPException(status_code=404, detail="No bar data available")
 
+    # 日线：尝试用实时行情更新最后一根K线
+    if period == "d":
+        try:
+            rt = await gateway.get_realtime_quote(symbol)
+            if rt and rt.get("current_price", 0) > 0:
+                from backend.gold.core.models import GoldBarData
+                from datetime import datetime
+                today = datetime.now().date()
+                # 如果最后一根K线是今天的，更新它；否则追加一根新的
+                last_bar = bars[-1]
+                if hasattr(last_bar.datetime, 'date') and last_bar.datetime.date() == today:
+                    # 更新今天的K线
+                    bars[-1] = GoldBarData(
+                        symbol=symbol, exchange="SHFE", period=period,
+                        datetime=last_bar.datetime,
+                        open=rt["open"], high=rt["high"], low=rt["low"],
+                        close=rt["current_price"], volume=rt["volume"],
+                    )
+                else:
+                    # 追加今天的实时K线
+                    now_dt = datetime.combine(today, datetime.min.time())
+                    bars.append(GoldBarData(
+                        symbol=symbol, exchange="SHFE", period=period,
+                        datetime=now_dt,
+                        open=rt["open"], high=rt["high"], low=rt["low"],
+                        close=rt["current_price"], volume=rt["volume"],
+                    ))
+        except Exception as e:
+            logger.warning(f"Realtime bar update failed: {e}")
+
     # 计算MA指标用于图表
     closes = [b.close for b in bars]
     def ma(arr, n):
@@ -947,10 +1027,27 @@ async def get_market_data():
         latest = bars[-1]
         prev = bars[-2] if len(bars) > 1 else latest
 
-        price = latest.close
-        prev_price = prev.close
-        change = price - prev_price
-        change_pct = (change / prev_price * 100) if prev_price > 0 else 0
+        # 尝试获取实时行情，覆盖昨天的收盘价
+        realtime = await gateway.get_realtime_quote("AU0")
+        if realtime and realtime.get("current_price", 0) > 0:
+            price = realtime["current_price"]
+            open_price = realtime["open"]
+            high_price = realtime["high"]
+            low_price = realtime["low"]
+            volume = realtime["volume"]
+            # 涨跌幅基于昨日结算价
+            prev_price = realtime.get("last_settle", prev.close)
+            change = price - prev_price
+            change_pct = (change / prev_price * 100) if prev_price > 0 else 0
+        else:
+            price = latest.close
+            open_price = latest.open
+            high_price = latest.high
+            low_price = latest.low
+            volume = latest.volume
+            prev_price = prev.close
+            change = price - prev_price
+            change_pct = (change / prev_price * 100) if prev_price > 0 else 0
 
         high_20 = max(b.high for b in bars[-20:])
         low_20 = min(b.low for b in bars[-20:])
@@ -970,15 +1067,15 @@ async def get_market_data():
         # ===== 宏观指标数据 (DXY, VIX, US10Y, TIPS, Breakeven) =====
         macro = {}
         try:
-            df = get_gold_training_data("GC", lookback_days=500)
-            if not df.empty:
-                row = df.iloc[-1]
+            from backend.market_data import market_data_service
+            macro_raw = await market_data_service.get_macro_indicators()
+            if macro_raw:
                 macro = {
-                    "dxy": round(row["DXY_value"], 2) if "DXY_value" in row and pd.notna(row["DXY_value"]) else None,
-                    "vix": round(row["VIX_value"], 2) if "VIX_value" in row and pd.notna(row["VIX_value"]) else None,
-                    "us10y": round(row["US10Y_value"], 2) if "US10Y_value" in row and pd.notna(row["US10Y_value"]) else None,
-                    "tips": round(row["TIPS_value"], 2) if "TIPS_value" in row and pd.notna(row["TIPS_value"]) else None,
-                    "breakeven": round(row["BREAKEVEN_level"], 2) if "BREAKEVEN_level" in row and pd.notna(row["BREAKEVEN_level"]) else None,
+                    "dxy": round(macro_raw["dxy"], 2) if macro_raw.get("dxy") is not None else None,
+                    "vix": round(macro_raw["vix"], 2) if macro_raw.get("vix") is not None else None,
+                    "us10y": round(macro_raw["us10y"], 4) if macro_raw.get("us10y") is not None else None,
+                    "tips": round(macro_raw["tips"], 4) if macro_raw.get("tips") is not None else None,
+                    "breakeven": round(macro_raw["breakeven"], 4) if macro_raw.get("breakeven") is not None else None,
                 }
         except Exception as e:
             logger.warning(f"Macro data fetch failed: {e}")
@@ -989,10 +1086,10 @@ async def get_market_data():
                 "price": round(price, 2),
                 "change": round(change, 2),
                 "change_pct": round(change_pct, 2),
-                "high": round(latest.high, 2),
-                "low": round(latest.low, 2),
-                "open": round(latest.open, 2),
-                "volume": latest.volume,
+                "open": round(open_price, 2),
+                "high": round(high_price, 2),
+                "low": round(low_price, 2),
+                "volume": volume,
                 "high_20": round(high_20, 2),
                 "low_20": round(low_20, 2),
                 "high_60": round(high_60, 2),
