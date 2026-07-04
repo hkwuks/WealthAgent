@@ -7,12 +7,15 @@ from typing import Optional
 from loguru import logger
 
 from backend.gold.core.models import GoldBarData, GoldSignal
+from backend.gold.core.config import gold_settings
 
 
 class GoldDataStore:
     """SQLite存储 — 独立gold.db，WAL模式"""
 
-    def __init__(self, db_path: str = "data/backend/gold/gold.db"):
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            db_path = gold_settings.gold_db_path
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._init_db()
