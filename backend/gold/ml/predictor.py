@@ -14,13 +14,16 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 from backend.gold.ml.types import ModelType, PredictionHorizon, PredictionResult, TripleBarrierResult
 from backend.gold.ml.features import FeatureEngineer
+from backend.config import settings
 from loguru import logger
 
 
 class GoldPricePredictor:
     """黄金价格预测器"""
 
-    def __init__(self, model_dir: str = "data/backend/models"):
+    def __init__(self, model_dir: str = None):
+        if model_dir is None:
+            model_dir = settings.MODEL_DIR
         self.model_dir = model_dir
         os.makedirs(model_dir, exist_ok=True)
         self.feature_engineer = FeatureEngineer()

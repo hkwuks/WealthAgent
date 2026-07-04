@@ -359,7 +359,8 @@ class CtpClient:
 
     def _init_sync(self):
         """CTP API 同步初始化（在线程池中运行）"""
-        flow_dir = os.path.join("data", "backend", "gold", "ctp_flow")
+        from backend.gold.core.config import gold_settings
+        flow_dir = os.path.join(gold_settings.gold_data_dir, "ctp_flow")
         os.makedirs(flow_dir, exist_ok=True)
 
         self._md_api = self._md_module.CThostFtdcMdApi.CreateFtdcMdApi(

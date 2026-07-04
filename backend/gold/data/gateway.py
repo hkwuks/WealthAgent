@@ -5,12 +5,15 @@ from loguru import logger
 from backend.gold.core.models import GoldBarData
 from backend.gold.data.storage import GoldDataStore
 from backend.gold.data.quality import DataQualityChecker
+from backend.gold.core.config import gold_settings
 
 
 class GoldDataGateway:
     """黄金数据网关 — AkShare(SHFE) → 直连新浪(SHFE) → yFinance(COMEX) 三级降级"""
 
-    def __init__(self, db_path: str = "data/backend/gold/gold.db"):
+    def __init__(self, db_path: str = None):
+        if db_path is None:
+            db_path = gold_settings.gold_db_path
         self.db_path = db_path
         self.store = GoldDataStore(db_path)
 
