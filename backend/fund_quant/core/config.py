@@ -8,7 +8,7 @@ class FundQuantSettings(BaseSettings):
     """基金量化系统配置"""
 
     # SQLite
-    FUND_QUANT_DB_PATH: str = "data/fund_quant/fund_quant.db"
+    FUND_QUANT_DB_PATH: str = "data/backend/fund_quant/fund_quant.db"
 
     # Redis
     REDIS_HOST: str = "localhost"
@@ -16,7 +16,7 @@ class FundQuantSettings(BaseSettings):
     REDIS_DB: int = 1
 
     # APScheduler
-    SCHEDULER_JOBSTORE_URL: str = "sqlite:///data/fund_quant/scheduler_jobs.db"
+    SCHEDULER_JOBSTORE_URL: str = "sqlite:///data/backend/fund_quant/scheduler_jobs.db"
     SCHEDULER_MISFIRE_GRACE: int = 3600
     SCHEDULER_COALESCE: bool = True
     SCHEDULER_MAX_INSTANCES: int = 1
