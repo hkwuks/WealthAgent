@@ -2558,3 +2558,56 @@ body::after {
 .gold-prediction-page .metrics-table tbody tr:hover {
   background: var(--bg-secondary);
 }
+
+/* ═══════════════════════════════════════
+   FundQuant 基金量化 Tab 样式
+   ═══════════════════════════════════════ */
+
+.fund-quant-page { padding: 16px; }
+.fund-quant-page .section-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.fund-quant-page .section-badge { font-size: 11px; background: var(--primary-light); color: var(--primary-color); padding: 2px 8px; border-radius: 10px; }
+
+/* 子标签导航 */
+.fund-quant-page .sub-tabs { display: flex; gap: 4px; margin-bottom: 16px; flex-wrap: wrap; }
+.fund-quant-page .sub-tab { padding: 6px 14px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-secondary); border-radius: 6px; cursor: pointer; font-size: 13px; transition: all .2s; }
+.fund-quant-page .sub-tab:hover { border-color: var(--primary-color); color: var(--primary-color); }
+.fund-quant-page .sub-tab.active { background: var(--primary-gradient); color: #fff; border-color: transparent; }
+
+/* 加载/错误 */
+.fq-loading { padding: 24px; text-align: center; color: var(--text-secondary); font-size: 14px; }
+.fq-error { padding: 16px; background: rgba(239,68,68,.08); color: var(--danger-color); border-radius: 8px; font-size: 14px; }
+.fq-hint { padding: 24px; text-align: center; color: var(--text-secondary); font-size: 13px; }
+.fq-view { }
+.fq-section-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--text-primary); }
+.fq-result-area { margin-top: 12px; }
+.fq-result-area pre { background: var(--bg-secondary); padding: 12px; border-radius: 8px; font-size: 12px; max-height: 400px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+
+/* 表单 */
+.fq-form { display: flex; flex-direction: column; gap: 8px; }
+.fq-form-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fq-form-row .input { flex: 1; min-width: 100px; }
+
+/* 策略网格 */
+.strategy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.strategy-card { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 10px; padding: 14px; transition: box-shadow .2s; }
+.strategy-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+.strategy-card .strategy-name { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.strategy-card .strategy-type { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-bottom: 6px; }
+.tag-timing { background: rgba(16,185,129,.1); color: var(--success-color); }
+.tag-selection { background: rgba(102,126,234,.1); color: var(--primary-color); }
+.tag-allocation { background: rgba(245,158,11,.1); color: var(--warning-color); }
+.strategy-card .strategy-desc { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; line-height: 1.4; }
+
+/* 组合统计 */
+.portfolio-summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.portfolio-stat { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; text-align: center; }
+.portfolio-stat .stat-label { display: block; font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; }
+.portfolio-stat .stat-value { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+.portfolio-stat.positive .stat-value { color: var(--success-color); }
+.portfolio-stat.negative .stat-value { color: var(--danger-color); }
+
+/* 回测结果 */
+.bt-result { padding: 12px; background: var(--bg-secondary); border-radius: 8px; }
+.bt-id { font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; }
+
+.mt-1 { margin-top: 8px; }

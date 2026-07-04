@@ -3,6 +3,7 @@ import { toast } from './toast'
 import { fundManagerUI } from './fundManagerUI'
 import { marketDataUI } from './marketDataUI'
 import { goldPredictionUI } from './goldPredictionUI'
+import { FundQuantUI } from './fundQuantUI'
 
 toast.init();
 
@@ -71,6 +72,10 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <span class="tab-button-icon">🥇</span>
         黄金预测
       </button>
+      <button class="tab-button" data-tab="fund-quant" role="tab" aria-selected="false">
+        <span class="tab-button-icon">📊</span>
+        基金量化
+      </button>
     </nav>
 
     <!-- 标签内容区域 -->
@@ -78,6 +83,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="tab-content active" id="fund-manager-container" role="tabpanel"></div>
       <div class="tab-content" id="market-data-container" role="tabpanel"></div>
       <div class="tab-content" id="gold-prediction-container" role="tabpanel"></div>
+      <div class="tab-content" id="fund-quant-container" role="tabpanel"></div>
     </main>
   </div>
 `
@@ -105,6 +111,11 @@ async function initApp() {
   // 初始化黄金预测界面
   const goldPredictionContainer = document.querySelector<HTMLDivElement>('#gold-prediction-container')!
   goldPredictionUI.init(goldPredictionContainer)
+
+  // 初始化基金量化界面
+  const fundQuantContainer = document.querySelector<HTMLDivElement>('#fund-quant-container')!
+  const fundQuantUI = new FundQuantUI()
+  fundQuantUI.init(fundQuantContainer)
 }
 
 initApp().catch(console.error)
