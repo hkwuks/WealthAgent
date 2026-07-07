@@ -1280,7 +1280,8 @@ export class GoldTradingUI {
         this.displaySignals(resp.data)
       }
     } catch (e) {
-      toast.error('获取信号失败')
+      // 静默失败，避免页面刷新时弹出错误
+      console.warn('获取信号失败:', e)
     }
   }
 

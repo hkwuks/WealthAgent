@@ -21,6 +21,10 @@ class GoldDataGateway:
         """获取K线数据 — 优先SQLite，数据过期或refresh=True时从AkShare刷新"""
         today = datetime.now().strftime("%Y-%m-%d")
 
+        # 确保 start 和 end 是字符串或 None
+        start = str(start) if start else None
+        end = str(end) if end else None
+
         # 非强制刷新时先查缓存
         if not refresh:
             bars = self.store.get_bars(symbol, period, start, end, limit)

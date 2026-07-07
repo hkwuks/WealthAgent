@@ -31,6 +31,27 @@ from backend.gold.core.models import (
 from backend.gold.core.config import GoldSettings
 from backend.data_sync import get_gold_training_data
 from loguru import logger
+import math
+
+
+def _sanitize(obj):
+    """递归替换 dict/list 中的 nan/inf 为 None，防止 JSON 序列化失败"""
+    if obj is None:
+        return None
+    if hasattr(obj, 'dict'):  # Pydantic BaseModel
+        return _sanitize(obj.dict())
+    if hasattr(obj, '__dict__'):  # other objects (GoldSignal etc.)
+        return _sanitize(obj.__dict__)
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize(v) for v in obj]
+    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return obj
+
 
 router = APIRouter(prefix="/gold/trading", tags=["黄金量化交易"])
 
@@ -928,8 +949,8 @@ async def sync_gold_bars(
 async def get_bars_for_chart(
     symbol: str = Query("AU0", description="合约代码"),
     period: str = Query("d", description="K线周期: d=日线, 1=1分钟, 5=5分钟, 30=30分钟"),
-    start_date: str = Query(None, description="开始日期 YYYY-MM-DD"),
-    end_date: str = Query(None, description="结束日期 YYYY-MM-DD"),
+    start_date: Optional[str] = Query(None, description="开始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
     limit: int = Query(200, ge=1, le=2000, description="返回根数"),
 ):
     """返回K线数据用于图表展示（OHLCV + 技术指标）"""
@@ -1020,7 +1041,7 @@ async def get_market_data():
         config = GoldSettings()
         store = GoldDataStore()
 
-        bars = await gateway.get_bars(symbol="AU0", period="d", limit=300, refresh=True)
+        bars = await gateway.get_bars(symbol="AU0", period="d", limit=300)
         if not bars:
             raise HTTPException(status_code=404, detail="No market data")
 
@@ -1082,7 +1103,7 @@ async def get_market_data():
 
         return {
             "success": True,
-            "data": {
+            "data": _sanitize({
                 "price": round(price, 2),
                 "change": round(change, 2),
                 "change_pct": round(change_pct, 2),
@@ -1102,7 +1123,7 @@ async def get_market_data():
                 "recent_signals": recent_signals,
                 # 宏观指标
                 **macro,
-            },
+            }),
         }
     except HTTPException:
         raise
@@ -1332,7 +1353,7 @@ async def get_kline_analysis(
         "patterns": patterns,
         "judgment": "；".join(judgments),
     }
-    return {"success": True, "data": r, "symbol": symbol, "period": period}
+    return {"success": True, "data": _sanitize(r), "symbol": symbol, "period": period}
 
 
 # ===== 策略对比（当前市场环境适配度） =====
