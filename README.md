@@ -295,7 +295,8 @@ QDII 混合：估算净值 = 昨日净值 × (1 + 已知持仓贡献 + 剩余仓
 │   ├── package.json
 │   └── vite.config.ts
 ├── data/                       # 持久化数据
-│   └── funds.json
+│   └── backend/
+│       └── funds.json
 ├── logs/                       # 运行日志
 ├── skills/                     # AI 技能
 │   └── wealth-agent/

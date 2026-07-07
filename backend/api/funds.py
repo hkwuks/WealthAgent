@@ -6,7 +6,7 @@ from backend.market_data import market_data_service
 from loguru import logger
 
 # 基金数据文件路径
-FUNDS_FILE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'funds.json')
+FUNDS_FILE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'backend', 'funds.json')
 
 
 router = APIRouter(prefix="/funds", tags=["基金管理"])

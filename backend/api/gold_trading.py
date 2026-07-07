@@ -701,10 +701,11 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
     from backend.gold.core.models import GoldSignal, SignalDirection
     from backend.gold.ml import FeatureEngineer, ModelType
     from backend.gold.ml.predictor import GoldPricePredictor
+    from backend.config import settings
     from loguru import logger
 
     current_price = bars[-1].close
-    model_dir = "data/backend/models"
+    model_dir = settings.MODEL_DIR
 
     # 获取宏观数据
     macro_df = await gateway.get_macro_data(start="2024-01-01")
