@@ -40,14 +40,19 @@ def _sanitize(obj):
         return None
     if hasattr(obj, 'dict'):  # Pydantic BaseModel
         return _sanitize(obj.dict())
-    if hasattr(obj, '__dict__'):  # other objects (GoldSignal etc.)
-        return _sanitize(obj.__dict__)
+    if isinstance(obj, (int, float, str, bool, bytes)):
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        return obj
+    if hasattr(obj, '__dict__') and not callable(obj):  # other data objects (GoldSignal etc.)
+        try:
+            return _sanitize(obj.__dict__)
+        except Exception:
+            return str(obj)
     if isinstance(obj, dict):
         return {k: _sanitize(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_sanitize(v) for v in obj]
-    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
-        return None
     if isinstance(obj, datetime):
         return obj.isoformat()
     return obj
