@@ -80,6 +80,17 @@ class ApiService {
     }
   }
 
+  async get<T = any>(url: string, timeoutMs?: number): Promise<T> {
+    return this.request<T>(url, undefined, timeoutMs);
+  }
+
+  async post<T = any>(url: string, body?: any, timeoutMs?: number): Promise<T> {
+    return this.request<T>(url, {
+      method: 'POST',
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }, timeoutMs);
+  }
+
   // 基金管理相关 API
   async getFunds(): Promise<{ funds: Fund[]; total: number }> {
     const response = await this.request<{ success: boolean; data: { funds: Fund[] } }>('/funds');
