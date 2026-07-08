@@ -877,9 +877,7 @@ export class GoldTradingUI {
 
   private updateTicker(data: any) {
     const price = data.price
-    const changePct = data.change_pct
-
-    // 保存当前价格到全局，供持仓盈亏计算使用
+    const changePct = data.change_pct;
     (window as any).__lastMarketPrice = price
 
     const set = (id: string, text: string, cls?: string) => {
@@ -1280,7 +1278,8 @@ export class GoldTradingUI {
         this.displaySignals(resp.data)
       }
     } catch (e) {
-      toast.error('获取信号失败')
+      // 静默失败，避免页面刷新时弹出错误
+      console.warn('获取信号失败:', e)
     }
   }
 

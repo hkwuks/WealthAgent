@@ -2376,21 +2376,24 @@ class ETFPriceAPI:
 # ==================== 宏观指标API (DXY/VIX/US10Y/TIPS) ====================
 
 class MacroIndicatorAPI:
-    """宏观指标API — CNBC(主力) → FRED+yFinance → AkShare+yFinance → TIP ETF"""
+    """宏观指标API — 中国直连优先 → FRED → yFinance 三级降级
 
-    _CNBC_SYMBOLS = "US10Y|US10YTIP|.DXY|VIX"
-    _CNBC_KEY_MAP = {"US10Y": "us10y", "US10YTIP": "tips", ".DXY": "dxy", "VIX": "vix"}
+    优先级:
+    1. AkShare bond_zh_us_rate  → US10Y（中国直连，最快最稳）
+    2. AkShare futures_hq_spot  → DXY + VIX（新浪外盘期货实时行情）
+    3. FRED DFII10                → TIPS
+    4. yFinance                   → 全局兜底
+    5. TIP ETF SEC yield          → TIPS 最终兜底
+    """
+
+    _DXY_SYMBOLS = ["USDX", "USDX"]
+    _VIX_SYMBOLS = ["VIX", "VIX"]
 
     def __init__(self):
         self.session = None
         self._cache = {}
         self._cache_ts = 0.0
-        self._cache_ttl = 30  # 30秒缓存
-        self.user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/123.0.0.0 Safari/537.36',
-        ]
+        self._cache_ttl = 300  # 5分钟缓存
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
@@ -2410,17 +2413,17 @@ class MacroIndicatorAPI:
             return self._cache
 
         macro = {}
-        # Source 1: CNBC
-        macro = await self._fetch_cnbc()
-        # Source 2: FRED + yFinance
+
+        # Source 1: AkShare — 中国直连，最快最稳
+        macro.update(await self._fetch_akshare_bond_rate())      # US10Y
+        macro.update(await self._fetch_akshare_futures_spot())   # DXY + VIX
+
+        # Source 2: FRED DFII10 (TIPS) + yFinance 补漏
+        macro.update(await self._fetch_fred_yfinance(macro))
+
+        # Source 3: TIP ETF SEC yield — TIPS 最终兜底
         if not macro.get("tips"):
-            macro.update(await self._fetch_fred_yfinance(macro))
-        # Source 3: AkShare + yFinance
-        if not macro.get("us10y") or not macro.get("dxy"):
-            macro.update(await self._fetch_akshare_yfinance(macro))
-        # Source 4: TIP ETF SEC yield
-        if not macro.get("tips"):
-            macro.update(await self._fetch_tip_etf(macro))
+            macro.update(await self._fetch_tip_etf())
 
         # Breakeven = US10Y - TIPS
         if macro.get("us10y") is not None and macro.get("tips") is not None:
@@ -2430,50 +2433,65 @@ class MacroIndicatorAPI:
         self._cache_ts = time.time()
         return macro
 
-    async def _fetch_cnbc(self) -> Dict:
-        """Source 1: CNBC Quote API — 一次请求拿全部4个指标"""
-        import random
+    async def _fetch_akshare_bond_rate(self) -> Dict:
+        """Source 1a: AkShare bond_zh_us_rate — US10Y（中国直连）"""
+        result = {}
         try:
-            await self._ensure_session()
-            url = f'https://quote.cnbc.com/quote-html-webservice/quote.htm?output=json&symbols={self._CNBC_SYMBOLS}'
-            async with self.session.get(
-                url,
-                headers={'User-Agent': random.choice(self.user_agents)},
-                ssl=False,
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                if resp.status != 200:
-                    return {}
-                data = await resp.json(content_type=None)
-
-            # CNBC changed response format: try both
-            quotes = data.get('QuickQuoteResult', {}).get('QuickQuote', [])
-            if not quotes:
-                quotes = data.get('GlobalQuoteStore', {}).get('quotes', [])
-
-            result = {}
-            for q in quotes:
-                sym = q.get('symbol', '')
-                key = self._CNBC_KEY_MAP.get(sym)
-                if key:
-                    try:
-                        result[key] = float(q.get('last', 0))
-                    except (ValueError, TypeError):
-                        pass
-            return result
+            import akshare as ak
+            df = ak.bond_zh_us_rate()
+            if df is not None and not df.empty:
+                last = df.iloc[-1]
+                for col in df.columns:
+                    if '10' in str(col) and '美' in str(col):
+                        try:
+                            result["us10y"] = round(float(last[col]), 4)
+                        except (ValueError, TypeError):
+                            pass
+                        break
         except Exception as e:
-            logger.debug(f"CNBC macro fetch failed: {e}")
-            return {}
+            logger.debug(f"AkShare bond_zh_us_rate failed: {e}")
+        return result
+
+    async def _fetch_akshare_futures_spot(self) -> Dict:
+        """Source 1b: AkShare futures_hq_spot — DXY + VIX（新浪外盘期货实时行情）"""
+        result = {}
+        try:
+            import akshare as ak
+            df = ak.futures_hq_spot()
+            if df is None or df.empty:
+                return result
+
+            # DXY — 美元指数（USDX）
+            dxy_row = df[df["symbol"].str.upper().isin(self._DXY_SYMBOLS)]
+            if not dxy_row.empty:
+                try:
+                    result["dxy"] = round(float(dxy_row.iloc[0]["current_price"]), 2)
+                except (ValueError, TypeError, KeyError):
+                    pass
+
+            # VIX — 恐慌指数
+            vix_row = df[df["symbol"].str.upper().isin(self._VIX_SYMBOLS)]
+            if not vix_row.empty:
+                try:
+                    result["vix"] = round(float(vix_row.iloc[0]["current_price"]), 2)
+                except (ValueError, TypeError, KeyError):
+                    pass
+        except Exception as e:
+            logger.debug(f"AkShare futures_hq_spot failed: {e}")
+        return result
 
     async def _fetch_fred_yfinance(self, existing: Dict) -> Dict:
-        """Source 2: FRED DFII10 (TIPS) + yFinance (DXY/VIX/US10Y)"""
+        """Source 2: FRED DFII10 (TIPS) + yFinance 补漏 DXY/VIX/US10Y"""
         result = {}
-        # yFinance for DXY/VIX/US10Y if missing
-        if not existing.get("dxy") or not existing.get("vix") or not existing.get("us10y"):
+        need_dxy = not existing.get("dxy")
+        need_vix = not existing.get("vix")
+        need_us10y = not existing.get("us10y")
+
+        if need_dxy or need_vix or need_us10y:
             try:
                 import yfinance as yf
                 for sym, key in [("DX-Y.NYB", "dxy"), ("^VIX", "vix"), ("^TNX", "us10y")]:
-                    if not existing.get(key):
+                    if (key == "dxy" and need_dxy) or (key == "vix" and need_vix) or (key == "us10y" and need_us10y):
                         try:
                             t = yf.Ticker(sym)
                             h = t.history(period="1d")
@@ -2484,7 +2502,7 @@ class MacroIndicatorAPI:
             except ImportError:
                 pass
 
-        # FRED DFII10 for TIPS (often blocked from China)
+        # FRED DFII10 for TIPS
         if not existing.get("tips"):
             try:
                 await self._ensure_session()
@@ -2501,39 +2519,17 @@ class MacroIndicatorAPI:
                 pass
         return result
 
-    async def _fetch_akshare_yfinance(self, existing: Dict) -> Dict:
-        """Source 3: AkShare bond_zh_us_rate (US10Y) + yFinance (DXY/VIX)"""
-        result = {}
-        if not existing.get("us10y"):
-            try:
-                import akshare as ak
-                df = ak.bond_zh_us_rate()
-                if df is not None and not df.empty:
-                    last = df.iloc[-1]
-                    for col in df.columns:
-                        if '10' in str(col) and '美' in str(col):
-                            try:
-                                result["us10y"] = round(float(last[col]), 4)
-                            except (ValueError, TypeError):
-                                pass
-                            break
-            except Exception:
-                pass
-        return result
-
-    async def _fetch_tip_etf(self, existing: Dict) -> Dict:
-        """Source 4: TIP ETF SEC yield (含通胀增值成分，偏高~0.6%)"""
-        if not existing.get("tips"):
-            try:
-                import yfinance as yf
-                t = yf.Ticker("TIP")
-                info = t.info
-                sy = info.get("yield") or info.get("trailingAnnualDividendYield")
-                if sy:
-                    result = {"tips": round(float(sy) * 100, 4)}
-                    return result
-            except Exception:
-                pass
+    async def _fetch_tip_etf(self) -> Dict:
+        """Source 3: TIP ETF SEC yield（TIPS 最终兜底，偏高~0.6%）"""
+        try:
+            import yfinance as yf
+            t = yf.Ticker("TIP")
+            info = t.info
+            sy = info.get("yield") or info.get("trailingAnnualDividendYield")
+            if sy:
+                return {"tips": round(float(sy) * 100, 4)}
+        except Exception:
+            pass
         return {}
 
 
