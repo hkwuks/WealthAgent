@@ -130,7 +130,7 @@ class GoldDataStore:
             for bar in bars:
                 try:
                     conn.execute(
-                        """INSERT OR IGNORE INTO bars
+                        """INSERT OR REPLACE INTO bars
                            (symbol, exchange, period, datetime, open, high, low, close,
                             volume, turnover, open_interest, source)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",

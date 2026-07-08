@@ -46,17 +46,26 @@ _ORDER_STATUS_MAP = {
 
 def _setup_locale():
     """openctp_ctp/openctp_tts 的 C++ DSO 需要 zh_CN.GB18030"""
+    import locale
+
+    # 尝试找到可用的 locale 路径
+    locale_found = False
     for path in ['/tmp/locale', '/usr/lib/locale', '/usr/share/locale']:
         if os.path.isdir(os.path.join(path, 'zh_CN.GB18030')):
             os.environ['LOCPATH'] = path
+            locale_found = True
             break
+
+    # 设置环境变量（即使 locale 目录不存在也设置）
     os.environ['LANG'] = 'zh_CN.GB18030'
     os.environ['LC_ALL'] = 'zh_CN.GB18030'
-    import locale
-    try:
-        locale.setlocale(locale.LC_ALL, 'zh_CN.GB18030')
-    except locale.Error:
-        pass
+
+    # 尝试设置 locale，失败不报错
+    if locale_found:
+        try:
+            locale.setlocale(locale.LC_ALL, 'zh_CN.GB18030')
+        except locale.Error:
+            pass
 
 
 def _get_ctp_modules(mode: str):
@@ -67,13 +76,33 @@ def _get_ctp_modules(mode: str):
     openctp → openctp_tts 模块 (v6.7.2, TTS 协议)
     """
     if mode == "openctp":
-        _setup_locale()
-        import openctp_tts
-        logger.info("[CTP] 使用 openctp_tts 模块 (TTS 协议)")
-        return openctp_tts.mdapi, openctp_tts.tdapi
+        try:
+            _setup_locale()
+            import openctp_tts
+            logger.info("[CTP] 使用 openctp_tts 模块 (TTS 协议)")
+            return openctp_tts.mdapi, openctp_tts.tdapi
+        except Exception as e:
+            logger.error(f"[CTP] openctp_tts 导入失败: {e}")
+            logger.error("[CTP] 请确保 locale 设置正确: zh_CN.GB18030")
+            raise RuntimeError(
+                f"openctp_tts 模块导入失败: {e}\n"
+                "请检查:\n"
+                "1. locale 是否设置为 zh_CN.GB18030\n"
+                "2. openctp_tts 是否已安装 (pip install openctp_tts)\n"
+                "3. 系统是否支持 GB18030 编码"
+            )
     else:
-        import ctp as m
-        return m, m
+        try:
+            import ctp as m
+            return m, m
+        except Exception as e:
+            logger.error(f"[CTP] ctp 模块导入失败: {e}")
+            raise RuntimeError(
+                f"ctp 模块导入失败: {e}\n"
+                "请检查:\n"
+                "1. ctp 是否已安装 (pip install ctp)\n"
+                "2. 系统是否满足编译依赖"
+            )
 
 
 # ── 客户端类 ──────────────────────────────────────────────────
@@ -415,7 +444,6 @@ class CtpClient:
         # 转换合约代码：AU0 -> 主力合约
         ctp_symbol = symbol
         if symbol.upper() == "AU0":
-            # 使用当前主力合约或默认合约
             ctp_symbol = self.get_main_contract() or "AU2608"
             if ctp_symbol != symbol:
                 logger.info(f"[CTP] 合约代码转换: {symbol} -> {ctp_symbol}")
@@ -449,7 +477,18 @@ class CtpClient:
         field.VolumeCondition = "1"
         field.MinVolume = 1
 
-        result = self._td_api.ReqOrderInsert(field, ref)
+        # ReqOrderInsert 是 C++ extension，用独立线程池避免占 GIL
+        # ponytail: 不能 loop.run_in_executor + .result()（同线程死锁），
+        # 所以独立出 ThreadPoolExecutor
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+            fut = _pool.submit(self._td_api.ReqOrderInsert, field, ref)
+            try:
+                result = fut.result(timeout=5)
+            except Exception as e:
+                logger.error(f"[CTP] 下单异常: {e}")
+                return -1
+
         if result == 0:
             logger.info(f"[CTP] 下单成功: {symbol} {direction.value} {volume}手 @{price} ref={ref}")
         else:
@@ -459,7 +498,6 @@ class CtpClient:
 
     def cancel_order(self, symbol: str, order_ref: int,
                      front_id: int = 0, session_id: int = 0) -> int:
-        # 转换合约代码
         if symbol.upper() == "AU0":
             symbol = self.get_main_contract() or "AU2608"
         field = self._td_module.CThostFtdcInputOrderActionField()

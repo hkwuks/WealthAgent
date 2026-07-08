@@ -11,9 +11,7 @@
 """
 from backend.gold.trading.connectors.base import TradingAdapter
 from backend.gold.trading.connectors.factory import create_adapter
-from backend.gold.trading.connectors.ctp_adapter import CtpAdapter
 
 __all__ = [
     "TradingAdapter", "create_adapter",
-    "CtpAdapter",
 ]

@@ -23,7 +23,7 @@ class GoldSettings(BaseSettings):
     risk_free_rate: float = 0.025
 
     # 模拟交易模式切换: "simnow" / "openctp"
-    trading_mode: str = "openctp"
+    trading_mode: str = "simnow"
 
     # 风控参数
     max_drawdown_pct: float = 0.10
