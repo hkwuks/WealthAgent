@@ -4,6 +4,7 @@ from typing import Optional
 
 class Settings(BaseSettings):
     APP_NAME: str = "智能理财Agent"
+    APP_NAME: str = "智能理财Agent"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
     
@@ -23,6 +24,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"
         extra = "ignore"
 
 
