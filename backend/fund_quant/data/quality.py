@@ -58,17 +58,27 @@ class DataQualityChecker:
         if delay_issue:
             issues.append(delay_issue)
 
-        # ── 4. ADF检验 (均值回归特性) ──
+        # ── 4. 持仓缺失检查 ──
+        holding_issue = self._check_missing_holdings(fund_code)
+        if holding_issue:
+            issues.append(holding_issue)
+
+        # ── 5. 规模突降检查 ──
+        scale_issue = self._check_scale_drop(fund_code)
+        if scale_issue:
+            issues.append(scale_issue)
+
+        # ── 6. ADF检验 ──
         adf_issue = self._check_adf_test(sorted_records, fund_code)
         if adf_issue:
             issues.append(adf_issue)
 
-        # ── 5. Hurst指数 (趋势vs回归) ──
+        # ── 7. Hurst指数 ──
         hurst_issue = self._check_hurst(sorted_records, fund_code)
         if hurst_issue:
             issues.append(hurst_issue)
 
-        # ── 6. 换手率异常 ──
+        # ── 8. 换手率异常 ──
         turnover_issue = self._check_turnover_anomaly(sorted_records)
         if turnover_issue:
             issues.append(turnover_issue)
@@ -268,6 +278,63 @@ class DataQualityChecker:
                 "value": extreme_count,
             }
         return None
+
+    # ── 持仓缺失检查 (PRD §7.4) ──
+
+    @staticmethod
+    def _check_missing_holdings(fund_code: str) -> Optional[dict]:
+        """检查持仓数据是否缺失超过2个季度"""
+        from ..data.storage import get_holdings
+        try:
+            records = get_holdings(fund_code)
+            if not records:
+                return {
+                    "fund_code": fund_code,
+                    "test": "持仓缺失",
+                    "issue": "无持仓数据记录",
+                    "severity": "warning",
+                    "value": 0,
+                }
+            # 检查最近持仓数据是否过时
+            periods = sorted([r["report_period"] for r in records if r.get("report_period")], reverse=True)
+            if periods:
+                from datetime import date
+                latest = datetime.strptime(periods[0], "%Y-%m-%d").date()
+                months_ago = (date.today().year - latest.year) * 12 + (date.today().month - latest.month)
+                if months_ago > 6:  # 超过2个季度
+                    return {
+                        "fund_code": fund_code,
+                        "test": "持仓缺失",
+                        "issue": f"最近持仓 {periods[0]} ({months_ago}个月前), 超过2个季度",
+                        "severity": "warning",
+                        "value": months_ago,
+                    }
+            return None
+        except Exception:
+            return None
+
+    # ── 规模突降检查 (PRD §7.4) ──
+
+    @staticmethod
+    def _check_scale_drop(fund_code: str) -> Optional[dict]:
+        """检查基金规模是否突降>50%"""
+        from ..data.storage import get_fund_meta
+        try:
+            meta = get_fund_meta(fund_code)
+            if not meta or meta.get("scale") is None:
+                return None
+            scale = meta["scale"]
+            if scale < 10_000_000:  # 1000万以下视为清盘风险
+                return {
+                    "fund_code": fund_code,
+                    "test": "规模突降",
+                    "issue": f"规模 {scale:.0f} < 1000万, 清盘风险高",
+                    "severity": "critical",
+                    "value": float(scale),
+                }
+            return None
+        except Exception:
+            return None
 
     def estimate_nav_quality(self, fund_code: str) -> DataQuality:
         """估算整体数据质量级别"""

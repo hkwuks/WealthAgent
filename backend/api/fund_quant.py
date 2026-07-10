@@ -2,9 +2,10 @@
 
 import uuid
 import asyncio
+from functools import partial
 from datetime import date, datetime
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from loguru import logger
 
@@ -70,7 +71,7 @@ async def list_strategies():
     """列出可用策略"""
     from ..fund_quant.strategy.base import StrategyRegistry
     registry = StrategyRegistry()
-    strategies = registry.list_strategies()
+    strategies = await asyncio.to_thread(registry.list_strategies)
     return {"success": True, "data": strategies}
 
 
@@ -79,7 +80,7 @@ async def get_strategy_params(name: str):
     """获取策略参数"""
     from ..fund_quant.strategy.base import StrategyRegistry
     registry = StrategyRegistry()
-    strategy = registry.get_strategy(name)
+    strategy = await asyncio.to_thread(registry.get_strategy, name)
     if not strategy:
         raise HTTPException(status_code=404, detail=f"策略 {name} 未找到")
     return {"success": True, "data": {
@@ -99,20 +100,20 @@ async def timing_evaluate(req: TimingRequest):
     from ..fund_quant.strategy.base import StrategyRegistry
     from ..fund_quant.strategy.fusion import signal_fusion
 
-    nav_data = get_nav_history(req.fund_code)
+    nav_data = await asyncio.to_thread(get_nav_history, req.fund_code)
     if not nav_data:
         raise HTTPException(status_code=404, detail=f"基金 {req.fund_code} 净值数据不足")
 
     # 并行运行所有择时策略
     registry = StrategyRegistry()
-    timing_strategies = registry.list_by_type("timing")
+    timing_strategies = await asyncio.to_thread(registry.list_by_type, "timing")
 
     # 从数据库获取净值序列用于策略计算
     nav_values = [r.get("nav", 0) for r in nav_data if r.get("nav")]
     dates = [r["date"] for r in nav_data if r.get("nav")]
 
     async def run_strategy(s_info: dict) -> List[FundSignal]:
-        strategy = registry.get_strategy(s_info["name"])
+        strategy = await asyncio.to_thread(registry.get_strategy, s_info["name"])
         if not strategy:
             return []
         try:
@@ -120,7 +121,7 @@ async def timing_evaluate(req: TimingRequest):
             strategy._state["nav_values"] = nav_values
             strategy._state["nav_dates"] = dates
             strategy._state["fund_code"] = req.fund_code
-            result = strategy.on_evaluate(portfolio=None, info_set=None)
+            result = await asyncio.to_thread(strategy.on_evaluate, None, None)
             return result or []
         except Exception as e:
             logger.warning(f"择时策略 [{s_info['name']}] 评估异常: {e}")
@@ -152,7 +153,7 @@ async def timing_batch(fund_codes: List[str] = Query(...)):
     """批量择时评估 (并行)"""
     async def evaluate_one(code: str) -> dict:
         try:
-            nav_data = get_nav_history(code)
+            nav_data = await asyncio.to_thread(get_nav_history, code)
             if not nav_data:
                 return {"fund_code": code, "status": "error", "message": "无净值数据"}
             nav_values = [r.get("nav", 0) for r in nav_data if r.get("nav")]
@@ -177,7 +178,7 @@ async def selection_screen(req: SelectionRequest):
     """基金筛选"""
     from ..fund_quant.strategy.selection.multi_factor import MultiFactorSelection
     strategy = MultiFactorSelection()
-    result = strategy.screen(fund_type=req.fund_type, top_n=req.top_n, params=req.params)
+    result = await asyncio.to_thread(partial(strategy.screen, fund_type=req.fund_type, top_n=req.top_n, params=req.params))
     return {"success": True, "data": result}
 
 
@@ -186,7 +187,7 @@ async def selection_score(req: SelectionRequest):
     """基金评分"""
     from ..fund_quant.strategy.selection.multi_factor import MultiFactorSelection
     strategy = MultiFactorSelection()
-    result = strategy.score(fund_type=req.fund_type, params=req.params)
+    result = await asyncio.to_thread(partial(strategy.score, fund_type=req.fund_type, params=req.params))
     return {"success": True, "data": result}
 
 
@@ -198,7 +199,7 @@ async def allocation_optimize(req: AllocationRequest):
     try:
         from ..fund_quant.strategy.allocation.risk_parity import RiskParityStrategy
         strategy = RiskParityStrategy()
-        result = strategy.optimize(fund_codes=req.fund_codes, params=req.params)
+        result = await asyncio.to_thread(partial(strategy.optimize, fund_codes=req.fund_codes, params=req.params))
         return {"success": True, "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -211,7 +212,7 @@ async def allocation_rebalance(req: AllocationRequest):
         from ..fund_quant.data.storage import get_nav_history
         current_prices = {}
         for code in req.fund_codes:
-            navs = get_nav_history(code, limit=1)
+            navs = await asyncio.to_thread(partial(get_nav_history, code, limit=1))
             if navs:
                 current_prices[code] = navs[0].get("nav", 0)
 
@@ -253,9 +254,34 @@ def _run_backtest_sync(config_dict: dict) -> str:
     return backtest_id
 
 
+async def _run_backtest_async(config_dict: dict) -> str:
+    """异步回测任务 — 在线程池执行以避免阻塞事件循环"""
+    from ..fund_quant.backtest.engine import FundBacktester
+
+    backtest_id = f"bt_{uuid.uuid4().hex[:12]}"
+    config = BacktestConfig(**config_dict)
+
+    result = BacktestResult(backtest_id=backtest_id, config=config, status="running")
+    await asyncio.to_thread(save_backtest_result, result)
+
+    try:
+        engine = FundBacktester()
+        bt_result = await asyncio.to_thread(partial(engine.run, config=config))
+        bt_result.backtest_id = backtest_id
+        bt_result.status = "completed"
+        await asyncio.to_thread(save_backtest_result, bt_result)
+        logger.info(f"回测 [{backtest_id}] 完成: 收益 {bt_result.total_return:.2%}")
+    except Exception as e:
+        result.status = "failed"
+        await asyncio.to_thread(save_backtest_result, result)
+        logger.error(f"回测 [{backtest_id}] 失败: {e}")
+
+    return backtest_id
+
+
 @router.post("/backtest/run")
-async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
-    """运行回测 (异步BackgroundTasks)"""
+async def run_backtest(req: BacktestRequest):
+    """运行回测 (异步 — 在线程池执行)"""
     import json
 
     backtest_id = f"bt_{uuid.uuid4().hex[:12]}"
@@ -270,11 +296,11 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
     )
 
     result = BacktestResult(backtest_id=backtest_id, config=config, status="pending")
-    save_backtest_result(result)
+    await asyncio.to_thread(save_backtest_result, result)
 
-    # 异步执行 (BackgroundTasks)
+    # 异步执行 (在线程池中执行以避免阻塞事件循环)
     config_dict = config.model_dump()
-    background_tasks.add_task(_run_backtest_sync, config_dict)
+    asyncio.create_task(_run_backtest_async(config_dict))
 
     return {
         "success": True,
@@ -295,7 +321,7 @@ async def run_backtest(req: BacktestRequest, background_tasks: BackgroundTasks):
 @router.get("/backtest/result/{backtest_id}")
 async def get_backtest(backtest_id: str):
     """获取回测结果"""
-    result = get_backtest_result(backtest_id)
+    result = await asyncio.to_thread(get_backtest_result, backtest_id)
     if not result:
         raise HTTPException(status_code=404, detail="回测结果未找到")
 
@@ -318,8 +344,72 @@ async def get_backtest(backtest_id: str):
 @router.get("/backtest/list")
 async def list_backtests(strategy_name: Optional[str] = None, limit: int = 20):
     """列出回测记录"""
-    results = list_backtest_results(strategy_name=strategy_name, limit=limit)
+    results = await asyncio.to_thread(partial(list_backtest_results, strategy_name=strategy_name, limit=limit))
     return {"success": True, "data": results, "total": len(results)}
+
+
+@router.post("/backtest/compare")
+async def compare_backtests(req: BacktestRequest):
+    """多策略对比回测 — 一次提交，并行执行"""
+    import json
+
+    # 需要策略名称列表（逗号分隔）
+    strategy_names = [s.strip() for s in req.strategy_name.split(",")]
+    backtest_ids = []
+
+    for sn in strategy_names:
+        bid = f"bt_{uuid.uuid4().hex[:12]}"
+        config = BacktestConfig(
+            strategy_name=sn,
+            fund_codes=req.fund_codes,
+            start_date=req.start_date,
+            end_date=req.end_date,
+            initial_capital=req.initial_capital,
+            rebalance_freq=req.rebalance_freq,
+            params=req.params,
+        )
+        result = BacktestResult(backtest_id=bid, config=config, status="pending")
+        await asyncio.to_thread(save_backtest_result, result)
+        config_dict = config.model_dump()
+        asyncio.create_task(_run_backtest_async(config_dict))
+        backtest_ids.append({"strategy": sn, "backtest_id": bid})
+
+    return {"success": True, "data": {"comparison_id": f"cmp_{uuid.uuid4().hex[:8]}",
+                                       "backtests": backtest_ids}}
+
+
+@router.post("/backtest/export/{backtest_id}")
+async def export_backtest(backtest_id: str, fmt: str = "json"):
+    """导出回测结果 (CSV/JSON)"""
+    from fastapi.responses import PlainTextResponse
+    import json
+
+    result = await asyncio.to_thread(get_backtest_result, backtest_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="回测结果未找到")
+
+    payload = dict(result)
+    if "result_json" in payload and payload["result_json"]:
+        try:
+            payload["result"] = json.loads(payload["result_json"])
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    if fmt == "csv":
+        # 简单CSV导出（权益曲线）
+        equity = (payload.get("result") or payload).get("equity_curve", [])
+        lines = ["date,total_value"]
+        for e in equity:
+            lines.append(f"{e.get('date','')},{e.get('total_value','')}")
+        csv_content = "\n".join(lines)
+        return PlainTextResponse(
+            content=csv_content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=backtest_{backtest_id}.csv"},
+        )
+
+    # 默认JSON
+    return {"success": True, "data": payload}
 
 
 # ── 信号 ──
@@ -328,7 +418,7 @@ async def list_backtests(strategy_name: Optional[str] = None, limit: int = 20):
 async def get_latest_signals(fund_code: Optional[str] = None,
                               signal_type: Optional[str] = None):
     """获取最新信号"""
-    signals = get_signals(fund_code=fund_code, signal_type=signal_type, limit=20)
+    signals = await asyncio.to_thread(partial(get_signals, fund_code=fund_code, signal_type=signal_type, limit=20))
     return {"success": True, "data": signals}
 
 
@@ -338,7 +428,7 @@ async def get_signal_history(fund_code: Optional[str] = None,
                               page: int = 1, limit: int = 20):
     """信号历史 (分页)"""
     offset = (page - 1) * limit
-    signals = get_signals(fund_code=fund_code, signal_type=signal_type, limit=limit, offset=offset)
+    signals = await asyncio.to_thread(partial(get_signals, fund_code=fund_code, signal_type=signal_type, limit=limit, offset=offset))
     return {"success": True, "data": signals, "page": page, "limit": limit, "total": len(signals)}
 
 
@@ -361,7 +451,7 @@ async def signal_stream():
 async def portfolio_status():
     """模拟组合状态"""
     from ..fund_quant.portfolio.tracker import portfolio_tracker
-    status = portfolio_tracker.get_status()
+    status = await asyncio.to_thread(portfolio_tracker.get_status)
     return {"success": True, "data": status}
 
 
@@ -371,14 +461,14 @@ async def portfolio_status():
 async def risk_metrics(fund_code: Optional[str] = None):
     """风险指标"""
     if fund_code:
-        nav_data = get_nav_history(fund_code)
+        nav_data = await asyncio.to_thread(get_nav_history, fund_code)
         if nav_data and len(nav_data) > 5:
             nav_values = [p.get("nav", 0) for p in nav_data if p.get("nav") and p["nav"] > 0]
             if len(nav_values) > 5:
                 returns = []
                 for i in range(1, len(nav_values)):
                     returns.append((nav_values[i] - nav_values[i-1]) / nav_values[i-1])
-                metrics = risk_metrics_calculator.calculate(returns)
+                metrics = await asyncio.to_thread(risk_metrics_calculator.calculate, returns)
                 return {
                     "success": True,
                     "data": {
@@ -396,7 +486,7 @@ async def risk_metrics(fund_code: Optional[str] = None):
 @router.get("/data/quality/{fund_code}")
 async def data_quality(fund_code: str):
     """获取基金数据质量报告"""
-    summary = data_quality_checker.get_quality_summary(fund_code)
+    summary = await asyncio.to_thread(data_quality_checker.get_quality_summary, fund_code)
     return {"success": True, "data": summary}
 
 
@@ -413,7 +503,7 @@ async def trigger_collection(req: DataCollectRequest):
                 start_date=date.today().replace(year=date.today().year - req.years).strftime("%Y%m%d"),
             )
             if points:
-                save_nav_points(points)
+                await asyncio.to_thread(save_nav_points, points)
             results.append({"fund_code": fund_code, "status": "ok", "count": len(points)})
         except Exception as e:
             results.append({"fund_code": fund_code, "status": "error", "message": str(e)})
@@ -424,7 +514,7 @@ async def trigger_collection(req: DataCollectRequest):
 async def data_status():
     """数据采集状态"""
     from ..fund_quant.data.storage import get_pending_collections
-    pending = get_pending_collections()
+    pending = await asyncio.to_thread(get_pending_collections)
     return {"success": True, "data": {
         "pending_count": len(pending),
         "pending": pending[:50],  # 只返回前50条

@@ -147,6 +147,25 @@ class CostModelConfig(BaseModel):
             "fof": 0.010,
         }
     )
+    # ── Phase B 新增字段 ──
+    c_class_service_fee: float = 0.004  # C类销售服务费(年化)
+    c_class_redemption_fee: float = 0.005  # C类赎回费率
+    ac_class_threshold_years: float = 1.5  # A/C份额选择阈值
+    dividend_tax_holding_under_1y: float = 0.10  # <1年分红税
+    dividend_tax_holding_over_1y: float = 0.0   # ≥1年分红税
+    max_subscription_amount: Optional[float] = None  # 大额申购限制
+    max_redemption_amount: Optional[float] = None   # 大额赎回限制
+    custody_fee_rate: Dict[str, float] = Field(
+        default_factory=lambda: {
+            "stock": 0.0025,
+            "hybrid": 0.0020,
+            "bond": 0.0015,
+            "index": 0.0010,
+            "qdii": 0.0030,
+            "money": 0.0008,
+            "fof": 0.0020,
+        }
+    )
 
 
 class BacktestConfig(BaseModel):

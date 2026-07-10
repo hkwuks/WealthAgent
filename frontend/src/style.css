@@ -3992,3 +3992,55 @@ body::after {
 @media (max-width: 1024px) {
   .ctp-grid { grid-template-columns: 1fr; }
 }
+
+/* ═══════════════════════════════════════
+   FundQuant 基金量化 UI 样式
+   ═══════════════════════════════════════ */
+
+.fund-quant-page { padding: 4px 0; }
+.fq-loading { color: var(--text-tertiary); padding: 20px; text-align: center; }
+.fq-error   { color: var(--danger-color);  padding: 20px; text-align: center; }
+.fq-hint    { color: var(--text-tertiary); padding: 8px;  font-size: 13px; }
+.fq-section-title { font-weight: 600; font-size: 15px; margin: 12px 0 8px; color: var(--text-primary); }
+.fq-type-group { margin-bottom: 12px; }
+.fq-type-label { font-size: 13px; font-weight: 600; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+.strategy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.strategy-card { background: var(--bg-primary); border: 1px solid var(--border-light); border-radius: var(--radius); padding: 12px; transition: var(--transition-fast); }
+.strategy-card:hover { border-color: var(--primary-color); box-shadow: var(--shadow-sm); }
+.strategy-name { font-weight: 600; font-size: 14px; color: var(--text-primary); }
+.strategy-type { font-size: 11px; padding: 2px 6px; border-radius: 4px; display: inline-block; margin: 4px 0; }
+.strategy-desc { font-size: 12px; color: var(--text-tertiary); line-height: 1.4; }
+.tag-timing    { background: rgba(59,130,246,0.1); color: #3b82f6; }
+.tag-selection { background: rgba(16,185,129,0.1); color: #10b981; }
+.tag-allocation{ background: rgba(245,158,11,0.1); color: #f59e0b; }
+.tag-buy       { color: #10b981; font-weight: 600; }
+.tag-sell      { color: #ef4444; font-weight: 600; }
+.tag-hold      { color: #94a3b8; }
+.tag-rebalance { color: #f59e0b; }
+.fq-form-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.fq-form-row .input { padding: 6px 10px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); color: var(--text-primary); font-size: 13px; }
+.fq-form-row .input:focus { border-color: var(--primary-color); outline: none; box-shadow: 0 0 0 2px var(--primary-light); }
+.fq-chart { width: 100%; height: 300px; margin: 8px 0; }
+.fq-result-area { margin-top: 8px; }
+.fq-pre { background: var(--bg-secondary); padding: 8px; border-radius: var(--radius-sm); font-size: 12px; line-height: 1.4; max-height: 200px; overflow: auto; }
+.fq-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.fq-table th, .fq-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--border-light); }
+.fq-table th { font-weight: 600; color: var(--text-secondary); font-size: 12px; }
+.fq-metrics { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.metric-card { background: var(--bg-primary); border: 1px solid var(--border-light); border-radius: var(--radius-sm); padding: 8px 12px; min-width: 90px; text-align: center; }
+.metric-card span:first-child { display: block; font-size: 11px; color: var(--text-tertiary); }
+.metric-card span:last-child  { display: block; font-size: 16px; font-weight: 700; }
+.positive { color: var(--success-color); }
+.negative { color: var(--danger-color); }
+.portfolio-summary { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0; }
+.portfolio-stat { background: var(--bg-primary); border: 1px solid var(--border-light); border-radius: var(--radius); padding: 12px 16px; min-width: 110px; }
+.portfolio-stat .stat-label { display: block; font-size: 12px; color: var(--text-tertiary); }
+.portfolio-stat .stat-value { display: block; font-size: 18px; font-weight: 700; margin-top: 2px; }
+.sub-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 8px 0; }
+.sub-tab { padding: 6px 12px; border: 1px solid var(--border-light); background: var(--bg-primary); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; font-weight: 500; color: var(--text-secondary); transition: var(--transition-fast); }
+.sub-tab:hover { border-color: var(--primary-color); color: var(--primary-color); }
+.sub-tab.active { background: var(--primary-color); color: white; border-color: var(--primary-color); }
+
+/* 覆盖冲突: .positive/.negative 在 CTP 区域用了 !important，在 FundQuant 中用更具体的选择器覆盖 */
+.fund-quant-page .positive { color: var(--success-color) !important; }
+.fund-quant-page .negative { color: var(--danger-color) !important; }

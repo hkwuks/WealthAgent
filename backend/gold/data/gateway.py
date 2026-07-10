@@ -20,13 +20,15 @@ class GoldDataGateway:
                        skip_quality_check: bool = False) -> list[GoldBarData]:
         """获取K线数据 — 优先SQLite，数据过期或refresh=True时从AkShare刷新"""
         today = datetime.now().strftime("%Y-%m-%d")
+        now_naive = datetime.now()
 
         # 非强制刷新时先查缓存
         if not refresh:
             bars = self.store.get_bars(symbol, period, start, end, limit)
             if bars:
                 latest = bars[-1].datetime  # ASC顺序，最新在末尾
-                age_days = (datetime.now() - latest).days
+                latest_naive = latest.replace(tzinfo=None) if latest.tzinfo else latest
+                age_days = (now_naive - latest_naive).days
                 # 日线超过1天未更新，视为过期
                 if (period == "d" and age_days <= 1) or period != "d":
                     if not skip_quality_check:
@@ -40,15 +42,26 @@ class GoldDataGateway:
         fetch_start = start or "2025-01-01"
         fetch_end = end or today
         # 三级降级: AkShare → 直连新浪 → yFinance COMEX
-        bars = await self._fetch_from_akshare(symbol, period, fetch_start, fetch_end)
-        if not bars:
-            bars = await self._fetch_from_sina_direct(symbol, period, fetch_start, fetch_end)
+        # 每级拿完检查新鲜度，过期就继续 fallback
+        for source_name, fetch_fn in [
+            ("AkShare SHFE", lambda: self._fetch_from_akshare(symbol, period, fetch_start, fetch_end)),
+            ("Sina直连", lambda: self._fetch_from_sina_direct(symbol, period, fetch_start, fetch_end)),
+            ("yFinance COMEX", lambda: self._fetch_from_yfinance(fetch_start, fetch_end, period, output_symbol=symbol)),
+        ]:
+            bars = await fetch_fn()
             if bars:
-                logger.info(f"Sina直连补充数据: {len(bars)}条")
-        if not bars:
-            bars = await self._fetch_from_yfinance(fetch_start, fetch_end, period)
-            if bars:
-                logger.warning(f"使用yFinance COMEX黄金作为备选 ({len(bars)}条) — 美元价格，非SHFE")
+                latest_dt = bars[-1].datetime
+                latest_naive = latest_dt.replace(tzinfo=None) if latest_dt.tzinfo else latest_dt
+                age_days = (now_naive - latest_naive).days if latest_dt else 999
+                # AkShare SHFE 已过期 → 继续试下个源（数据只到2024年）
+                if source_name == "AkShare SHFE" and period == "d" and age_days > 3:
+                    self.store.save_bars(bars, period)  # 存了当历史参考
+                    logger.info(f"AkShare SHFE 数据已过期 ({age_days}天前)，尝试下个源")
+                    bars = None
+                    continue
+                if bars:
+                    logger.info(f"{source_name} 获取数据: {len(bars)}条 (最新 {latest_dt})")
+                    break
 
         if bars:
             self.store.save_bars(bars, period)
@@ -117,7 +130,8 @@ class GoldDataGateway:
             return []
 
     async def _fetch_from_yfinance(self, start: str, end: str,
-                                    period: str = "d") -> list[GoldBarData]:
+                                    period: str = "d",
+                                    output_symbol: str = "GC=F") -> list[GoldBarData]:
         """备选2: yFinance COMEX黄金（GC=F, 美元/盎司, 仅供参考）"""
         try:
             import yfinance as yf
@@ -132,7 +146,7 @@ class GoldDataGateway:
             bars = []
             for idx, row in df.iterrows():
                 bars.append(GoldBarData(
-                    symbol="GC=F", exchange="COMEX", period=period,
+                    symbol=output_symbol, exchange="COMEX", period=period,
                     datetime=idx.to_pydatetime(),
                     open=float(row["Open"]), high=float(row["High"]),
                     low=float(row["Low"]), close=float(row["Close"]),

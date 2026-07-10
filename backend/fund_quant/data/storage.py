@@ -195,19 +195,29 @@ def save_holdings(holdings: List[FundHolding]):
             )
 
 
-def get_holdings(fund_code: str, report_period: Optional[str] = None) -> List[dict]:
-    """获取持仓数据"""
+def get_holdings(fund_code: str, report_period: Optional[str] = None,
+                 as_of_date: Optional[str] = None) -> List[dict]:
+    """获取持仓数据
+
+    Args:
+        fund_code: 基金代码
+        report_period: 指定报告期
+        as_of_date: 前视偏差防护 — 只返回 publish_date <= as_of_date 的持仓
+    """
     with get_conn() as conn:
         if report_period:
-            rows = conn.execute(
-                "SELECT * FROM holdings_history WHERE fund_code = ? AND report_period = ? ORDER BY report_period DESC",
-                (fund_code, report_period),
-            ).fetchall()
+            query = "SELECT * FROM holdings_history WHERE fund_code = ? AND report_period = ?"
+            params: List[Any] = [fund_code, report_period]
         else:
-            rows = conn.execute(
-                "SELECT * FROM holdings_history WHERE fund_code = ? ORDER BY report_period DESC",
-                (fund_code,),
-            ).fetchall()
+            query = "SELECT * FROM holdings_history WHERE fund_code = ?"
+            params = [fund_code]
+
+        if as_of_date:
+            query += " AND publish_date <= ?"
+            params.append(as_of_date)
+
+        query += " ORDER BY report_period DESC"
+        rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
 
