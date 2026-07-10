@@ -17,6 +17,7 @@ import re
 import time
 import random
 from datetime import datetime
+from functools import partial
 from typing import Dict, List, Optional, Any
 from loguru import logger
 import akshare as ak
@@ -696,7 +697,14 @@ class FundPriceAPI:
             # 检查是否成功获取到净值数据
             if nav is None and fund_name == code:
                 # 基金名称等于代码，说明天天基金网没有收录该基金
-                # 可能是香港互认基金、私募基金或其他特殊基金
+                # 可能是香港互认基金(968开头)、私募基金或其他特殊基金
+                # 尝试海外基金 API 获取名称和净值
+                if code.startswith("968"):
+                    overseas_data = await self._get_overseas_fund_data(code)
+                    if overseas_data:
+                        fund_data = overseas_data
+                        self._set_cache(cache_key, fund_data)
+                        return fund_data
                 logger.warning(f"基金 {code} 在天天基金网没有收录，无法获取数据")
                 return None
 
@@ -735,6 +743,145 @@ class FundPriceAPI:
         except Exception as e:
             logger.error(f"获取基金数据失败 {code}: {e}")
             return None
+
+    async def _get_overseas_fund_data(self, code: str) -> Optional[FundData]:
+        """968 开头香港互认基金数据 — 三级降级
+
+        1. fundgz.1234567.com.cn  基金实时估值 API（名称+净值+估值）
+        2. datacenter.eastmoney   数据中心 API（名称+类型）
+        3. yfinance               Yahoo Finance 兜底
+        """
+        for source_name, fetch_fn in [
+            ("fundgz实时估值", partial(self._overseas_source_fundgz, code)),
+            ("datacenter API", partial(self._overseas_source_datacenter, code)),
+            ("yfinance", partial(self._overseas_source_yfinance, code)),
+        ]:
+            try:
+                result = await fetch_fn()
+                if result:
+                    logger.info(f"海外基金 {code} 数据来源: {source_name}")
+                    return result
+            except Exception as e:
+                logger.debug(f"海外基金 {code} 来源 [{source_name}] 失败: {e}")
+                continue
+
+        logger.warning(f"海外基金 {code} 所有数据源均失败")
+        return None
+
+    async def _overseas_source_fundgz(self, code: str) -> Optional[FundData]:
+        """数据源 1: fundgz.1234567.com.cn 海外基金实时估值 API"""
+        url = f"https://fundgz.1234567.com.cn/js/{code}.js"
+        content = await self._request_with_retry("GET", url)
+        if not content:
+            return None
+
+        match = re.search(r'jsonpgz\((.+)\)', content)
+        if not match:
+            return None
+
+        import json
+        data = json.loads(match.group(1))
+        fund_name = data.get("name", code)
+        nav = float(data["dwjz"]) if "dwjz" in data else None
+        estimated_nav = float(data["gsz"]) if "gsz" in data else None
+        nav_date = data.get("jzrq")
+
+        previous_nav = estimated_nav if estimated_nav else nav
+        change = 0.0
+        change_percent = 0.0
+        if nav and previous_nav and previous_nav > 0:
+            change = nav - previous_nav
+            change_percent = (change / previous_nav * 100)
+
+        return FundData(
+            fund_code=code,
+            fund_name=fund_name,
+            fund_type="海外混合",
+            nav=nav, nav_date=nav_date, previous_nav=previous_nav,
+            establish_date=None, market_type=MarketType.UNKNOWN,
+            benchmark=None, tracking_index=None,
+            price=estimated_nav or nav, change=change,
+            change_percent=change_percent, volume=0.0,
+            timestamp=datetime.now(),
+        )
+
+    async def _overseas_source_datacenter(self, code: str) -> Optional[FundData]:
+        """数据源 2: fundf10.eastmoney.com 基金概况页（名称+类型）"""
+        url = f"https://fundf10.eastmoney.com/jbgk_{code}.html"
+        content = await self._request_with_retry("GET", url)
+        if not content:
+            return None
+
+        # 从 title 提取基金名称
+        title_match = re.search(r'<title>(.+?)基金基本概况', content)
+        name_from_title = title_match.group(1).strip() if title_match else None
+        # 清理标题中的括号部分，如 "(968006)基金基本概况" → ""
+        if name_from_title and re.match(r'^\(\d{6}\)$', name_from_title):
+            name_from_title = None
+
+        # 从 FundArchivesDatas API 尝试获取（部分海外基金可用）
+        api_url = (f"https://api.fund.eastmoney.com/f10/FundArchivesDatas"
+                   f"?type=jjgk&code={code}&topline=10")
+        api_content = await self._request_with_retry("GET", api_url)
+        fund_name = None
+        fund_type = "海外混合"
+        if api_content:
+            try:
+                api_data = json.loads(api_content)
+                if api_data.get("Data"):
+                    rows = api_data["Data"]
+                    if rows and isinstance(rows, list) and len(rows) > 0:
+                        row = rows[0]
+                        fund_name = row.get("FUND_NAME") or row.get("fund_name")
+                        fund_type = row.get("FUND_TYPE") or row.get("fund_type", "海外混合")
+            except (json.JSONDecodeError, AttributeError, KeyError):
+                pass
+
+        if not fund_name:
+            fund_name = name_from_title or code
+
+        return FundData(
+            fund_code=code,
+            fund_name=fund_name,
+            fund_type=fund_type,
+            nav=None, nav_date=None, previous_nav=None,
+            establish_date=None, market_type=MarketType.UNKNOWN,
+            benchmark=None, tracking_index=None,
+            price=None, change=0.0, change_percent=0.0,
+            volume=0.0, timestamp=datetime.now(),
+        )
+
+    async def _overseas_source_yfinance(self, code: str) -> Optional[FundData]:
+        """数据源 3: yfinance Yahoo Finance 兜底"""
+        try:
+            import yfinance as yf
+            ticker = yf.Ticker(f"{code}.HK")
+            info = ticker.info
+        except Exception:
+            return None
+
+        fund_name = info.get("shortName") or info.get("longName") or code
+        price = info.get("regularMarketPrice") or info.get("previousClose")
+        prev_close = info.get("previousClose") or price
+        nav_date = datetime.now().strftime("%Y-%m-%d")
+
+        change = 0.0
+        change_percent = 0.0
+        if price and prev_close and prev_close > 0:
+            change = price - prev_close
+            change_percent = (change / prev_close * 100)
+
+        return FundData(
+            fund_code=code,
+            fund_name=fund_name,
+            fund_type="海外混合",
+            nav=price, nav_date=nav_date, previous_nav=prev_close,
+            establish_date=None, market_type=MarketType.UNKNOWN,
+            benchmark=None, tracking_index=None,
+            price=price, change=change,
+            change_percent=change_percent, volume=0.0,
+            timestamp=datetime.now(),
+        )
 
     async def _get_fund_type(self, code: str) -> Optional[str]:
         """获取基金类型"""
