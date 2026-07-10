@@ -1,9 +1,9 @@
-"""FundQuant 数据采集器 - AkShare/东方财富接口封装"""
+"""FundQuant 数据采集器 - AkShare/东方财富接口封装（含重试机制）"""
 
 import asyncio
 import time
 from datetime import date, datetime, timedelta
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Callable, Any
 from loguru import logger
 
 from ..core.errors import DataCollectionError
@@ -13,6 +13,9 @@ from ..core.config import fund_quant_settings
 
 class FundDataCollector:
     """基金数据采集器"""
+
+    MAX_RETRIES = 3
+    RETRY_DELAYS = [5, 15, 30]  # seconds
 
     def __init__(self):
         self._session = None
@@ -27,42 +30,58 @@ class FundDataCollector:
             await asyncio.sleep(self._rate_limit - elapsed)
         self._last_request_time = time.time()
 
+    async def _with_retry(self, fn: Callable, *args, **kwargs) -> Any:
+        """带重试机制的采集调用"""
+        last_exc = None
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                return await fn(*args, **kwargs)
+            except Exception as e:
+                last_exc = e
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self.RETRY_DELAYS[min(attempt, len(self.RETRY_DELAYS) - 1)]
+                    logger.warning(f"采集重试 {attempt + 1}/{self.MAX_RETRIES}: {fn.__name__} 失败 ({e}), {delay}s后重试")
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(f"采集失败 (已重试{self.MAX_RETRIES}次): {fn.__name__}: {e}")
+                    raise DataCollectionError(str(last_exc), str(args[0] if args else ""))
+
     # ── 历史净值采集 ──
 
     async def fetch_nav_history(self, fund_code: str,
                                  start_date: Optional[str] = None,
                                  end_date: Optional[str] = None) -> List[NavPoint]:
         """采集基金历史净值"""
+        return await self._with_retry(self._fetch_nav_history_impl, fund_code, start_date, end_date)
+
+    async def _fetch_nav_history_impl(self, fund_code: str,
+                                       start_date: Optional[str] = None,
+                                       end_date: Optional[str] = None) -> List[NavPoint]:
         await self._rate_limit_wait()
-        try:
-            import akshare as ak
-            fund_etf_hist = ak.fund_etf_hist_em(
-                symbol=fund_code,
-                start_date=start_date or "20000101",
-                end_date=end_date or date.today().strftime("%Y%m%d"),
-                adjust="",
-            )
-            points = []
-            for _, row in fund_etf_hist.iterrows():
-                try:
-                    d = row["净值日期"] if "净值日期" in fund_etf_hist.columns else row["日期"]
-                    if isinstance(d, str):
-                        d = datetime.strptime(d, "%Y-%m-%d").date()
-                    nav_date = d
-                except (ValueError, KeyError):
-                    continue
-                points.append(NavPoint(
-                    fund_code=fund_code,
-                    date=nav_date,
-                    nav=float(row.get("单位净值", 0)),
-                    adjusted_nav=float(row.get("累计净值", 0)) if "累计净值" in row else None,
-                    source="eastmoney",
-                ))
-            return points
-        except ImportError:
-            raise DataCollectionError("akshare not installed", fund_code)
-        except Exception as e:
-            raise DataCollectionError(str(e), fund_code)
+        import akshare as ak
+        fund_etf_hist = ak.fund_etf_hist_em(
+            symbol=fund_code,
+            start_date=start_date or "20000101",
+            end_date=end_date or date.today().strftime("%Y%m%d"),
+            adjust="",
+        )
+        points = []
+        for _, row in fund_etf_hist.iterrows():
+            try:
+                d = row["净值日期"] if "净值日期" in fund_etf_hist.columns else row["日期"]
+                if isinstance(d, str):
+                    d = datetime.strptime(d, "%Y-%m-%d").date()
+                nav_date = d
+            except (ValueError, KeyError):
+                continue
+            points.append(NavPoint(
+                fund_code=fund_code,
+                date=nav_date,
+                nav=float(row.get("单位净值", 0)),
+                adjusted_nav=float(row.get("累计净值", 0)) if "累计净值" in row else None,
+                source="eastmoney",
+            ))
+        return points
 
     async def fetch_valuation_history(self, fund_code: str,
                                        start_date: Optional[str] = None,
@@ -126,7 +145,6 @@ class FundDataCollector:
                         market_value=float(row.get("持仓市值", 0)) if "持仓市值" in row else None,
                     ))
 
-                # 披露日期：报告期后约20天
                 publish_date = report_period + timedelta(days=20)
                 results.append(FundHolding(
                     fund_code=fund_code,
@@ -139,6 +157,100 @@ class FundDataCollector:
             raise DataCollectionError("akshare not installed", fund_code)
         except Exception as e:
             raise DataCollectionError(str(e), fund_code)
+
+    # ── 基金评级采集 ──
+
+    async def fetch_rating(self, fund_code: str) -> Optional[int]:
+        """采集基金晨星评级 (1-5)
+
+        从东方财富获取基金评级数据
+        Returns:
+            int 1-5, 或 None 表示无数据
+        """
+        return await self._with_retry(self._fetch_rating_impl, fund_code)
+
+    async def _fetch_rating_impl(self, fund_code: str) -> Optional[int]:
+        await self._rate_limit_wait()
+        try:
+            import akshare as ak
+            # 使用 ak.fund_info_em 获取包含评级的元数据
+            info = ak.fund_info_em(symbol=fund_code)
+            if info is None or info.empty:
+                return None
+            info_dict = info.set_index("item")["value"].to_dict() if "item" in info.columns else {}
+            # 尝试多个可能的评级字段
+            for key in ["晨星评级", "评级", "最新评级"]:
+                rating_str = info_dict.get(key)
+                if rating_str:
+                    try:
+                        rating = int(float(rating_str))
+                        if 1 <= rating <= 5:
+                            return rating
+                    except (ValueError, TypeError):
+                        continue
+            return None
+        except Exception:
+            logger.debug(f"评级采集失败: {fund_code}")
+            return None
+
+    # ── 分红数据采集 ──
+
+    async def fetch_dividend_history(self, fund_code: str) -> List[dict]:
+        """采集基金分红历史
+
+        Returns:
+            [{date, dividend_per_share, ...}]
+        """
+        return await self._with_retry(self._fetch_dividend_impl, fund_code)
+
+    async def _fetch_dividend_impl(self, fund_code: str) -> List[dict]:
+        await self._rate_limit_wait()
+        try:
+            import akshare as ak
+            # 基金分红数据
+            df = ak.fund_dividend_em(symbol=fund_code)
+            if df is None or df.empty:
+                return []
+
+            results = []
+            date_col = None
+            for col in ["除权日", "红利发放日", "公告日", "登记日"]:
+                if col in df.columns:
+                    date_col = col
+                    break
+
+            if not date_col:
+                return []
+
+            for _, row in df.iterrows():
+                d_str = str(row.get(date_col, ""))
+                if not d_str:
+                    continue
+                try:
+                    div_date = datetime.strptime(d_str[:10], "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+
+                dividend_per_share = 0.0
+                for col in ["每份分红", "分红金额", "派息"]:
+                    val = row.get(col)
+                    if val:
+                        try:
+                            dividend_per_share = float(val)
+                            break
+                        except (ValueError, TypeError):
+                            continue
+
+                results.append({
+                    "fund_code": fund_code,
+                    "date": div_date.isoformat(),
+                    "dividend_per_share": dividend_per_share,
+                    "announce_date": str(row.get("公告日", d_str))[:10] if "公告日" in row else d_str[:10],
+                })
+            return results
+        except Exception as e:
+            logger.debug(f"分红采集失败: {fund_code}: {e}")
+            return []
 
     # ── 基金元数据采集 ──
 
@@ -177,6 +289,9 @@ class FundDataCollector:
                 except ValueError:
                     pass
 
+            # 采集评级
+            meta.rating = await self.fetch_rating(fund_code)
+
             return meta
         except ImportError:
             raise DataCollectionError("akshare not installed", fund_code)
@@ -185,17 +300,10 @@ class FundDataCollector:
 
     @staticmethod
     def _classify_fund_type(raw_type: str) -> str:
-        """将原始基金类型映射为标准类型"""
         mapping = {
-            "股票": "stock",
-            "混合": "hybrid",
-            "债券": "bond",
-            "货币": "money",
-            "指数": "index",
-            "ETF": "etf",
-            "联接": "etf_link",
-            "QDII": "qdii",
-            "FOF": "fof",
+            "股票": "stock", "混合": "hybrid", "债券": "bond",
+            "货币": "money", "指数": "index", "ETF": "etf",
+            "联接": "etf_link", "QDII": "qdii", "FOF": "fof",
         }
         for key, value in mapping.items():
             if key in raw_type:
@@ -205,7 +313,6 @@ class FundDataCollector:
     # ── 汇率数据采集 ──
 
     async def fetch_fx_rates(self) -> Dict[str, float]:
-        """采集主要汇率数据"""
         await self._rate_limit_wait()
         try:
             import akshare as ak
@@ -219,7 +326,6 @@ class FundDataCollector:
     # ── 国债收益率采集 ──
 
     async def fetch_yield_10y(self) -> Optional[float]:
-        """采集10年期国债收益率"""
         await self._rate_limit_wait()
         try:
             import akshare as ak
@@ -232,5 +338,4 @@ class FundDataCollector:
             return None
 
 
-# 全局单例
 fund_data_collector = FundDataCollector()

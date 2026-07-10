@@ -154,12 +154,246 @@ class TestStrategies:
         signals = s.on_evaluate(None, None)
         assert isinstance(signals, list)
 
+    def test_rating_enhanced_screen_empty_db(self):
+        """无数据时 screen 返回空 rankings"""
+        from backend.fund_quant.strategy.selection.rating_enhanced import RatingEnhancedSelection
+        s = RatingEnhancedSelection()
+        result = s.screen(fund_type="stock", top_n=5)
+        assert result["total_candidates"] == 0
+        assert result["rankings"] == []
+
     def test_long_history_strategies_return_signals(self, setup_strategy):
         """验证有足够数据时策略返回非空信号"""
         for name in ["valuation_deviation", "momentum"]:
             s = setup_strategy(name)
             signals = s.on_evaluate(None, None)
             assert len(signals) >= 1, f"{name} 未能生成信号"
+
+
+class TestRatingEnhanced:
+    """评级增强选基策略专项测试（mock 数据层）"""
+
+    def _make_nav_values(self, length=120, base=1.0, trend=0.0003, vol=0.008):
+        """生成模拟净值数据"""
+        import numpy as np
+        np.random.seed(42)
+        vals = [base]
+        for _ in range(length):
+            vals.append(vals[-1] * (1 + trend + np.random.normal(0, vol)))
+        return vals
+
+    def test_rating_normalize(self):
+        """评级归一化: (星级-1)/4"""
+        from backend.fund_quant.strategy.selection.rating_enhanced import RatingEnhancedSelection
+        s = RatingEnhancedSelection()
+        assert s._normalize_rating(None) == 0.5
+        assert s._normalize_rating(1) == 0.0
+        assert s._normalize_rating(3) == 0.5
+        assert s._normalize_rating(5) == 1.0
+        assert s._normalize_rating(0) == 0.5  # 无效值回退
+
+    def test_deviation_score_mapping(self):
+        """估值偏差z-score → 得分映射"""
+        from backend.fund_quant.strategy.selection.rating_enhanced import RatingEnhancedSelection
+        s = RatingEnhancedSelection()
+        assert s._deviation_to_score(-2.0) == 1.0      # 低估 → 高分
+        assert s._deviation_to_score(-1.6) == 1.0      # < -1.5 → 高分
+        assert s._deviation_to_score(0.0) == 0.5        # 正常 → 中分
+        assert s._deviation_to_score(1.4) == 0.5        # < 1.5 → 中分
+        assert s._deviation_to_score(1.6) == 0.0        # > 1.5 → 低分
+        assert s._deviation_to_score(2.0) == 0.0        # 高估 → 低分
+
+    def test_calc_quant_factors(self):
+        """量化因子计算返回预期结构"""
+        from backend.fund_quant.strategy.selection.rating_enhanced import RatingEnhancedSelection
+        s = RatingEnhancedSelection()
+        navs = self._make_nav_values(120)
+        factors = s._calc_quant_factors(navs)
+        assert "sharpe_ratio" in factors
+        assert "max_drawdown" in factors
+        assert "excess_return" in factors
+
+    def test_screen_with_mock_db_data(self, monkeypatch):
+        """模拟DB有数据时 screen 返回评分排名"""
+        from backend.fund_quant.strategy.selection.rating_enhanced import RatingEnhancedSelection
+
+        mock_funds = ["000001", "110011", "007016"]
+        mock_metas = {
+            "000001": {"fund_code": "000001", "fund_name": "TestA", "fund_type": "stock", "rating": 5},
+            "110011": {"fund_code": "110011", "fund_name": "TestB", "fund_type": "stock", "rating": 3},
+            "007016": {"fund_code": "007016", "fund_name": "TestC", "fund_type": "stock", "rating": 1},
+        }
+
+        navs = self._make_nav_values(120)
+
+        def mock_get_all():
+            return mock_funds
+
+        def mock_get_meta(code):
+            return mock_metas.get(code)
+
+        def mock_get_nav_history(code):
+            return [{"nav": v} for v in navs]
+
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_all_fund_codes", mock_get_all)
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_fund_meta", mock_get_meta)
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_nav_history", mock_get_nav_history)
+
+        s = RatingEnhancedSelection()
+        result = s.screen(fund_type="stock", top_n=5)
+        assert result["total_candidates"] == 3
+        assert len(result["rankings"]) == 3
+        # rating 5 → 高分，应排第一
+        assert result["rankings"][0]["fund_code"] == "000001"
+        assert result["rankings"][0]["rating_score"] == 1.0
+
+    def test_custom_weights(self, monkeypatch):
+        """自定义权重改变排序"""
+        from backend.fund_quant.strategy.selection.rating_enhanced import RatingEnhancedSelection
+
+        mock_funds = ["000001", "110011"]
+        mock_metas = {
+            "000001": {"fund_code": "000001", "fund_name": "TestA", "fund_type": "stock", "rating": 5},
+            "110011": {"fund_code": "110011", "fund_name": "TestB", "fund_type": "stock", "rating": 1},
+        }
+        navs = self._make_nav_values(120)
+
+        def mock_get_all():
+            return mock_funds
+
+        def mock_get_meta(code):
+            return mock_metas.get(code)
+
+        def mock_get_nav_history(code):
+            return [{"nav": v} for v in navs]
+
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_all_fund_codes", mock_get_all)
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_fund_meta", mock_get_meta)
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_nav_history", mock_get_nav_history)
+
+        s = RatingEnhancedSelection()
+        # 降低评级权重，测试可配置性
+        result = s.screen(fund_type="stock", top_n=5, params={"rating_weight": 0.1, "quant_weight": 0.7, "deviation_weight": 0.2})
+        assert result["total_candidates"] == 2
+        # 参数被生效
+        assert s.params["rating_weight"] == 0.1
+
+    def test_no_data_fallback(self):
+        """无净值数据时返回空结果"""
+        from backend.fund_quant.strategy.selection.rating_enhanced import RatingEnhancedSelection
+        s = RatingEnhancedSelection()
+        result = s.screen(fund_type="stock", top_n=5)
+        assert result["total_candidates"] == 0
+
+    def test_name_contains_score(self, monkeypatch):
+        """信号中包含评分说明"""
+        from backend.fund_quant.strategy.selection.rating_enhanced import RatingEnhancedSelection
+
+        mock_funds = ["000001"]
+        mock_metas = {"000001": {"fund_code": "000001", "fund_name": "TestA", "fund_type": "stock", "rating": 4}}
+        navs = self._make_nav_values(120)
+
+        def mock_get_all():
+            return mock_funds
+
+        def mock_get_meta(code):
+            return mock_metas.get(code)
+
+        def mock_get_nav_history(code):
+            return [{"nav": v} for v in navs]
+
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_all_fund_codes", mock_get_all)
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_fund_meta", mock_get_meta)
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_nav_history", mock_get_nav_history)
+
+        s = RatingEnhancedSelection()
+        s._state["fund_code"] = "000001"
+        signals = s.on_evaluate(None, None)
+        assert len(signals) >= 1
+        # 评分说明应该包含评级、量化、偏差等关键词
+        assert "评级" in signals[0].reason or "评分" in signals[0].reason
+
+
+class TestBlackLitterman:
+    """Black-Litterman 配置策略专项测试"""
+
+    def _make_nav_values(self, length=120, base=1.0, trend=0.0003, vol=0.008):
+        import numpy as np
+        np.random.seed(42)
+        vals = [base]
+        for _ in range(length):
+            vals.append(vals[-1] * (1 + trend + np.random.normal(0, vol)))
+        return vals
+
+    def test_bl_insufficient_data(self):
+        """数据不足时返回 insufficient_data 状态"""
+        from backend.fund_quant.strategy.allocation.black_litterman import BlackLittermanStrategy
+        s = BlackLittermanStrategy()
+        result = s.optimize(fund_codes=["000001"])
+        assert result["status"] == "single_fund"
+
+    def test_bl_mvo_only(self, monkeypatch):
+        """无观点时降级为均值-方差优化"""
+        from backend.fund_quant.strategy.allocation.black_litterman import BlackLittermanStrategy
+
+        navs = self._make_nav_values(120)
+
+        def mock_get_nav_history(code):
+            return [{"nav": v} for v in navs]
+
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_nav_history", mock_get_nav_history)
+
+        s = BlackLittermanStrategy()
+        result = s.optimize(fund_codes=["000001", "110011"])
+        assert result["status"] == "success"
+        assert result["method"] in ("mean_variance",)
+        assert len(result["weights"]) == 2
+
+    def test_bl_with_views(self, monkeypatch):
+        """有信号视图时使用BL后验收益"""
+        from backend.fund_quant.strategy.allocation.black_litterman import BlackLittermanStrategy
+        from backend.fund_quant.core.enums import SignalType, Direction
+        from backend.fund_quant.core.models import FundSignal
+
+        navs = self._make_nav_values(120)
+
+        def mock_get_nav_history(code):
+            return [{"nav": v} for v in navs]
+
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_nav_history", mock_get_nav_history)
+
+        s = BlackLittermanStrategy()
+        # 注入一个买入信号
+        s._state["active_signals"] = [
+            FundSignal(signal_id="t1", fund_code="000001", fund_name="TestA",
+                       signal_type=SignalType.TIMING, direction=Direction.BUY,
+                       confidence=0.8, reason="测试信号"),
+        ]
+        result = s.optimize(fund_codes=["000001", "110011"])
+        assert result["status"] == "success"
+        assert result["method"] in ("black_litterman",)
+        assert result.get("views_applied") is True
+
+    def test_bl_two_fund_example(self, monkeypatch):
+        """两基金示例: 验证BL公式数值合理性"""
+        from backend.fund_quant.strategy.allocation.black_litterman import BlackLittermanStrategy
+
+        navs = self._make_nav_values(120)
+
+        def mock_get_nav_history(code):
+            return [{"nav": v} for v in navs]
+
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_nav_history", mock_get_nav_history)
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_fund_meta", lambda c: None)
+
+        s = BlackLittermanStrategy()
+        result = s.optimize(fund_codes=["000001", "110011"])
+        assert result["status"] == "success"
+        assert "weights" in result
+        # 权重为正且和为1
+        w = list(result["weights"].values())
+        assert all(wi > 0 for wi in w)
+        assert abs(sum(w) - 1.0) < 0.01
 
 
 class TestStrategyState:

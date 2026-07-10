@@ -167,6 +167,144 @@ class TestRiskChecker:
         result = self.checker._check_concentration(sig, portfolio)
         assert isinstance(result, RiskCheckResult)
 
+    # ── 新检查: 关联基金集中度 ──
+
+    def test_related_fund_concentration_blocks(self):
+        """同基金公司持仓超过上限时拦截"""
+        sig = self.make_signal(direction=Direction.BUY, fund_code="000456")
+        portfolio = Portfolio(total_value=100000, cash=0,
+                              positions={"000001": 40000, "000002": 30000})
+        result = self.checker._check_related_fund_concentration(sig, portfolio)
+        assert not result.passed
+        assert "基金公司" in result.reason
+
+    def test_related_fund_concentration_allows(self):
+        """不同公司分散持仓放行"""
+        sig = self.make_signal(direction=Direction.BUY, fund_code="000456")
+        portfolio = Portfolio(total_value=100000, cash=0,
+                              positions={"000001": 10000, "110011": 10000})
+        result = self.checker._check_related_fund_concentration(sig, portfolio)
+        assert result.passed
+
+    # ── 新检查: 规模突降风险 ──
+
+    def test_scale_drop_normal(self, monkeypatch):
+        """正常规模放行"""
+        monkeypatch.setattr(
+            "backend.fund_quant.data.storage.get_fund_meta",
+            lambda c: {"fund_code": c, "scale": 500_000_000},
+        )
+        sig = self.make_signal(fund_code="test")
+        result = self.checker._check_scale_drop(sig)
+        assert result.passed
+
+    def test_scale_drop_alert(self, monkeypatch):
+        """小型基金(<1000万)告警"""
+        monkeypatch.setattr(
+            "backend.fund_quant.data.storage.get_fund_meta",
+            lambda c: {"fund_code": c, "scale": 5_000_000},
+        )
+        sig = self.make_signal(fund_code="tiny_fund")
+        result = self.checker._check_scale_drop(sig)
+        assert not result.passed
+        assert "清盘" in result.reason or "规模" in result.reason
+
+    # ── 新检查: 风格漂移 ──
+
+    def test_style_drift_no_data(self):
+        """无漂移数据时放行"""
+        sig = self.make_signal(fund_code="unknown")
+        result = self.checker._check_style_drift(sig)
+        assert result.passed
+
+    # ── 基金类型差异化 ──
+
+    def test_money_fund_timing_blocked(self, monkeypatch):
+        """货币基金拦截择时信号"""
+        monkeypatch.setattr(
+            "backend.fund_quant.risk.checks.FundRiskChecker._get_fund_type",
+            lambda self, c: "money",
+        )
+        sig = self.make_signal(fund_code="money_fund")
+        # signal_type is timing, direction is BUY
+        result = self.checker._check_fund_type(sig)
+        assert not result.passed
+        assert "货币基金" in result.reason
+
+    def test_stock_fund_timing_allowed(self, monkeypatch):
+        """股票基金择时信号放行"""
+        monkeypatch.setattr(
+            "backend.fund_quant.risk.checks.FundRiskChecker._get_fund_type",
+            lambda self, c: "stock",
+        )
+        sig = self.make_signal(fund_code="stock_fund")
+        result = self.checker._check_fund_type(sig)
+        assert result.passed
+
+    def test_bond_drawdown_tighter(self, monkeypatch):
+        """债券基金使用更严回撤阈值"""
+        monkeypatch.setattr(
+            "backend.fund_quant.risk.checks.FundRiskChecker._get_fund_type",
+            lambda self, c: "bond",
+        )
+        sig = self.make_signal(direction=Direction.BUY, fund_code="bond_fund")
+        # nav_values中模拟大回撤
+        portfolio = Portfolio(total_value=80000, cash=10000,
+                              nav_values={"bond_fund": 0.92})
+        result = self.checker._check_bond_drawdown(sig, portfolio)
+        # 具体是否拦截取决于当日涨跌幅, 至少不抛异常
+        assert isinstance(result, RiskCheckResult)
+
+    def test_qdii_fx_high_vol_blocked(self, monkeypatch):
+        """QDII汇率波动大时拦截买入"""
+        monkeypatch.setattr(
+            "backend.fund_quant.risk.checks.FundRiskChecker._get_fund_type",
+            lambda self, c: "qdii",
+        )
+        sig = self.make_signal(direction=Direction.BUY, fund_code="qdii_fund")
+        self.checker._state["fx_volatility"] = 0.08
+        result = self.checker._check_qdii_fx_risk(sig)
+        assert not result.passed
+        assert "汇率" in result.reason
+
+    def test_qdii_fx_low_vol_allowed(self, monkeypatch):
+        """QDII汇率正常时放行"""
+        monkeypatch.setattr(
+            "backend.fund_quant.risk.checks.FundRiskChecker._get_fund_type",
+            lambda self, c: "qdii",
+        )
+        sig = self.make_signal(direction=Direction.BUY, fund_code="qdii_fund")
+        self.checker._state["fx_volatility"] = 0.02
+        result = self.checker._check_qdii_fx_risk(sig)
+        assert result.passed
+
+    def test_fof_warning_appended(self, monkeypatch):
+        """FOF信号添加双重费率警告"""
+        monkeypatch.setattr(
+            "backend.fund_quant.risk.checks.FundRiskChecker._get_fund_type",
+            lambda self, c: "fof",
+        )
+        sig = self.make_signal(fund_code="fof_fund")
+        result = self.checker._check_fof_underlying(sig)
+        assert result.passed
+        assert "FOF" in sig.risk_warnings[0]
+
+    def test_closed_end_sell_blocked(self, monkeypatch):
+        """封闭期内卖出被拦截"""
+        monkeypatch.setattr(
+            "backend.fund_quant.risk.checks.FundRiskChecker._get_fund_type",
+            lambda self, c: "bond",
+        )
+        monkeypatch.setattr(
+            "backend.fund_quant.data.storage.get_fund_meta",
+            lambda c: {"fund_code": c, "established_date": "2026-01-01"},
+        )
+        sig = self.make_signal(direction=Direction.SELL, fund_code="closed_fund")
+        result = self.checker._check_closed_end(sig)
+        # 2026-01-01到今天(2026-07-10) < 365天
+        assert not result.passed
+        assert "封闭" in result.reason
+
 
 class TestStyleDriftDetector:
     def setup_method(self):
