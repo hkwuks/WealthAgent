@@ -295,7 +295,8 @@ QDII 混合：估算净值 = 昨日净值 × (1 + 已知持仓贡献 + 剩余仓
 │   ├── package.json
 │   └── vite.config.ts
 ├── data/                       # 持久化数据
-│   └── funds.json
+│   └── backend/
+│       └── funds.json
 ├── logs/                       # 运行日志
 ├── skills/                     # AI 技能
 │   └── wealth-agent/
@@ -554,7 +555,7 @@ server: {
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=hkwuks/Fund-Valuation-Framework&type=date&legend=top-left)](https://www.star-history.com/?repos=hkwuks%2FFund-Valuation-Framework&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=hkwuks/WealthAgent&type=date&legend=top-left&sealed_token=ugUt7g0kbmlxX_n5CevCTurOYzaaFJAXvBaDFvk81lpD4N7zYb5wbyXxkyisyxMZm2E2uFHH9cvA7Q8i84MG0izcZNqaQfgUeIxVEwuvCp_kVtv0BiKaLKkM6s2vhnnZTOaBp8wEnwWGZ2HWqLgvKlLjDWAiBh2GrCl3N7bAMTNrU3MMojGskEP7UK26)](https://www.star-history.com/?repos=hkwuks%2FWealthAgent&type=date&legend=top-left)
 
 ---
 

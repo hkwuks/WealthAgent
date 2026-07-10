@@ -120,10 +120,11 @@ async function initApp() {
 
 initApp().catch(console.error)
 
-// 标签切换功能
+// 标签切换功能（含标签保持：刷新后记住上次打开的标签）
 function setupTabSwitching() {
   const tabButtons = document.querySelectorAll<HTMLButtonElement>('.tab-button')
   const tabContents = document.querySelectorAll<HTMLDivElement>('.tab-content')
+  const ACTIVE_TAB_KEY = 'active_tab'
 
   // 初始化显示状态
   tabContents.forEach(content => {
@@ -132,42 +133,57 @@ function setupTabSwitching() {
     }
   })
 
+  function switchTab(tabId: string) {
+    // 更新标签按钮状态
+    tabButtons.forEach(btn => {
+      btn.classList.remove('active')
+      btn.setAttribute('aria-selected', 'false')
+    })
+    const targetBtn = document.querySelector<HTMLButtonElement>(`.tab-button[data-tab="${tabId}"]`)
+    if (targetBtn) {
+      targetBtn.classList.add('active')
+      targetBtn.setAttribute('aria-selected', 'true')
+    }
+
+    // 更新标签内容状态
+    const targetContent = document.getElementById(`${tabId}-container`)
+    if (!targetContent) return
+
+    tabContents.forEach(content => {
+      content.classList.remove('active')
+      content.style.display = 'none'
+    })
+
+    targetContent.classList.add('active')
+    targetContent.style.display = 'block'
+
+    // 通知黄金量化Tab初始化图表
+    if (tabId === 'gold-trading') {
+      goldTradingUI.onActivated()
+    }
+
+    // 添加动画效果
+    targetContent.style.animation = 'none'
+    targetContent.offsetHeight // 触发重绘
+    targetContent.style.animation = 'fadeIn 0.3s ease-out'
+
+    // 记住当前标签
+    localStorage.setItem(ACTIVE_TAB_KEY, tabId)
+  }
+
   tabButtons.forEach(button => {
     button.addEventListener('click', () => {
       const tabId = button.dataset.tab
       if (!tabId) return
-
-      // 更新标签按钮状态
-      tabButtons.forEach(btn => {
-        btn.classList.remove('active')
-        btn.setAttribute('aria-selected', 'false')
-      })
-      button.classList.add('active')
-      button.setAttribute('aria-selected', 'true')
-
-      // 更新标签内容状态
-      const targetContent = document.getElementById(`${tabId}-container`)
-      if (!targetContent) return
-
-      tabContents.forEach(content => {
-        content.classList.remove('active')
-        content.style.display = 'none'
-      })
-
-      targetContent.classList.add('active')
-      targetContent.style.display = 'block'
-
-      // 通知黄金量化Tab初始化图表
-      if (tabId === 'gold-trading') {
-        goldTradingUI.onActivated()
-      }
-
-      // 添加动画效果
-      targetContent.style.animation = 'none'
-      targetContent.offsetHeight // 触发重绘
-      targetContent.style.animation = 'fadeIn 0.3s ease-out'
+      switchTab(tabId)
     })
   })
+
+  // 恢复上次打开的标签
+  const savedTab = localStorage.getItem(ACTIVE_TAB_KEY)
+  if (savedTab && document.querySelector(`.tab-button[data-tab="${savedTab}"]`)) {
+    switchTab(savedTab)
+  }
 }
 
 setupTabSwitching()
