@@ -597,19 +597,12 @@ async def get_index_price_batch_stream(
 
                 # 发送进度
                 if completed % 5 == 0 or completed == total:
-                    yield f"event: progress\ndata: {json.dumps({
-                        'current': completed,
-                        'total': total,
-                        'success_count': success_count,
-                        'failed_count': failed_count
-                    })}\n\n"
+                    data_json = json.dumps({'current': completed, 'total': total, 'success_count': success_count, 'failed_count': failed_count})
+                    yield f"event: progress\ndata: {data_json}\n\n"
 
         # 完成事件
-        yield f"event: complete\ndata: {json.dumps({
-            'total': total,
-            'success_count': success_count,
-            'failed_count': failed_count
-        })}\n\n"
+        complete_json = json.dumps({'total': total, 'success_count': success_count, 'failed_count': failed_count})
+        yield f"event: complete\ndata: {complete_json}\n\n"
 
     return StreamingResponse(
         generate_stream(),
@@ -665,18 +658,11 @@ async def get_global_index_price_batch_stream(
                     yield f"event: index\ndata: {json.dumps({'code': code, 'success': False, 'message': data})}\n\n"
 
                 if completed % 5 == 0 or completed == total:
-                    yield f"event: progress\ndata: {json.dumps({
-                        'current': completed,
-                        'total': total,
-                        'success_count': success_count,
-                        'failed_count': failed_count
-                    })}\n\n"
+                    data_json = json.dumps({'current': completed, 'total': total, 'success_count': success_count, 'failed_count': failed_count})
+                    yield f"event: progress\ndata: {data_json}\n\n"
 
-        yield f"event: complete\ndata: {json.dumps({
-            'total': total,
-            'success_count': success_count,
-            'failed_count': failed_count
-        })}\n\n"
+        complete_json = json.dumps({'total': total, 'success_count': success_count, 'failed_count': failed_count})
+        yield f"event: complete\ndata: {complete_json}\n\n"
 
     return StreamingResponse(
         generate_stream(),

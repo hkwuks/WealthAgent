@@ -23,7 +23,7 @@ export class StorageService {
     localStorage.removeItem(this.FUNDS_KEY);
   }
 
-  // 保存基金数据到后端文件 (data/funds.json)
+  // 保存基金数据到后端文件 (data/backend/funds.json)
   static async saveFundsToFile(funds: Fund[]): Promise<boolean> {
     try {
       const response = await fetch('/api/funds/save', {

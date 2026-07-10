@@ -2373,6 +2373,166 @@ class ETFPriceAPI:
         await self._close_session()
 
 
+# ==================== 宏观指标API (DXY/VIX/US10Y/TIPS) ====================
+
+class MacroIndicatorAPI:
+    """宏观指标API — 中国直连优先 → FRED → yFinance 三级降级
+
+    优先级:
+    1. AkShare bond_zh_us_rate  → US10Y（中国直连，最快最稳）
+    2. AkShare futures_hq_spot  → DXY + VIX（新浪外盘期货实时行情）
+    3. FRED DFII10                → TIPS
+    4. yFinance                   → 全局兜底
+    5. TIP ETF SEC yield          → TIPS 最终兜底
+    """
+
+    _DXY_SYMBOLS = ["USDX", "USDX"]
+    _VIX_SYMBOLS = ["VIX", "VIX"]
+
+    def __init__(self):
+        self.session = None
+        self._cache = {}
+        self._cache_ts = 0.0
+        self._cache_ttl = 300  # 5分钟缓存
+
+    async def _ensure_session(self):
+        if self.session is None or self.session.closed:
+            import aiohttp
+            self.session = aiohttp.ClientSession()
+
+    async def _close_session(self):
+        if self.session and not self.session.closed:
+            await self.session.close()
+            self.session = None
+
+    async def get_macro_indicators(self) -> Dict[str, Optional[float]]:
+        """获取宏观指标 (DXY, VIX, US10Y, TIPS, Breakeven)"""
+        import time
+        now = time.time()
+        if self._cache and (now - self._cache_ts) < self._cache_ttl:
+            return self._cache
+
+        macro = {}
+
+        # Source 1: AkShare — 中国直连，最快最稳
+        macro.update(await self._fetch_akshare_bond_rate())      # US10Y
+        macro.update(await self._fetch_akshare_futures_spot())   # DXY + VIX
+
+        # Source 2: FRED DFII10 (TIPS) + yFinance 补漏
+        macro.update(await self._fetch_fred_yfinance(macro))
+
+        # Source 3: TIP ETF SEC yield — TIPS 最终兜底
+        if not macro.get("tips"):
+            macro.update(await self._fetch_tip_etf())
+
+        # Breakeven = US10Y - TIPS
+        if macro.get("us10y") is not None and macro.get("tips") is not None:
+            macro["breakeven"] = round(macro["us10y"] - macro["tips"], 4)
+
+        self._cache = macro
+        self._cache_ts = time.time()
+        return macro
+
+    async def _fetch_akshare_bond_rate(self) -> Dict:
+        """Source 1a: AkShare bond_zh_us_rate — US10Y（中国直连）"""
+        result = {}
+        try:
+            import akshare as ak
+            df = ak.bond_zh_us_rate()
+            if df is not None and not df.empty:
+                last = df.iloc[-1]
+                for col in df.columns:
+                    if '10' in str(col) and '美' in str(col):
+                        try:
+                            result["us10y"] = round(float(last[col]), 4)
+                        except (ValueError, TypeError):
+                            pass
+                        break
+        except Exception as e:
+            logger.debug(f"AkShare bond_zh_us_rate failed: {e}")
+        return result
+
+    async def _fetch_akshare_futures_spot(self) -> Dict:
+        """Source 1b: AkShare futures_hq_spot — DXY + VIX（新浪外盘期货实时行情）"""
+        result = {}
+        try:
+            import akshare as ak
+            df = ak.futures_hq_spot()
+            if df is None or df.empty:
+                return result
+
+            # DXY — 美元指数（USDX）
+            dxy_row = df[df["symbol"].str.upper().isin(self._DXY_SYMBOLS)]
+            if not dxy_row.empty:
+                try:
+                    result["dxy"] = round(float(dxy_row.iloc[0]["current_price"]), 2)
+                except (ValueError, TypeError, KeyError):
+                    pass
+
+            # VIX — 恐慌指数
+            vix_row = df[df["symbol"].str.upper().isin(self._VIX_SYMBOLS)]
+            if not vix_row.empty:
+                try:
+                    result["vix"] = round(float(vix_row.iloc[0]["current_price"]), 2)
+                except (ValueError, TypeError, KeyError):
+                    pass
+        except Exception as e:
+            logger.debug(f"AkShare futures_hq_spot failed: {e}")
+        return result
+
+    async def _fetch_fred_yfinance(self, existing: Dict) -> Dict:
+        """Source 2: FRED DFII10 (TIPS) + yFinance 补漏 DXY/VIX/US10Y"""
+        result = {}
+        need_dxy = not existing.get("dxy")
+        need_vix = not existing.get("vix")
+        need_us10y = not existing.get("us10y")
+
+        if need_dxy or need_vix or need_us10y:
+            try:
+                import yfinance as yf
+                for sym, key in [("DX-Y.NYB", "dxy"), ("^VIX", "vix"), ("^TNX", "us10y")]:
+                    if (key == "dxy" and need_dxy) or (key == "vix" and need_vix) or (key == "us10y" and need_us10y):
+                        try:
+                            t = yf.Ticker(sym)
+                            h = t.history(period="1d")
+                            if not h.empty:
+                                result[key] = round(float(h['Close'].iloc[-1]), 4)
+                        except Exception:
+                            pass
+            except ImportError:
+                pass
+
+        # FRED DFII10 for TIPS
+        if not existing.get("tips"):
+            try:
+                await self._ensure_session()
+                url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10"
+                async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                    if resp.status == 200:
+                        text = await resp.text()
+                        lines = [l for l in text.strip().split('\n') if l and not l.startswith('date')]
+                        if lines:
+                            last = lines[-1].split(',')
+                            if len(last) >= 2 and last[1].strip():
+                                result["tips"] = round(float(last[1].strip()), 4)
+            except Exception:
+                pass
+        return result
+
+    async def _fetch_tip_etf(self) -> Dict:
+        """Source 3: TIP ETF SEC yield（TIPS 最终兜底，偏高~0.6%）"""
+        try:
+            import yfinance as yf
+            t = yf.Ticker("TIP")
+            info = t.info
+            sy = info.get("yield") or info.get("trailingAnnualDividendYield")
+            if sy:
+                return {"tips": round(float(sy) * 100, 4)}
+        except Exception:
+            pass
+        return {}
+
+
 # ==================== 统一市场数据服务 ====================
 
 class MarketDataService:
@@ -2390,6 +2550,7 @@ class MarketDataService:
         self.global_index_api = GlobalIndexAPI()
         self.etf_price_api = ETFPriceAPI()
         self.bond_index_api = BondIndexAPI()
+        self.macro_indicator_api = MacroIndicatorAPI()
 
     async def get_stock_price(self, code: str) -> Optional[MarketData]:
         """获取股票价格"""
@@ -2424,6 +2585,10 @@ class MarketDataService:
         """获取 ETF 实时数据"""
         return await self.etf_price_api.get_etf_realtime_data(code)
 
+    async def get_macro_indicators(self) -> Dict[str, Optional[float]]:
+        """获取宏观指标 (DXY, VIX, US10Y, TIPS, Breakeven)"""
+        return await self.macro_indicator_api.get_macro_indicators()
+
     async def close(self):
         """关闭所有会话"""
         await self.stock_price_api._close_session()
@@ -2433,6 +2598,7 @@ class MarketDataService:
         await self.global_index_api._close_session()
         await self.etf_price_api._close_session()
         await self.bond_index_api._close_session()
+        await self.macro_indicator_api._close_session()
 
 
 # ==================== 单例实例 ====================
