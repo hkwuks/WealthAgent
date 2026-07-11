@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, Body
 from typing import List, Dict, Any
 import json
@@ -17,13 +18,15 @@ def ensure_data_dir():
     os.makedirs(os.path.dirname(FUNDS_FILE_PATH), exist_ok=True)
 
 
-def load_funds_from_file() -> List[Dict[str, Any]]:
+async def load_funds_from_file() -> List[Dict[str, Any]]:
     """从文件加载基金数据"""
     ensure_data_dir()
-    
+    return await asyncio.to_thread(_load_funds_sync)
+
+
+def _load_funds_sync() -> List[Dict[str, Any]]:
     if not os.path.exists(FUNDS_FILE_PATH):
         return []
-    
     try:
         with open(FUNDS_FILE_PATH, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -31,10 +34,14 @@ def load_funds_from_file() -> List[Dict[str, Any]]:
         logger.error(f"加载基金文件失败: {e}")
         return []
 
-def save_funds_to_file(funds: List[Dict[str, Any]]):
+
+async def save_funds_to_file(funds: List[Dict[str, Any]]):
     """保存基金数据到文件"""
     ensure_data_dir()
-    
+    await asyncio.to_thread(_save_funds_sync, funds)
+
+
+def _save_funds_sync(funds: List[Dict[str, Any]]):
     try:
         with open(FUNDS_FILE_PATH, 'w', encoding='utf-8') as f:
             json.dump(funds, f, ensure_ascii=False, indent=2)
@@ -52,7 +59,7 @@ async def get_funds():
     获取基金列表
     """
     try:
-        funds = load_funds_from_file()
+        funds = await load_funds_from_file()
         return {
             "success": True,
             "message": "获取成功",
@@ -79,12 +86,12 @@ async def get_funds():
 async def add_fund(fund: Dict[str, Any] = Body(...)):
     """
     添加基金
-    
+
     - **fund**: 基金数据，包含 fund_code、fund_name、fund_type、total_shares 等字段
     """
     try:
         logger.info(f"收到添加基金请求: {fund}")
-        
+
         # 验证必填字段
         required_fields = ['fund_code', 'fund_name', 'fund_type', 'total_shares']
         for field in required_fields:
@@ -93,10 +100,10 @@ async def add_fund(fund: Dict[str, Any] = Body(...)):
                     "success": False,
                     "message": f"缺少必填字段: {field}"
                 }
-        
+
         # 加载现有基金
-        funds = load_funds_from_file()
-        
+        funds = await load_funds_from_file()
+
         # 检查基金是否已存在
         for existing_fund in funds:
             if existing_fund.get('fund_code') == fund.get('fund_code'):
@@ -104,13 +111,13 @@ async def add_fund(fund: Dict[str, Any] = Body(...)):
                     "success": False,
                     "message": f"基金已存在: {fund.get('fund_code')}"
                 }
-        
+
         # 添加新基金
         funds.append(fund)
-        
+
         # 保存到文件
-        save_funds_to_file(funds)
-        
+        await save_funds_to_file(funds)
+
         return {
             "success": True,
             "message": "基金添加成功"
@@ -131,13 +138,13 @@ async def add_fund(fund: Dict[str, Any] = Body(...)):
 async def delete_fund(fund_code: str):
     """
     删除基金
-    
+
     - **fund_code**: 基金代码
     """
     try:
         # 加载现有基金
-        funds = load_funds_from_file()
-        
+        funds = await load_funds_from_file()
+
         # 检查基金是否存在
         fund_exists = any(f.get('fund_code') == fund_code for f in funds)
         if not fund_exists:
@@ -145,13 +152,13 @@ async def delete_fund(fund_code: str):
                 "success": False,
                 "message": f"基金不存在: {fund_code}"
             }
-        
+
         # 删除基金
         funds = [f for f in funds if f.get('fund_code') != fund_code]
-        
+
         # 保存到文件
-        save_funds_to_file(funds)
-        
+        await save_funds_to_file(funds)
+
         return {
             "success": True,
             "message": "基金删除成功"
@@ -172,33 +179,33 @@ async def delete_fund(fund_code: str):
 async def update_fund(fund_code: str, fund: Dict[str, Any] = Body(...)):
     """
     更新基金
-    
+
     - **fund_code**: 基金代码
     - **fund**: 基金数据
     """
     try:
         # 加载现有基金
-        funds = load_funds_from_file()
-        
+        funds = await load_funds_from_file()
+
         # 查找基金
         fund_index = None
         for i, f in enumerate(funds):
             if f.get('fund_code') == fund_code:
                 fund_index = i
                 break
-        
+
         if fund_index is None:
             return {
                 "success": False,
                 "message": f"基金不存在: {fund_code}"
             }
-        
+
         # 更新基金
         funds[fund_index].update(fund)
-        
+
         # 保存到文件
-        save_funds_to_file(funds)
-        
+        await save_funds_to_file(funds)
+
         return {
             "success": True,
             "message": "基金更新成功"
@@ -219,12 +226,12 @@ async def update_fund(fund_code: str, fund: Dict[str, Any] = Body(...)):
 async def get_fund_data_batch(fund_codes: List[str] = Body(...)):
     """
     批量获取基金信息
-    
+
     - **fund_codes**: 基金代码列表
     """
     try:
         fund_datas = []
-        
+
         for fund_code in fund_codes:
             try:
                 fund_data = await market_data_service.get_fund_data(fund_code)
@@ -232,7 +239,7 @@ async def get_fund_data_batch(fund_codes: List[str] = Body(...)):
                     fund_datas.append(fund_data.model_dump())
             except Exception as e:
                 logger.error(f"获取基金 {fund_code} 信息失败: {e}")
-        
+
         return {
             "success": True,
             "message": "批量获取成功",
@@ -255,13 +262,13 @@ async def get_fund_data_batch(fund_codes: List[str] = Body(...)):
 async def query_fund_data(fund_code: str):
     """
     查询基金信息
-    
+
     - **fund_code**: 基金代码
     """
     try:
         # 使用market_data_service从外部数据源获取基金信息
         fund_data = await market_data_service.get_fund_data(fund_code)
-        
+
         if fund_data:
             return {
                 "success": True,
@@ -289,13 +296,13 @@ async def query_fund_data(fund_code: str):
 async def get_fund(fund_code: str):
     """
     获取单个基金信息
-    
+
     - **fund_code**: 基金代码
     """
     try:
         # 加载现有基金
-        funds = load_funds_from_file()
-        
+        funds = await load_funds_from_file()
+
         # 查找基金
         for fund in funds:
             if fund.get('fund_code') == fund_code:
@@ -304,16 +311,16 @@ async def get_fund(fund_code: str):
                     "message": "获取成功",
                     "data": fund
                 }
-        
+
         fund_data = await market_data_service.get_fund_data(fund_code)
-        
+
         if fund_data:
             return {
                 "success": True,
                 "message": "获取成功",
                 "data": fund_data.model_dump()
             }
-        
+
         # 基金不存在
         return {
             "success": False,
@@ -338,8 +345,8 @@ async def clear_funds():
     """
     try:
         # 保存空列表
-        save_funds_to_file([])
-        
+        await save_funds_to_file([])
+
         return {
             "success": True,
             "message": "基金列表清空成功"

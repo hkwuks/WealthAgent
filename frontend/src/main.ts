@@ -162,6 +162,11 @@ function setupTabSwitching() {
       goldTradingUI.onActivated()
     }
 
+    // 通知市场数据Tab加载数据（标签保持刷新时使用）
+    if (tabId === 'market-data') {
+      marketDataUI.onActivated()
+    }
+
     // 添加动画效果
     targetContent.style.animation = 'none'
     targetContent.offsetHeight // 触发重绘

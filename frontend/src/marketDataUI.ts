@@ -5,6 +5,43 @@ import type { MarketData } from './types';
 
 const isDarkMode = () => document.body.classList.contains('dark-mode') || window.matchMedia('(prefers-color-scheme: dark)').matches;
 
+// ===== localStorage 持久缓存 =====
+const LOCAL_CACHE_PREFIX = 'fund_val_market_';
+const LOCAL_CACHE_TTL_KEY = 'fund_val_market_cache_ttl';
+const DEFAULT_LOCAL_TTL = 120_000; // 2 分钟
+
+function loadPersistentCache(code: string): any | null {
+  try {
+    const raw = localStorage.getItem(LOCAL_CACHE_PREFIX + code);
+    if (!raw) return null;
+    const entry = JSON.parse(raw);
+    if (Date.now() - entry.ts < entry.ttl) return entry.data;
+    localStorage.removeItem(LOCAL_CACHE_PREFIX + code);
+  } catch { /* ignore corrupt cache */ }
+  return null;
+}
+
+function savePersistentCache(code: string, data: any, ttl?: number) {
+  try {
+    const cacheTtl = ttl ?? parseInt(localStorage.getItem(LOCAL_CACHE_TTL_KEY) || String(DEFAULT_LOCAL_TTL), 10);
+    localStorage.setItem(LOCAL_CACHE_PREFIX + code, JSON.stringify({ data, ts: Date.now(), ttl: cacheTtl }));
+  } catch { /* quota exceeded — ignore */ }
+}
+
+function clearExpiredCache() {
+  const prefixLen = LOCAL_CACHE_PREFIX.length;
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const key = localStorage.key(i);
+    if (key?.startsWith(LOCAL_CACHE_PREFIX)) {
+      try {
+        const entry = JSON.parse(localStorage.getItem(key)!);
+        if (Date.now() - entry.ts >= entry.ttl) localStorage.removeItem(key);
+      } catch { localStorage.removeItem(key); }
+    }
+  }
+}
+// =====
+
 interface CacheConfig {
   ttl: number; // 缓存时间（毫秒）
   lastUpdate: number;
@@ -37,6 +74,13 @@ class MarketDataUI {
     this.container = container;
     this.render();
     this.setupLazyLoading();
+  }
+
+  /** 当标签页被激活时调用（用于刷新后标签保持等场景） */
+  onActivated() {
+    if (!this.isDataLoaded) {
+      this.loadSupportedIndices();
+    }
   }
 
   private setupLazyLoading() {
@@ -261,10 +305,16 @@ class MarketDataUI {
 
   // 处理刷新按钮点击
   private async handleRefresh() {
-    // 清除前端缓存
+    // 清除前端缓存（内存 + localStorage）
     this.cache.clear();
     this.marketData = {};
     this.isDataLoaded = false;
+    // 清除所有持久缓存
+    const prefixLen = LOCAL_CACHE_PREFIX.length;
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(LOCAL_CACHE_PREFIX)) localStorage.removeItem(key);
+    }
 
     toast.success('正在刷新数据...');
 
@@ -281,7 +331,7 @@ class MarketDataUI {
           console.log('使用缓存的指数列表:', cached);
           this.supportedIndices = cached;
           this.isDataLoaded = true;
-          this.renderIndices();
+          this.renderIndices(forceRefresh);
           return;
         }
       }
@@ -294,7 +344,7 @@ class MarketDataUI {
         this.isDataLoaded = true;
         // 缓存数据
         this.setCachedData('supportedIndices', response.data);
-        this.renderIndices();
+        this.renderIndices(forceRefresh);
       } else {
         console.error('获取指数列表失败:', response);
       }
@@ -303,7 +353,7 @@ class MarketDataUI {
     }
   }
 
-  private async renderIndices() {
+  private async renderIndices(forceRefresh: boolean = false) {
     console.log('renderIndices 被调用, supportedIndices:', this.supportedIndices);
     if (!this.supportedIndices) {
       console.log('supportedIndices 为空，不渲染');
@@ -354,8 +404,8 @@ class MarketDataUI {
 
     // 并行加载国内和海外指数（SSE流式支持真正的并行）
     await Promise.all([
-      this.loadDomesticIndicesBatched(domesticCodes, domesticIndexMap, domesticIndicesContainer),
-      this.loadGlobalIndicesBatched(globalCodes, globalIndexMap, globalIndicesContainer)
+      this.loadDomesticIndicesBatched(domesticCodes, domesticIndexMap, domesticIndicesContainer, forceRefresh),
+      this.loadGlobalIndicesBatched(globalCodes, globalIndexMap, globalIndicesContainer, forceRefresh)
     ]);
   }
 
@@ -376,31 +426,49 @@ class MarketDataUI {
   private async loadDomesticIndicesBatched(
     codes: string[],
     indexMap: Record<string, string>,
-    container: Element | null
+    container: Element | null,
+    forceRefresh = false
   ) {
     if (codes.length === 0 || !container) return;
+
+    // 过滤出需要网络请求的代码（优先走 localStorage 持久缓存）
+    const toFetch: string[] = [];
+    const codeElements: Record<string, HTMLElement> = {};
+
+    for (const code of codes) {
+      const cached = !forceRefresh ? loadPersistentCache(code) : null;
+      if (cached) {
+        this.marketData[code] = cached;
+        const card = document.createElement('div');
+        card.className = 'index-card';
+        card.innerHTML = this.renderIndexCard(cached);
+        card.addEventListener('click', () => this.showMarketDetails(cached, 'indices'));
+        container.appendChild(card);
+        codeElements[code] = card;
+        this.updateLoadingProgress();
+      } else {
+        toFetch.push(code);
+        const el = document.createElement('div');
+        el.className = 'index-card loading';
+        el.innerHTML = `
+          <h4>${indexMap[code]}</h4>
+          <p class="code">${code}</p>
+          <div class="loading-indicator">
+            <div class="loading-spinner-small"></div>
+            <span>加载中...</span>
+          </div>
+        `;
+        container.appendChild(el);
+        codeElements[code] = el;
+        this.updateLoadingProgress();
+      }
+    }
+
+    if (toFetch.length === 0) return;
 
     // 创建 AbortController 用于取消请求
     const controller = new AbortController();
     this.abortControllers.push(controller);
-
-    // 先渲染所有加载中的卡片
-    const codeElements: Record<string, HTMLElement> = {};
-    for (const code of codes) {
-      const indexElement = document.createElement('div');
-      indexElement.className = 'index-card loading';
-      indexElement.innerHTML = `
-        <h4>${indexMap[code]}</h4>
-        <p class="code">${code}</p>
-        <div class="loading-indicator">
-          <div class="loading-spinner-small"></div>
-          <span>加载中...</span>
-        </div>
-      `;
-      container.appendChild(indexElement);
-      codeElements[code] = indexElement;
-      this.updateLoadingProgress();
-    }
 
     // 使用 SSE 流式获取数据
     return new Promise<void>((resolve, reject) => {
@@ -412,6 +480,7 @@ class MarketDataUI {
 
           if (success && data) {
             this.marketData[code] = data;
+            savePersistentCache(code, data);
             // 替换为成功卡片
             const newElement = document.createElement('div');
             newElement.className = 'index-card';
@@ -477,31 +546,49 @@ class MarketDataUI {
   private async loadGlobalIndicesBatched(
     codes: string[],
     indexMap: Record<string, string>,
-    container: Element | null
+    container: Element | null,
+    forceRefresh = false
   ) {
     if (codes.length === 0 || !container) return;
+
+    // 过滤出需要网络请求的代码（优先走 localStorage 持久缓存）
+    const toFetch: string[] = [];
+    const codeElements: Record<string, HTMLElement> = {};
+
+    for (const code of codes) {
+      const cached = !forceRefresh ? loadPersistentCache(code) : null;
+      if (cached) {
+        this.marketData[code] = cached;
+        const card = document.createElement('div');
+        card.className = 'index-card';
+        card.innerHTML = this.renderIndexCard(cached);
+        card.addEventListener('click', () => this.showMarketDetails(cached, 'indices'));
+        container.appendChild(card);
+        codeElements[code] = card;
+        this.updateLoadingProgress();
+      } else {
+        toFetch.push(code);
+        const el = document.createElement('div');
+        el.className = 'index-card loading';
+        el.innerHTML = `
+          <h4>${indexMap[code]}</h4>
+          <p class="code">${code}</p>
+          <div class="loading-indicator">
+            <div class="loading-spinner-small"></div>
+            <span>加载中...</span>
+          </div>
+        `;
+        container.appendChild(el);
+        codeElements[code] = el;
+        this.updateLoadingProgress();
+      }
+    }
+
+    if (toFetch.length === 0) return;
 
     // 创建 AbortController 用于取消请求
     const controller = new AbortController();
     this.abortControllers.push(controller);
-
-    // 先渲染所有加载中的卡片
-    const codeElements: Record<string, HTMLElement> = {};
-    for (const code of codes) {
-      const indexElement = document.createElement('div');
-      indexElement.className = 'index-card loading';
-      indexElement.innerHTML = `
-        <h4>${indexMap[code]}</h4>
-        <p class="code">${code}</p>
-        <div class="loading-indicator">
-          <div class="loading-spinner-small"></div>
-          <span>加载中...</span>
-        </div>
-      `;
-      container.appendChild(indexElement);
-      codeElements[code] = indexElement;
-      this.updateLoadingProgress();
-    }
 
     // 使用 SSE 流式获取数据
     return new Promise<void>((resolve, reject) => {
@@ -513,6 +600,7 @@ class MarketDataUI {
 
           if (success && data) {
             this.marketData[code] = data;
+            savePersistentCache(code, data);
             // 替换为成功卡片
             const newElement = document.createElement('div');
             newElement.className = 'index-card';

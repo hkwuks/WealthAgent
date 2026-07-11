@@ -111,8 +111,10 @@ async def run_backtest(req: BacktestRequest):
     strategy = cls()
     backtester = Backtester()
     try:
-        result = backtester.run(strategy, bars, capital=req.capital,
-                                params=req.params, method=req.method)
+        result = await asyncio.to_thread(
+            backtester.run, strategy, bars,
+            capital=req.capital, params=req.params, method=req.method,
+        )
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -149,21 +151,31 @@ async def compare_strategies(req: StrategyComparisonRequest):
         cls = StrategyRegistry.get(name)
         if cls is None:
             errors.append(f"Strategy '{name}' not found")
-            continue
+        else:
+            valid.append((name, cls))
+    if not valid:
+        return {"success": True, "data": {"strategies": {}, "comparison": {}, "errors": errors}}
 
-        bars = await gateway.get_bars(
-            symbol=req.symbol, period=req.period,
-            start=req.start_date, end=req.end_date,
-        )
-        if not bars:
-            errors.append(f"No data for strategy '{name}'")
-            continue
+    bars = await gateway.get_bars(
+        symbol=req.symbol, period=req.period,
+        start=req.start_date, end=req.end_date,
+    )
+    if not bars:
+        raise HTTPException(status_code=400, detail="No bar data available")
 
-        strategy = cls()
-        backtester = Backtester()
+    async with asyncio.TaskGroup() as tg:
+        tasks = {}
+        for name, cls in valid:
+            strategy = cls()
+            backtester = Backtester()
+            task = tg.create_task(
+                asyncio.to_thread(backtester.run, strategy, bars, capital=req.capital, method=req.method)
+            )
+            tasks[name] = task
+
+    for name, task in tasks.items():
         try:
-            # 统一使用与单策略回测相同的 method
-            result = backtester.run(strategy, bars, capital=req.capital, method=req.method)
+            result = task.result()
             results[name] = result["report"]
         except Exception as e:
             errors.append(f"Strategy '{name}' failed: {str(e)}")
@@ -231,7 +243,9 @@ async def run_sensitivity(req: SensitivityRequest):
 
     analyzer = SensitivityAnalyzer(capital=req.capital)
     try:
-        result = analyzer.analyze(req.strategy_name, cls.default_params, param_ranges, bars)
+        result = await asyncio.to_thread(
+            analyzer.analyze, req.strategy_name, cls.default_params, param_ranges, bars,
+        )
     except Exception as e:
         logger.error(f"Sensitivity analysis failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -269,14 +283,16 @@ async def run_validation(req: ValidationRequest):
     # In/Out样本验证
     splitter = SampleSplitter()
     strategy = cls()
-    split_result = splitter.validate(strategy, bars, capital=req.capital,
-                                      in_sample_ratio=req.in_sample_ratio)
+    split_result = await asyncio.to_thread(
+        splitter.validate, strategy, bars,
+        capital=req.capital, in_sample_ratio=req.in_sample_ratio,
+    )
 
     # 场景验证
     validator = ScenarioValidator()
-    scenario_result = validator.validate(
-        req.strategy_name, bars, capital=req.capital,
-        scenario_name=req.scenario_name,
+    scenario_result = await asyncio.to_thread(
+        validator.validate, req.strategy_name, bars,
+        capital=req.capital, scenario_name=req.scenario_name,
     )
 
     return {
@@ -303,16 +319,14 @@ async def walk_forward_backtest(
     if not cls:
         raise HTTPException(status_code=404, detail=f"策略不存在: {strategy_name}")
 
-    bars = gateway.get_bars("AU0", period="d")
-    if not bars or len(bars) < train_window + 30:
-        raise HTTPException(status_code=400, detail=f"K线数据不足 {len(bars or [])} 根")
+    bars = await gateway.get_bars("AU0", period="d")
 
     import copy
     validator = WalkForwardValidatorAdapter(
         train_window=train_window, test_window=test_window,
         embargo_days=embargo_days, capital=capital,
     )
-    result = validator.validate(strategy_name, copy.deepcopy(bars))
+    result = await asyncio.to_thread(validator.validate, strategy_name, copy.deepcopy(bars))
 
     return {"success": True, "data": result}
 
@@ -331,7 +345,7 @@ async def cpcv_backtest(
     if not cls:
         raise HTTPException(status_code=404, detail=f"策略不存在: {strategy_name}")
 
-    bars = gateway.get_bars("AU0", period="d")
+    bars = await gateway.get_bars("AU0", period="d")
     if not bars or len(bars) < 200:
         raise HTTPException(status_code=400, detail=f"K线数据不足 {len(bars or [])} 根")
 
@@ -340,7 +354,7 @@ async def cpcv_backtest(
         n_groups=n_groups, k_test=k_test,
         capital=capital,
     )
-    result = validator.validate(strategy_name, copy.deepcopy(bars))
+    result = await asyncio.to_thread(validator.validate, strategy_name, copy.deepcopy(bars))
 
     return {"success": True, "data": result}
 
@@ -355,7 +369,7 @@ async def triple_barrier_label(
     max_holding_days: int = Query(5, ge=1, le=30),
 ):
     """对当前K线进行 Triple-Barrier 标注，返回标签分布和明细"""
-    bars = gateway.get_bars("AU0", period="d")
+    bars = await gateway.get_bars("AU0", period="d")
     if not bars or len(bars) < 50:
         raise HTTPException(status_code=400, detail=f"K线数据不足 {len(bars or [])} 根")
 
@@ -363,7 +377,7 @@ async def triple_barrier_label(
         atr_window=atr_window, tp_multiplier=tp_multiplier,
         sl_multiplier=sl_multiplier, max_holding_days=max_holding_days,
     )
-    labels = labeler.label_bars(bars)
+    labels = await asyncio.to_thread(labeler.label_bars, bars)
     distribution = labeler.label_distribution(labels)
 
     return {
@@ -393,29 +407,30 @@ async def get_ml_feature_importance():
         raise HTTPException(status_code=404, detail="ML 策略未注册")
 
     import copy
-    bars = gateway.get_bars("AU0", period="d")
+    bars = await gateway.get_bars("AU0", period="d")
     if not bars or len(bars) < 150:
         raise HTTPException(status_code=400, detail="K线数据不足")
 
-    strategy = cls()
-    from backend.gold.backtest.engine import BacktestStrategyContext
-    from backend.gold.backtest.cost_model import CostModel
-    from backend.gold.core.config import gold_settings
+    def _run_ml_feature():
+        strategy = cls()
+        from backend.gold.backtest.engine import BacktestStrategyContext
+        from backend.gold.backtest.cost_model import CostModel
+        from backend.gold.core.config import gold_settings
 
-    ctx = BacktestStrategyContext(
-        capital=1_000_000,
-        cost_model=CostModel(),
-        multiplier=gold_settings.au_multiplier,
-        margin_rate=gold_settings.au_margin_rate,
-    )
-    strategy._macro_df = _get_macro_df()
-    strategy.set_context(ctx)
-    strategy.on_init(ctx)
-    for b in bars[-200:]:
-        strategy.on_bar(b)
+        ctx = BacktestStrategyContext(
+            capital=1_000_000,
+            cost_model=CostModel(),
+            multiplier=gold_settings.au_multiplier,
+            margin_rate=gold_settings.au_margin_rate,
+        )
+        strategy._macro_df = _get_macro_df()
+        strategy.set_context(ctx)
+        strategy.on_init(ctx)
+        for b in bars[-200:]:
+            strategy.on_bar(b)
+        return strategy.get_feature_importance(), strategy.get_tb_label_distribution()
 
-    importance = strategy.get_feature_importance()
-    tb_dist = strategy.get_tb_label_distribution()
+    importance, tb_dist = await asyncio.to_thread(_run_ml_feature)
 
     return {
         "success": True,
@@ -445,7 +460,7 @@ async def monte_carlo_simulation(
 
     strategy = cls()
     backtester = Backtester()
-    result = backtester.run(strategy, bars, capital=capital)
+    result = await asyncio.to_thread(backtester.run, strategy, bars, capital=capital)
 
     trades = result.get("trades", [])
     close_trades = [t for t in trades if t.get("type") == "close"]
@@ -509,7 +524,7 @@ async def generate_signal(
     capital = GoldSettings().backtest_capital
 
     # 用回测引擎完整跑一遍（策略状态机需要全量历史构建）
-    result = backtester.run(strategy, bars, capital=capital)
+    result = await asyncio.to_thread(backtester.run, strategy, bars, capital=capital)
     signals = result.get("signals", [])
     current_price = bars[-1].close
 
@@ -724,15 +739,16 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
     from sklearn.preprocessing import StandardScaler
     import numpy as np
 
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(full_X)
-    model = Ridge(alpha=1.0)
-    model.fit(X_scaled, y)
+    def _train_and_predict():
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(full_X)
+        model = Ridge(alpha=1.0)
+        model.fit(X_scaled, y)
+        X_latest = X.iloc[-1:]
+        X_latest_scaled = scaler.transform(X_latest)
+        return float(model.predict(X_latest_scaled)[0])
 
-    # 预测最新数据
-    X_latest = X.iloc[-1:]
-    X_latest_scaled = scaler.transform(X_latest)
-    predicted_change = float(model.predict(X_latest_scaled)[0])
+    predicted_change = await asyncio.to_thread(_train_and_predict)
 
     # 生成信号
     threshold = 0.002  # 0.2%
@@ -772,7 +788,7 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
 
     store = GoldDataStore()
     store.save_signal(signal)
-    signal_data.created_at = datetime.now()
+    signal.created_at = datetime.now()
 
     risk_checker = RiskChecker()
     risk_checker.record_signal(signal)
