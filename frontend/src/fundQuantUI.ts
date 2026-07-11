@@ -6,7 +6,7 @@ import {
 } from './fundQuantCharts'
 import * as echarts from 'echarts'
 
-const BASE = '/api/fund-quant'
+const BASE = '/fund-quant'
 
 export class FundQuantUI {
   private container: HTMLDivElement | null = null
@@ -147,7 +147,7 @@ export class FundQuantUI {
 
     try {
       // 先取净值用于画图
-      const navRes = await api.get(`/api/funds/${code}/nav-history`)
+      const navRes = await api.get(`/funds/${code}/nav-history`)
       const navData = navRes.data?.nav_history || []
       // 再取择时评估
       const evalRes = await api.post(`${BASE}/timing/evaluate`, { fund_code: code })
