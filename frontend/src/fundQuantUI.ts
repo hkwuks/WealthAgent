@@ -1,5 +1,6 @@
 import { api } from './api'
 import { toast } from './toast'
+import { fundManager } from './fundManager'
 import {
   renderTimingChart, renderRadarChart, renderPieChart,
   renderBacktestChart, renderSignalTimeline,
@@ -13,6 +14,20 @@ export class FundQuantUI {
   private currentTab = 'strategy'
   private charts: echarts.ECharts[] = []
   private sseSource: EventSource | null = null
+
+  private firstCode(): string {
+    const funds = fundManager.getFunds()
+    return funds.length > 0 ? funds[0].fund_code : ''
+  }
+
+  private fundSelectHtml(name: string, selected?: string): string {
+    const funds = fundManager.getFunds()
+    if (!funds.length) return `<input type="text" id="${name}" placeholder="基金代码" class="input" />`
+    const sel = selected || funds[0].fund_code
+    return `<select id="${name}" class="input">${funds.map(f =>
+      `<option value="${f.fund_code}"${f.fund_code === sel ? ' selected' : ''}>${f.fund_code} ${f.fund_name}</option>`
+    ).join('')}</select>`
+  }
 
   init(container: HTMLDivElement) {
     this.container = container
@@ -127,7 +142,7 @@ export class FundQuantUI {
       <div class="fq-view">
         <div class="fq-section-title">择时评估 — 净值走势</div>
         <div class="fq-form-row">
-          <input type="text" id="fq-timing-code" value="000001" placeholder="基金代码" class="input" />
+          ${this.fundSelectHtml('fq-timing-code')}
           <button class="btn btn-primary" id="fq-timing-btn">评估</button>
         </div>
         <div id="fq-timing-chart" class="fq-chart"></div>
@@ -135,6 +150,13 @@ export class FundQuantUI {
       </div>`
     content.querySelector('#fq-timing-btn')?.addEventListener('click', () => this.doEvaluate())
     this.doEvaluate()  // load default
+  }
+
+  private async collectData(codes: string[]): Promise<boolean> {
+    try {
+      await api.post(`${BASE}/data/collect`, { fund_codes: codes, years: 3 })
+      return true
+    } catch { return false }
   }
 
   private async doEvaluate() {
@@ -145,12 +167,25 @@ export class FundQuantUI {
     const detailEl = content?.querySelector('#fq-timing-detail') as HTMLElement
     if (chartEl) chartEl.innerHTML = '<div class="fq-loading">加载中...</div>'
 
+    // step 1: check/collect NAV data
     try {
-      // 先取净值用于画图
-      const navRes = await api.get(`/funds/${code}/nav-history`)
+      await api.get(`${BASE}/nav/${code}`)
+    } catch {
+      if (chartEl) chartEl.innerHTML = '<div class="fq-loading">⏳ 采集净值数据中...</div>'
+      const ok = await this.collectData([code])
+      if (!ok) {
+        if (chartEl) chartEl.innerHTML = '<div class="fq-error">采集数据失败，请稍后重试</div>'
+        return
+      }
+      if (chartEl) chartEl.innerHTML = '<div class="fq-loading">数据采集完成，评估中...</div>'
+    }
+
+    try {
+      const [navRes, evalRes] = await Promise.all([
+        api.get(`${BASE}/nav/${code}`),
+        api.post(`${BASE}/timing/evaluate`, { fund_code: code }),
+      ])
       const navData = navRes.data?.nav_history || []
-      // 再取择时评估
-      const evalRes = await api.post(`${BASE}/timing/evaluate`, { fund_code: code })
       const evalData = evalRes.data || {}
 
       if (chartEl && navData.length > 1) {
@@ -161,7 +196,6 @@ export class FundQuantUI {
         const sellSignals = (evalData.signals || [])
           .filter((s: any) => s.direction === 'sell')
           .map((s: any) => ({ date: s.timestamp?.slice(0, 10) || '', nav: 0 }))
-        // 找到信号对应净值
         for (const sig of [...buySignals, ...sellSignals]) {
           const match = navData.find((d: any) => d.date.slice(0, 10) === sig.date)
           sig.nav = match ? (match.nav || match.adjusted_nav) : 0
@@ -174,7 +208,7 @@ export class FundQuantUI {
         detailEl.innerHTML = `<h4>信号详情</h4><pre class="fq-pre">${JSON.stringify(evalData.fusion_signal || evalData.signals || [], null, 2)}</pre>`
       }
     } catch (e) {
-      if (chartEl) chartEl.innerHTML = '<div class="fq-error">评估失败</div>'
+      if (chartEl) chartEl.innerHTML = '<div class="fq-error">评估失败，请确认基金代码有效</div>'
     }
   }
 
@@ -254,17 +288,29 @@ export class FundQuantUI {
   private showAllocationView() {
     const content = this.container?.querySelector('#fq-content')
     if (!content) return
+    const funds = fundManager.getFunds()
+    const defCodes = funds.length >= 3 ? funds.slice(0, 3).map(f => f.fund_code).join(',') : funds.map(f => f.fund_code).join(',')
     content.innerHTML = `
       <div class="fq-view">
         <div class="fq-section-title">配置优化</div>
         <div class="fq-form-row">
-          <input type="text" id="fq-alloc-codes" value="000001,110011,007016" placeholder="基金代码（逗号分隔）" class="input" />
+          <input type="text" id="fq-alloc-codes" value="${defCodes || '000001,110011,007016'}" placeholder="基金代码（逗号分隔）" class="input" />
           <button class="btn btn-primary" id="fq-alloc-btn">优化</button>
         </div>
+        <div class="fq-hint" style="margin-top:4px">${funds.length ? funds.map(f =>
+          `<label class="alloc-chk"><input type="checkbox" data-code="${f.fund_code}"${defCodes.includes(f.fund_code) ? ' checked' : ''}> ${f.fund_code}</label>`
+        ).join('') : ''}</div>
         <div id="fq-alloc-chart" class="fq-chart"></div>
         <div id="fq-alloc-detail" class="fq-result-area"></div>
       </div>`
     content.querySelector('#fq-alloc-btn')?.addEventListener('click', () => this.doAllocation())
+    content.querySelectorAll('.alloc-chk input').forEach(cb =>
+      cb.addEventListener('change', () => {
+        const checked = [...content.querySelectorAll<HTMLInputElement>('.alloc-chk input:checked')].map(c => c.dataset.code)
+        const inp = content.querySelector('#fq-alloc-codes') as HTMLInputElement
+        if (inp) inp.value = checked.join(',')
+      })
+    )
   }
 
   private async doAllocation() {
@@ -319,7 +365,7 @@ export class FundQuantUI {
             <option value="multi_factor">多因子选基</option>
             <option value="risk_parity">风险平价</option>
           </select>
-          <input type="text" id="fq-bt-codes" value="000001" placeholder="基金代码" class="input" />
+          ${this.fundSelectHtml('fq-bt-codes')}
           <input type="text" id="fq-bt-start" value="2023-01-01" class="input" style="width:120px" />
           <input type="text" id="fq-bt-end" value="2025-12-31" class="input" style="width:120px" />
           <button class="btn btn-primary" id="fq-bt-btn">回测</button>
@@ -404,7 +450,7 @@ export class FundQuantUI {
       <div class="fq-view">
         <div class="fq-section-title">信号中心</div>
         <div class="fq-form-row">
-          <input type="text" id="fq-sig-code" placeholder="基金代码（可选）" class="input" />
+          ${this.fundSelectHtml('fq-sig-code')}
           <button class="btn btn-primary" id="fq-sig-btn">查询</button>
           <button class="btn btn-outline" id="fq-sse-btn">📡 订阅推送</button>
         </div>
