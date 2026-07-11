@@ -59,24 +59,40 @@ class FundDataCollector:
                                        end_date: Optional[str] = None) -> List[NavPoint]:
         await self._rate_limit_wait()
         import akshare as ak
-        fund_etf_hist = ak.fund_etf_hist_em(
-            symbol=fund_code,
-            start_date=start_date or "20000101",
-            end_date=end_date or date.today().strftime("%Y%m%d"),
-            adjust="",
-        )
+        import os as _os
+        # 绕过系统代理 — eastmoney API 需要直连
+        saved = {k: _os.environ.pop(k, None) for k in ['HTTP_PROXY','HTTPS_PROXY','http_proxy','https_proxy']}
+        try:
+            from requests import Session as _Session, adapters as _adapters
+            fund_nav = ak.fund_open_fund_info_em(
+                symbol=fund_code,
+                indicator="单位净值走势",
+            )
+        except Exception:
+            fund_nav = ak.fund_etf_hist_em(
+                symbol=fund_code,
+                start_date=start_date or "20000101",
+                end_date=end_date or date.today().strftime("%Y%m%d"),
+                adjust="",
+            )
+        finally:
+            for k, v in saved.items():
+                if v is not None: _os.environ[k] = v
+
         points = []
-        for _, row in fund_etf_hist.iterrows():
+        # fund_open_fund_info_em → ['净值日期','单位净值','日增长率']
+        # fund_etf_hist_em → ['日期','单位净值','累计净值',...]
+        date_col = "净值日期" if "净值日期" in fund_nav.columns else "日期"
+        for _, row in fund_nav.iterrows():
             try:
-                d = row["净值日期"] if "净值日期" in fund_etf_hist.columns else row["日期"]
+                d = row[date_col]
                 if isinstance(d, str):
                     d = datetime.strptime(d, "%Y-%m-%d").date()
-                nav_date = d
             except (ValueError, KeyError):
                 continue
             points.append(NavPoint(
                 fund_code=fund_code,
-                date=nav_date,
+                date=d,
                 nav=float(row.get("单位净值", 0)),
                 adjusted_nav=float(row.get("累计净值", 0)) if "累计净值" in row else None,
                 source="eastmoney",

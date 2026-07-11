@@ -4001,6 +4001,8 @@ body::after {
 .fq-loading { color: var(--text-tertiary); padding: 20px; text-align: center; }
 .fq-error   { color: var(--danger-color);  padding: 20px; text-align: center; }
 .fq-hint    { color: var(--text-tertiary); padding: 8px;  font-size: 13px; }
+.alloc-chk  { display: inline-block; margin-right: 12px; cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+.alloc-chk input { margin-right: 3px; }
 .fq-section-title { font-weight: 600; font-size: 15px; margin: 12px 0 8px; color: var(--text-primary); }
 .fq-type-group { margin-bottom: 12px; }
 .fq-type-label { font-size: 13px; font-weight: 600; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }

@@ -108,9 +108,7 @@ class StrategyRegistry:
             for cls in self._strategies.values()
         ]
 
-    def list_by_type(self, strategy_type: StrategyType) -> List[dict]:
+    def list_by_type(self, strategy_type) -> List[dict]:
         """按类型列出策略"""
-        return [
-            s for s in self.list_strategies()
-            if s["type"] == strategy_type.value or s["type"] == strategy_type
-        ]
+        t = strategy_type.value if hasattr(strategy_type, 'value') else strategy_type
+        return [s for s in self.list_strategies() if s["type"] == t]

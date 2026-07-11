@@ -492,6 +492,15 @@ async def data_quality(fund_code: str):
 
 # ── 数据 ──
 
+@router.get("/nav/{fund_code}")
+async def get_quant_nav(fund_code: str):
+    """获取基金量化模块的净值历史"""
+    nav_data = await asyncio.to_thread(get_nav_history, fund_code)
+    if not nav_data:
+        raise HTTPException(status_code=404, detail=f"基金 {fund_code} 无净值数据")
+    return {"success": True, "data": {"fund_code": fund_code, "nav_history": nav_data}}
+
+
 @router.post("/data/collect")
 async def trigger_collection(req: DataCollectRequest):
     """触发数据采集"""
