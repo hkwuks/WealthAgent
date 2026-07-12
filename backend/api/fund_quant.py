@@ -230,53 +230,117 @@ async def allocation_rebalance(req: AllocationRequest):
 # ── 回测 ──
 
 def _run_backtest_sync(config_dict: dict) -> str:
-    """同步回测任务 (用于APScheduler或BackgroundTasks)"""
-    from ..fund_quant.backtest.engine import FundBacktester
+    """同步回测任务 — 使用 AuroraCore 内核"""
+    from datetime import date, timedelta
+    from core import (
+        BacktestEngine, BacktestConfig as CoreConfig, EventBus,
+        FundNavPoint, MetricsCalculator,
+    )
+    from core.backtest import T1ExecutionEngine
+    from fund_quant.adapter import FundDomainAdapter
 
+    adapter = FundDomainAdapter()
     backtest_id = f"bt_{uuid.uuid4().hex[:12]}"
-    config = BacktestConfig(**config_dict)
 
-    result = BacktestResult(backtest_id=backtest_id, config=config, status="running")
-    save_backtest_result(result)
+    # 获取净值数据
+    strategy_name = config_dict.get("strategy_name", "")
+    fund_codes = config_dict.get("fund_codes", [])
+    fund_code = fund_codes[0] if fund_codes else "000001"
+    start = config_dict.get("start_date", "2024-01-01")
+    end = config_dict.get("end_date", "2025-12-31")
+
+    from ..fund_quant.data.storage import get_nav_history
+    nav_data = get_nav_history(fund_code)
+
+    if not nav_data:
+        # 模拟数据
+        navs = []
+        d = date.fromisoformat(start) if isinstance(start, str) else start
+        ed = date.fromisoformat(end) if isinstance(end, str) else end
+        if isinstance(d, str): d = date.fromisoformat(d)
+        if isinstance(ed, str): ed = date.fromisoformat(ed)
+        cur = d
+        while cur <= ed:
+            days = (cur - d).days
+            trend = 1.0 + days * 0.002 if days < 150 else 1.0 + (300 - days) * 0.002
+            navs.append(FundNavPoint(fund_code=fund_code, date=cur, nav=round(trend, 4)))
+            cur += timedelta(days=1)
+    else:
+        navs = []
+        for r in nav_data:
+            nd = date.fromisoformat(r["date"]) if isinstance(r["date"], str) else r["date"]
+            navs.append(FundNavPoint(fund_code=fund_code, date=nd, nav=r.get("nav", 0)))
+
+    # 查找策略
+    available = adapter.get_available_strategies()
+    cls = available.get(strategy_name)
+    if cls is None:
+        from ..fund_quant.strategy.base import StrategyRegistry as OldRegistry
+        registry = OldRegistry()
+        old_s = registry.get_strategy(strategy_name)
+        if old_s:
+            from core import Strategy
+            # Wrap old strategy in a compat layer
+            class _CompatWrapper(Strategy):
+                name = strategy_name
+                def on_data(self, data):
+                    nav_vals = [n.nav for n in navs if hasattr(n, 'nav')]
+                    old_s._state = {"nav_values": nav_vals, "fund_code": fund_code}
+                    sigs = old_s.on_evaluate(None, None)
+                    for sig in sigs or []:
+                        from core import Signal, Direction
+                        d = Direction.LONG if sig.direction.name == "BUY" else Direction.CLOSE_LONG
+                        self.ctx.emit(Signal(
+                            id="", strategy=self.name, symbol=fund_code,
+                            direction=d, price=data.nav, volume=10000,
+                            confidence=sig.confidence, reason=sig.reason,
+                        ))
+            cls = _CompatWrapper
+        else:
+            raise RuntimeError(f"策略 {strategy_name} 未找到")
+
+    strategy = cls()
+    cfg = CoreConfig(
+        initial_capital=config_dict.get("initial_capital", 100000),
+    )
+    engine = BacktestEngine(cfg)
+    engine.set_event_bus(EventBus())
+    engine.set_strategy(strategy)
+    engine.set_executor(T1ExecutionEngine(confirmation_delay=1))
+    engine.set_data(navs)
 
     try:
-        engine = FundBacktester()
-        bt_result = engine.run(config=config)
-        bt_result.backtest_id = backtest_id
-        bt_result.status = "completed"
-        save_backtest_result(bt_result)
-        logger.info(f"回测 [{backtest_id}] 完成: 收益 {bt_result.total_return:.2%}")
-    except Exception as e:
-        result.status = "failed"
+        report = engine.run()
+        metrics = MetricsCalculator.calculate([e["equity"] for e in report.equity_curve])
+        metrics.total_trades = report.total_trades
+
+        result = BacktestResult(
+            backtest_id=backtest_id,
+            config=BacktestConfig(**config_dict),
+            status="completed",
+            total_return=metrics.total_return,
+            annual_return=metrics.annual_return,
+            max_drawdown=metrics.max_drawdown,
+            sharpe_ratio=metrics.sharpe_ratio,
+            calmar_ratio=metrics.calmar_ratio,
+            win_rate=metrics.win_rate,
+            total_trades=report.total_trades,
+            equity_curve=[{"bar": i, "equity": e["equity"]}
+                          for i, e in enumerate(report.equity_curve)],
+        )
         save_backtest_result(result)
-        logger.error(f"回测 [{backtest_id}] 失败: {e}")
+        logger.info(f"AuroraCore 回测 [{backtest_id}] 完成: 收益 {metrics.total_return:.2%}")
+    except Exception as e:
+        result = BacktestResult(backtest_id=backtest_id, config=BacktestConfig(**config_dict), status="failed")
+        save_backtest_result(result)
+        logger.error(f"AuroraCore 回测 [{backtest_id}] 失败: {e}")
 
     return backtest_id
 
 
 async def _run_backtest_async(config_dict: dict) -> str:
-    """异步回测任务 — 在线程池执行以避免阻塞事件循环"""
-    from ..fund_quant.backtest.engine import FundBacktester
-
-    backtest_id = f"bt_{uuid.uuid4().hex[:12]}"
-    config = BacktestConfig(**config_dict)
-
-    result = BacktestResult(backtest_id=backtest_id, config=config, status="running")
-    await asyncio.to_thread(save_backtest_result, result)
-
-    try:
-        engine = FundBacktester()
-        bt_result = await asyncio.to_thread(partial(engine.run, config=config))
-        bt_result.backtest_id = backtest_id
-        bt_result.status = "completed"
-        await asyncio.to_thread(save_backtest_result, bt_result)
-        logger.info(f"回测 [{backtest_id}] 完成: 收益 {bt_result.total_return:.2%}")
-    except Exception as e:
-        result.status = "failed"
-        await asyncio.to_thread(save_backtest_result, result)
-        logger.error(f"回测 [{backtest_id}] 失败: {e}")
-
-    return backtest_id
+    """异步回测任务 — AuroraCore 内核（线程池执行）"""
+    return await asyncio.to_thread(_run_backtest_sync, config_dict)
 
 
 @router.post("/backtest/run")

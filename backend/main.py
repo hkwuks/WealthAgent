@@ -25,6 +25,14 @@ except Exception:
 
 import asyncio
 from contextlib import asynccontextmanager
+
+# 添加 backend 目录到 Python 路径（在 import backend 模块之前）
+import sys, os
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_this_dir)
+sys.path.insert(0, _project_root)
+sys.path.insert(0, _this_dir)
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -33,9 +41,6 @@ from backend.api import funds, market, valuation, gold_trading, fund_quant
 from backend.gold.core.errors import GoldTradingError
 from loguru import logger
 
-
-# 添加项目根目录到 Python 路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 配置日志
 log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
