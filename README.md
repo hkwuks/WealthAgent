@@ -7,7 +7,7 @@
 
 <p align="center">
   <b>WealthWise · 智能理财 Agent</b><br>
-  基金估值 · 黄金量化 · 市场数据 · AI 驱动
+  基金估值 · 基金量化 · 黄金量化 · 市场数据 · AI 驱动
 </p>
 
 <p align="center">
@@ -15,6 +15,7 @@
   <a href="#技术栈"><img src="https://img.shields.io/badge/技术栈-Tech-3b82f6?style=flat-square"></a>
   <a href="#快速开始"><img src="https://img.shields.io/badge/开始-Get%20Started-eab308?style=flat-square"></a>
   <a href="#估值策略"><img src="https://img.shields.io/badge/估值-Valuation-a855f7?style=flat-square"></a>
+  <a href="#基金量化投资"><img src="https://img.shields.io/badge/基金量化-Fund%20Quant-06b6d4?style=flat-square"></a>
   <a href="#黄金量化交易"><img src="https://img.shields.io/badge/黄金-Gold-f59e0b?style=flat-square"></a>
   <a href="#api-文档"><img src="https://img.shields.io/badge/API-文档-06b6d4?style=flat-square"></a>
 </p>
@@ -30,7 +31,8 @@
 
 <p align="center">
   <i>一个基于 FastAPI + TypeScript 的全方位智能理财助手系统。<br>
-  集成基金盘中实时估值、黄金期货量化交易、多源市场数据监控，<br>
+  集成基金盘中实时估值、基金量化投资（择时/选基/配置/回测）、<br>
+  黄金期货量化交易、多源市场数据监控，<br>
   通过 MCP 和 Skill 与 AI 助手深度集成，提供专业的理财决策支持。</i>
 </p>
 
@@ -95,11 +97,23 @@ SHFE AU 黄金期货全流程量化交易子系统：
 </td>
 <td>
 
-### 🤖 AI 集成
-双通道 AI 助手集成方案：
-- **MCP 协议**：33+ 个 Tool，覆盖基金、黄金、市场全功能
-- **Skill 系统**：AI 助手可直接调用的智能理财技能
-- 支持基金分析、持仓总结、市场日报等 Prompt
+### 🧠 基金量化
+基金量化投资全流程框架，覆盖**择时 → 选基 → 配置 → 回测 → 风控**：
+- 多周期动量 / 估值偏离 / 智能定投择时
+- 7 因子多指标综合选基评分
+- 风险平价 / Black-Litterman 组合优化
+- AuroraCore 内核异步回测（A/C 份额费率穿透）
+- 风格漂移检测 / 信号熔断 / VaR 监控
+
+</td>
+<td>
+
+### 📈 市场数据
+多源数据聚合，实时行情一网打尽：
+- A 股、港股、美股实时行情
+- 国内外指数（沪深300、标普500等）
+- 场内 ETF / LOF 行情
+- 黄金现货 / COMEX 黄金
 
 </td>
 </tr>
@@ -112,8 +126,9 @@ SHFE AU 黄金期货全流程量化交易子系统：
 | ⚡ **批量估值** | SSE 流式批量估值，实时返回每个基金结果 |
 | 🔄 **自动刷新** | 可配置 30s – 10min 自动刷新间隔 |
 | 💾 **数据持久化** | 基金数据本地存储，刷新不丢失 |
-| 🛡️ **风控体系** | VaR / 波动率 / 回撤 / 信号频率实时监控 |
-| 📦 **无框架前端** | 原生 TypeScript，零依赖，轻量高效 |
+| 🛡️ **风控体系** | VaR / 波动率 / 回撤 / 信号熔断 / 风格漂移监控 |
+| 🧠 **量化策略库** | 择时（动量/估值/智能定投）+ 选基（多因子/评级）+ 配置（风险平价/B-L） |
+| 🔄 **AuroraCore 回测** | 异步回测引擎，A/C 份额费率穿透，T+1 执行模拟 |
 
 ---
 
@@ -124,9 +139,11 @@ SHFE AU 黄金期货全流程量化交易子系统：
 | 类别 | 技术 |
 |------|------|
 | **框架** | [FastAPI](https://fastapi.tiangolo.com/) + Pydantic |
+| **ML** | LightGBM · XGBoost · scikit-learn · StatsModels |
+| **回测（黄金）** | Walk-Forward · CPCV · Monte Carlo · Triple-Barrier |
+| **回测（基金）** | AuroraCore 异步引擎 · T+1 执行 · 费率穿透 · 分红税调整 |
+| **风险** | VaR · 波动率 · 回撤 · 风格漂移 · Consecutive Loss · 信号熔断 |
 | **数据** | [AkShare](https://akshare.akfamily.xyz/) · [yFinance](https://github.com/ranaroussi/yfinance) · aiohttp · httpx |
-| **ML** | LightGBM · XGBoost · scikit-learn (Ridge) |
-| **回测** | Walk-Forward · CPCV · Monte Carlo · Triple-Barrier |
 | **日志** | Loguru |
 | **协议** | MCP (Model Context Protocol) Streamable HTTP |
 
@@ -210,6 +227,65 @@ QDII 混合：估算净值 = 昨日净值 × (1 + 已知持仓贡献 + 剩余仓
 
 ---
 
+## 🧠 基金量化投资
+
+基于 **AuroraCore** 统一回测内核 + **FundQuant** 策略框架的基金量化投资子系统，覆盖**择时 → 选基 → 配置 → 回测 → 风控 → 信号**全流程。
+
+### 择时策略 (Timing)
+
+| 策略 | 核心逻辑 |
+|------|----------|
+| `momentum` | 多周期时间序列动量 (TSMOM)，支持短期/中期/长期加权融合 |
+| `valuation_deviation` | 基于 z-score 的估值偏离均值回归择时信号 |
+| `smart_dca` | 估值偏差动态调整定投金额——低位多投、高位少投 |
+| `interest_rate` | 国债收益率变化驱动的债券型基金择时，含久期识别 |
+| `fx_momentum` | 多币种汇率动量信号，用于 QDII 仓位调整 |
+
+### 选基策略 (Selection)
+
+| 策略 | 核心逻辑 |
+|------|----------|
+| `multi_factor` | 7 因子综合评分：Sharpe / 最大回撤 / 信息比率 / 规模 / 费率 / 稳定性 / 存续期 |
+| `rating_enhanced` | 晨星评级 + 量化因子 (夏普/回撤/超额收益) + 估值偏差复合评分 |
+
+### 配置策略 (Allocation)
+
+| 策略 | 核心逻辑 |
+|------|----------|
+| `risk_parity` | 约束风险平价 (Ledoit-Wolf 收缩协方差 + SLSQP 求解) |
+| `black_litterman` | 均衡收益 Π + 观点驱动后验 + 均值-方差优化 |
+
+### 回测引擎
+
+基于 **AuroraCore** 内核的基金专用回测引擎：
+
+| 特性 | 说明 |
+|------|------|
+| **T+1 执行** | 当日信号 → 次日开盘/收盘确认，符合公募基金实际规则 |
+| **费率模型** | A/C 份额申购/赎回/管理/托管费率穿透，FOF 双重费率，分红税调整 |
+| **执行模式** | 支持 `market_order`（按比例调仓）和 `bakcet_trade`（篮子交易） |
+| **事件驱动** | EventBus 架构，可插拔 Strategy → Execution → Risk → Book 管线 |
+| **异步并行** | 多策略回测通过 `asyncio.create_task` 并行提交，不阻塞主线程 |
+
+### 风控体系
+
+| 检查项 | 🔶 Warning | 🔴 Reject |
+|--------|:----------:|:---------:|
+| **VaR(95%)** > 总资产 | 3% | 5% |
+| **最大回撤** > 总资产 | 8% | 15% |
+| **单日亏损** > 总资产 | 2% | 5% |
+| **Consecutive Loss** | 3 次连续亏损 | 5 次 → 熔断 |
+| **信号频率** | 同方向阈值内重复信号 → 跳过 |
+| **风格漂移** | 持仓因子暴露偏离基准 → 发出预警 |
+
+### 数据采集与质量
+
+- **数据缓存**：SQLite 本地持久化，支持增量更新
+- **数据质量**：缺失率 / 异常点 / 涨跌幅超限检测
+- **ESG 等另类数据**：预留接口，可接入外部数据源
+
+---
+
 ## 🥇 黄金量化交易
 
 基于 FastAPI 的黄金期货量化交易子系统，覆盖从策略研发到实盘信号的全流程。
@@ -272,6 +348,17 @@ QDII 混合：估算净值 = 昨日净值 × (1 + 已知持仓贡献 + 剩余仓
 │   │   ├── risk/             # 风控 · 订单管理
 │   │   ├── signal/           # 信号输出
 │   │   └── ml/               # 特征工程 · 训练 · 预测
+│   ├── fund_quant/           # 基金量化投资子系统
+│   │   ├── core/             # 模型 · 配置 · 枚举 · 错误
+│   │   ├── strategy/         # 策略基类 + 注册表
+│   │   │   ├── timing/       # 择时（动量/估值偏差/定投/利率/汇率）
+│   │   │   ├── selection/    # 选基（多因子/评级增强）
+│   │   │   └── allocation/   # 配置（风险平价/B-L）
+│   │   ├── backtest/         # 回测引擎 · 成本模型 · 分红
+│   │   ├── data/             # 数据采集 · 存储 · 质量
+│   │   ├── signal/           # 信号输出
+│   │   ├── risk/             # 风控指标 · 风格漂移
+│   │   └── portfolio/        # 组合追踪
 │   ├── fund_service.py       # 基金业务逻辑
 │   ├── fund_valuation.py     # 估值引擎
 │   ├── market_data.py        # 市场数据服务
@@ -334,7 +421,34 @@ QDII 混合：估算净值 = 昨日净值 × (1 + 已知持仓贡献 + 剩余仓
 | `GET` | `/api/valuation/{fund_code}/accuracy` | 估值准确性验证 |
 | `GET` | `/api/valuation/info/types` | 估值类型说明 |
 
-### 黄金量化（21 个端点）
+### 基金量化（20+ 个端点）
+
+| 方法 | 端点 | 描述 |
+|:----:|:-----|:-----|
+| `GET` | `/api/fund-quant/strategy/list` | 策略列表 |
+| `GET` | `/api/fund-quant/strategy/params/{name}` | 策略参数 |
+| `POST` | `/api/fund-quant/timing/evaluate` | 单基金择时评估 |
+| `POST` | `/api/fund-quant/timing/batch` | 批量择时评估 |
+| `POST` | `/api/fund-quant/selection/screen` | 基金筛选 |
+| `POST` | `/api/fund-quant/selection/score` | 基金评分 |
+| `POST` | `/api/fund-quant/allocation/optimize` | 组合配置优化 |
+| `POST` | `/api/fund-quant/allocation/rebalance` | 再平衡建议 |
+| `POST` | `/api/fund-quant/backtest/run` | 运行回测 |
+| `GET` | `/api/fund-quant/backtest/result/{id}` | 回测结果 |
+| `GET` | `/api/fund-quant/backtest/list` | 回测记录列表 |
+| `POST` | `/api/fund-quant/backtest/compare` | 多策略对比回测 |
+| `POST` | `/api/fund-quant/backtest/export/{id}` | 导出回测结果 |
+| `GET` | `/api/fund-quant/signal/latest` | 最新信号 |
+| `GET` | `/api/fund-quant/signal/history` | 信号历史（分页） |
+| `GET` | `/api/fund-quant/signal/stream` | SSE 信号推送 |
+| `GET` | `/api/fund-quant/portfolio/status` | 模拟组合状态 |
+| `GET` | `/api/fund-quant/risk/metrics` | 风险指标 |
+| `GET` | `/api/fund-quant/data/quality/{code}` | 数据质量报告 |
+| `GET` | `/api/fund-quant/nav/{code}` | 量化模块净值历史 |
+| `POST` | `/api/fund-quant/data/collect` | 触发数据采集 |
+| `GET` | `/api/fund-quant/data/status` | 采集状态 |
+| `GET` | `/api/fund-quant-core/strategies` | AuroraCore 策略列表 |
+| `POST` | `/api/fund-quant-core/backtest` | AuroraCore 基金回测 |
 
 | 方法 | 端点 | 描述 |
 |:----:|:-----|:-----|
@@ -534,6 +648,8 @@ server: {
 | 5 | **ML 置信度** — R² 为负时模型预测置信度降低 |
 | 6 | **网络依赖** — 需要联网获取实时行情 |
 | 7 | **频率限制** — 请合理设置刷新间隔，避免被数据源限制 |
+| 8 | **择时信号参考** — 量化信号仅作参考，不构成投资建议 |
+| 9 | **AuroraCore 回测** — A/C 份额费率区分需手动指定份额类型 |
 
 ---
 
@@ -548,6 +664,9 @@ server: {
 - [x] Walk-Forward / CPCV / Monte Carlo 回测
 - [x] Triple-Barrier 标注 · 合约展期处理
 - [x] 风控体系（VaR / 波动率 / 回撤 / 频率）
+- [x] 基金量化投资（择时 / 选基 / 配置）
+- [x] AuroraCore 统一回测内核（T+1 执行 · 费率穿透）
+- [x] 风格漂移检测 · 信号熔断 · VaR 风控
 - [ ] 更多资产类别支持
 - [ ] 投资组合优化
 
