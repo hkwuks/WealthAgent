@@ -92,11 +92,7 @@ async def get_strategy_detail(strategy_name: str):
 
 @router.post("/backtest")
 async def run_backtest(req: BacktestRequest):
-    """
-    运行单策略回测
-
-    从数据网关获取K线，驱动Backtester运行，返回回测报告。
-    """
+    """运行单策略回测 — 使用 gold Backtester"""
     cls = StrategyRegistry.get(req.strategy_name)
     if cls is None:
         raise HTTPException(status_code=404, detail=f"Strategy '{req.strategy_name}' not found")
@@ -111,10 +107,7 @@ async def run_backtest(req: BacktestRequest):
     strategy = cls()
     backtester = Backtester()
     try:
-        result = await asyncio.to_thread(
-            backtester.run, strategy, bars,
-            capital=req.capital, params=req.params, method=req.method,
-        )
+        result = await asyncio.to_thread(backtester.run, strategy, bars, capital=req.capital, params=req.params, method=req.method)
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -122,14 +115,12 @@ async def run_backtest(req: BacktestRequest):
     return {
         "success": True,
         "data": {
-            "strategy": result["strategy"],
+            "strategy": req.strategy_name,
+            "engine": "gold_backtester",
             "method": req.method,
-            "effective_method": "walk_forward" if "walk_forward" in result else "simple",
-            "signal_count": len(result["signals"]),
-            "trade_count": len([t for t in result["trades"] if t.get("type") == "close"]),
             "report": result["report"],
-            "signals": result["signals"][-20:],
-            "trades": result["trades"][-20:],
+            "signals": result.get("signals", [])[-20:],
+            "trades": result.get("trades", [])[-50:],
             "walk_forward": result.get("walk_forward"),
         },
     }
@@ -146,6 +137,7 @@ async def compare_strategies(req: StrategyComparisonRequest):
     """
     results = {}
     errors = []
+    valid = []
 
     for name in req.strategy_names:
         cls = StrategyRegistry.get(name)
@@ -582,7 +574,7 @@ async def generate_signal(
     execution = None
     if auto_execute and risk_result.passed:
         execution = await _execute_signal_to_ctp(store, signal_data)
-        risk_checker.set_equity(signal_data.price)  # 更新权益估算
+        risk_checker.set_equity(GoldSettings().backtest_capital)  # 更新权益估算
 
     # 输出交易建议
     signal_output = SignalOutput()
@@ -740,11 +732,15 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
     import numpy as np
 
     def _train_and_predict():
+        import numpy as np
+        # 清洗: 替换 NaN/Inf
+        X_clean = np.nan_to_num(full_X, nan=0.0, posinf=0.0, neginf=0.0)
+        y_clean = np.nan_to_num(y, nan=0.0)
         scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(full_X)
+        X_scaled = scaler.fit_transform(X_clean)
         model = Ridge(alpha=1.0)
-        model.fit(X_scaled, y)
-        X_latest = X.iloc[-1:]
+        model.fit(X_scaled, y_clean)
+        X_latest = X_clean[-1:]
         X_latest_scaled = scaler.transform(X_latest)
         return float(model.predict(X_latest_scaled)[0])
 
@@ -794,7 +790,12 @@ async def _generate_ml_signal(strategy_name: str, bars: list, gateway, cls) -> d
     risk_checker.record_signal(signal)
     positions = await query_ctp_positions_raw()
     account = await query_ctp_account_raw()
-    risk_result = risk_checker.check(signal, positions=positions, account=account)
+    # 传显式权益，避免被 SET equity(price) 搞坏的 DB 值影响
+    risk_result = risk_checker.check(
+        signal, positions=positions, account=account,
+        current_equity=GoldSettings().backtest_capital,
+        initial_capital=GoldSettings().backtest_capital,
+    )
 
     signal_output = SignalOutput()
     advice = signal_output.output(signal, risk_result)

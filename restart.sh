@@ -2,8 +2,11 @@
 set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BACKEND_LOG="$PROJECT_DIR/backend.log"
-FRONTEND_LOG="$PROJECT_DIR/frontend.log"
+LOG_DIR="$PROJECT_DIR/logs"
+mkdir -p "$LOG_DIR"
+
+BACKEND_LOG="$LOG_DIR/backend.log"
+FRONTEND_LOG="$LOG_DIR/frontend.log"
 
 echo "===== 重启前后端 ====="
 
