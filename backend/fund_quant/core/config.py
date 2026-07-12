@@ -1,14 +1,18 @@
 """FundQuant 配置 - 基金量化投资系统"""
 
+from pathlib import Path
 from pydantic_settings import BaseSettings
 from typing import Optional, List
+
+# 项目根目录 (backend/fund_quant/core/config.py → 4层到项目根)
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 
 
 class FundQuantSettings(BaseSettings):
     """基金量化系统配置"""
 
     # SQLite
-    FUND_QUANT_DB_PATH: str = "data/backend/fund_quant/fund_quant.db"
+    FUND_QUANT_DB_PATH: str = str(_PROJECT_ROOT / "data" / "backend" / "fund_quant" / "fund_quant.db")
 
     # Redis
     REDIS_HOST: str = "localhost"
@@ -16,7 +20,7 @@ class FundQuantSettings(BaseSettings):
     REDIS_DB: int = 1
 
     # APScheduler
-    SCHEDULER_JOBSTORE_URL: str = "sqlite:///data/backend/fund_quant/scheduler_jobs.db"
+    SCHEDULER_JOBSTORE_URL: str = f"sqlite:///{_PROJECT_ROOT / 'data' / 'backend' / 'fund_quant' / 'scheduler_jobs.db'}"
     SCHEDULER_MISFIRE_GRACE: int = 3600
     SCHEDULER_COALESCE: bool = True
     SCHEDULER_MAX_INSTANCES: int = 1

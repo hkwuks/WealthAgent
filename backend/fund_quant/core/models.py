@@ -187,11 +187,17 @@ class BacktestResult(BaseModel):
     total_return: float = 0.0
     annual_return: float = 0.0
     max_drawdown: float = 0.0
+    volatility: float = 0.0
+    sortino_ratio: float = 0.0
     sharpe_ratio: float = 0.0
     calmar_ratio: float = 0.0
+    information_ratio: float = 0.0
     win_rate: float = 0.0
     profit_loss_ratio: float = 0.0
     total_trades: int = 0
+    turnover_rate: float = 0.0
+    fee_leakage: float = 0.0
+    max_consecutive_loss_days: int = 0
     equity_curve: List[Dict] = Field(default_factory=list)
     trade_log: List[Dict] = Field(default_factory=list)
     period_returns: Dict[str, float] = Field(default_factory=dict)

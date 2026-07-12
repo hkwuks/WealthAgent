@@ -16,6 +16,7 @@ import json
 import re
 import time
 import random
+from pathlib import Path
 from datetime import datetime
 from functools import partial
 from typing import Dict, List, Optional, Any
@@ -33,7 +34,7 @@ from backend.models import (
 from backend.rate_limiter import RateLimiter, RateLimiterGroup
 from backend.ttl_cache import TtlCache
 
-logger.add("./logs/market_data.log", encoding="utf-8", rotation="10 MB")
+logger.add(str(Path(__file__).parent.parent / "logs" / "market_data.log"), encoding="utf-8", rotation="10 MB")
 
 # ==================== 常量定义 ====================
 

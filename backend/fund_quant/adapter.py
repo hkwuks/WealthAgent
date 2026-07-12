@@ -19,34 +19,102 @@ class FundCostModel(CostModel):
     """基金费率模型
 
     申购费按金额比例，赎回费按持有天数阶梯，管理费+托管费年化日提。
-    简化版：申购×申购费率 + 赎回×赎回费率。
+    A/C份额区分，FOF双重费率穿透，分红税。
     """
+
+    # ── 费率表 ──
+    SUB_RATES = {
+        "stock": 0.015, "hybrid": 0.015, "bond": 0.008,
+        "index": 0.010, "qdii": 0.015, "money": 0.0, "fof": 0.012,
+    }
+    MGMT_RATES = {
+        "stock": 0.015, "hybrid": 0.012, "bond": 0.006,
+        "index": 0.005, "qdii": 0.015, "money": 0.003, "fof": 0.010,
+    }
+    CUSTODY_RATES = {
+        "stock": 0.0025, "hybrid": 0.0020, "bond": 0.0015,
+        "index": 0.0010, "qdii": 0.0025, "money": 0.0005, "fof": 0.0020,
+    }
+    # 赎回费率阶梯: {持有天数上限: 费率%}
+    REDEMPTION_TIERS = {
+        7: 1.50,       # <7天: 1.5%
+        30: 0.75,      # 7-30天: 0.75%
+        365: 0.50,     # 30天-1年: 0.5%
+        730: 0.25,     # 1-2年: 0.25%
+        999999: 0.0,   # >2年: 0%
+    }
 
     def __init__(self, fund_type: str = "stock",
                  subscription_rate: Optional[float] = None,
-                 redemption_rate: Optional[float] = None,
-                 management_rate: float = 0.015,
-                 custody_rate: float = 0.0025):
+                 management_rate: Optional[float] = None,
+                 custody_rate: Optional[float] = None,
+                 is_c_class: bool = False,
+                 fof_underlying_fee: float = 0.0,
+                 dividend_tax_short: float = 0.10,
+                 dividend_tax_long: float = 0.0):
         self.fund_type = fund_type
-        # 默认费率表 — 与 fund_quant 原有配置一致
-        self._sub_rates = {
-            "stock": 0.015, "hybrid": 0.015, "bond": 0.008,
-            "index": 0.010, "qdii": 0.015, "money": 0.0, "fof": 0.012,
-        }
-        self._sub_rate = subscription_rate or self._sub_rates.get(fund_type, 0.015)
-        self._redemption_rate = redemption_rate or 0.005  # 默认持有 < 1年赎回费率
-        self._management_rate = management_rate  # 年化管理费
-        self._custody_rate = custody_rate        # 年化托管费
+        self._sub_rate = subscription_rate or self.SUB_RATES.get(fund_type, 0.015)
+        self._mgmt_rate = management_rate or self.MGMT_RATES.get(fund_type, 0.015)
+        self._custody_rate = custody_rate or self.CUSTODY_RATES.get(fund_type, 0.0025)
+        self._is_c_class = is_c_class
+        self._fof_underlying_fee = fof_underlying_fee  # FOF底层基金费率穿透
+        self._div_tax_short = dividend_tax_short
+        self._div_tax_long = dividend_tax_long
 
     def calc(self, signal: Signal, fill: Fill) -> float:
-        """计算单笔成本 = 申购费 + 赎回费（毛估，不区分 A/C 类）
-        Returns:
-            float: 交易成本（正数）
+        """计算单笔交易综合成本
+
+        开仓: 申购费 + 管理费+托管费（按180日估计）
+        平仓: 赎回费 + 分红税 + 管理费+托管费（按180日估计）
+        FOF: 额外穿透底层费率
         """
         amount = fill.price * fill.volume
-        sub_cost = amount * self._sub_rate          # 申购费
-        red_cost = amount * self._redemption_rate    # 赎回费（毛估最短持有期费率）
-        return round(sub_cost + red_cost, 4)
+        est_days = 180  # 估计持有期
+
+        if signal.direction in (Direction.LONG, Direction.SHORT):
+            # 开仓: 申购费 + 管理/托管费（前半段）
+            sub = self._get_subscription(amount)
+            daily = self._get_annual_carry(amount) * est_days / 365 / 2
+            return round(sub + daily, 4)
+        else:
+            # 平仓: 赎回费 + 管理/托管费（后半段）+ 分红税
+            red = self._get_redemption(amount, est_days)
+            daily = self._get_annual_carry(amount) * est_days / 365 / 2
+            div_tax = self._get_dividend_tax(amount, est_days)
+            return round(red + daily + div_tax, 4)
+
+    def _get_subscription(self, amount: float) -> float:
+        """申购费"""
+        fee = amount * self._sub_rate
+        # FOF穿透
+        if self.fund_type == "fof" and self._fof_underlying_fee > 0:
+            fee += amount * self._fof_underlying_fee
+        return fee
+
+    def _get_redemption(self, amount: float, holding_days: int) -> float:
+        """赎回费（含A/C类区分）"""
+        if self._is_c_class:
+            # C类持有超过阈值免赎回费
+            return 0.0 if holding_days >= 30 else amount * 0.005
+        for limit, pct in sorted(self.REDEMPTION_TIERS.items()):
+            if holding_days < limit:
+                return amount * (pct / 100)
+        return 0.0
+
+    def _get_annual_carry(self, amount: float) -> float:
+        """年化管理+托管费"""
+        mgmt = amount * self._mgmt_rate
+        custody = amount * self._custody_rate
+        if self._is_c_class:
+            mgmt += amount * 0.008  # C类销售服务费 ~0.8%/年
+        if self.fund_type == "fof":
+            mgmt += amount * self._fof_underlying_fee  # FOF穿透
+        return mgmt + custody
+
+    def _get_dividend_tax(self, amount: float, holding_days: int) -> float:
+        """分红税"""
+        rate = self._div_tax_long if holding_days >= 365 else self._div_tax_short
+        return amount * rate * 0.01  # 假设1%分红率
 
 
 class FundDomainAdapter(DomainAdapter):

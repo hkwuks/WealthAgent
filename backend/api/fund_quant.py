@@ -311,7 +311,12 @@ def _run_backtest_sync(config_dict: dict) -> str:
 
     try:
         report = engine.run()
-        metrics = MetricsCalculator.calculate([e["equity"] for e in report.equity_curve])
+        equity_values = [e["equity"] for e in report.equity_curve]
+        nav_dates = [n.date.isoformat() for n in navs]
+        metrics = MetricsCalculator.calculate(
+            equity_values, trades=report.trades,
+            dates=[nav_dates[0]] + nav_dates,
+        )
         metrics.total_trades = report.total_trades
 
         result = BacktestResult(
@@ -321,12 +326,20 @@ def _run_backtest_sync(config_dict: dict) -> str:
             total_return=metrics.total_return,
             annual_return=metrics.annual_return,
             max_drawdown=metrics.max_drawdown,
+            volatility=metrics.volatility,
+            sortino_ratio=metrics.sortino_ratio,
             sharpe_ratio=metrics.sharpe_ratio,
             calmar_ratio=metrics.calmar_ratio,
+            information_ratio=metrics.information_ratio,
             win_rate=metrics.win_rate,
+            profit_loss_ratio=metrics.profit_loss_ratio,
             total_trades=report.total_trades,
-            equity_curve=[{"bar": i, "equity": e["equity"]}
+            turnover_rate=metrics.turnover_rate,
+            fee_leakage=metrics.fee_leakage,
+            max_consecutive_loss_days=metrics.max_consecutive_loss_days,
+            equity_curve=[{"bar": i, "equity": e["equity"], "date": nav_dates[i] if i < len(nav_dates) else ""}
                           for i, e in enumerate(report.equity_curve)],
+            period_returns=metrics.period_returns,
         )
         save_backtest_result(result)
         logger.info(f"AuroraCore 回测 [{backtest_id}] 完成: 收益 {metrics.total_return:.2%}")

@@ -1,6 +1,7 @@
 import asyncio
 import time
 import pandas as pd
+from pathlib import Path
 from datetime import datetime, timedelta
 from loguru import logger
 
@@ -17,7 +18,9 @@ class GoldDataGateway:
     _CACHE_TTL: float = 5.0    # seconds
     _last_refresh: dict = {}    # (symbol, period) → timestamp, 30s cooldown
 
-    def __init__(self, db_path: str = "data/backend/gold/gold.db"):
+    def __init__(self, db_path: str | None = None):
+        if db_path is None:
+            db_path = str(Path(__file__).parent.parent.parent.parent / "data" / "backend" / "gold" / "gold.db")
         self.db_path = db_path
         self.store = GoldDataStore(db_path)
         self._rate_limiter_group = RateLimiterGroup(max_concurrent=2, min_interval=1.0)
