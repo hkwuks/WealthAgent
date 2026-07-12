@@ -164,6 +164,27 @@ class GoldDomainAdapter(DomainAdapter):
             "ml_predictor": _make_wrapper("ml_predictor"),
         }
 
+    def register_factors(self):
+        """注册黄金域因子"""
+        from backend.core.factor.registry import FactorRegistry
+        from backend.gold.factors.futures import RollYieldFactor, BasisFactor
+        from backend.gold.factors.momentum import MomentumMultiFactor
+        from backend.gold.factors.sentiment import (
+            OpenInterestChangeFactor, COTSignalFactor,
+        )
+        from backend.gold.factors.risk import VolatilityRegimeFactor
+        from backend.gold.factors.fundamental import InventoryChangeFactor
+
+        FactorRegistry.register_factors([
+            (RollYieldFactor, RollYieldFactor.meta),
+            (BasisFactor, BasisFactor.meta),
+            (MomentumMultiFactor, MomentumMultiFactor.meta),
+            (OpenInterestChangeFactor, OpenInterestChangeFactor.meta),
+            (COTSignalFactor, COTSignalFactor.meta),
+            (VolatilityRegimeFactor, VolatilityRegimeFactor.meta),
+            (InventoryChangeFactor, InventoryChangeFactor.meta),
+        ])
+
 
 _WRAPPER_CACHE: dict[str, type] = {}
 
