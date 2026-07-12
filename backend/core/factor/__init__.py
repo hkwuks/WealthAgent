@@ -9,11 +9,14 @@ from .models import (
 )
 from .registry import FactorRegistry
 from .evaluation import EvaluationEngine, Neutralizer
+from .report import FactorReport, FactorAudit
+from .mining import CombinatorialSearch, FormulaSearch
 
 __all__ = [
     "EvalConfig", "FactorError", "FactorNotFound", "EvaluationError",
     "ConfigError", "Factor", "FactorMeta", "FactorSnapshot",
     "FactorEvaluationReport", "ICSnapshot", "GroupReturnResult",
     "FamaMacBethResult", "EvalCache", "FactorRegistry",
-    "EvaluationEngine", "Neutralizer",
+    "EvaluationEngine", "Neutralizer", "FactorReport", "FactorAudit",
+    "CombinatorialSearch", "FormulaSearch",
 ]

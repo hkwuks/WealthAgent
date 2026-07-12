@@ -177,6 +177,36 @@ class FundDomainAdapter(DomainAdapter):
             "momentum_fund": AdpatedMomentumFund,
         }
 
+    def register_factors(self):
+        """注册基金域因子"""
+        from backend.core.factor.registry import FactorRegistry
+        from backend.fund_quant.factors.risk_adjusted import (
+            SharpeRatioFactor, InfoRatioFactor, CaptureRatioFactor,
+        )
+        from backend.fund_quant.factors.risk import MaxDrawdownFactor
+        from backend.fund_quant.factors.structural import (
+            FundScaleFactor, FeeRateFactor,
+        )
+        from backend.fund_quant.factors.flow import FundFlowFactor
+        from backend.fund_quant.factors.concentration import (
+            HoldingConcentrationFactor,
+        )
+        from backend.fund_quant.factors.manager import ManagerTenureFactor
+        from backend.fund_quant.factors.behavioral import CalendarReturnFactor
+
+        FactorRegistry.register_factors([
+            (SharpeRatioFactor, SharpeRatioFactor.meta),
+            (MaxDrawdownFactor, MaxDrawdownFactor.meta),
+            (InfoRatioFactor, InfoRatioFactor.meta),
+            (FundScaleFactor, FundScaleFactor.meta),
+            (FeeRateFactor, FeeRateFactor.meta),
+            (FundFlowFactor, FundFlowFactor.meta),
+            (HoldingConcentrationFactor, HoldingConcentrationFactor.meta),
+            (ManagerTenureFactor, ManagerTenureFactor.meta),
+            (CaptureRatioFactor, CaptureRatioFactor.meta),
+            (CalendarReturnFactor, CalendarReturnFactor.meta),
+        ])
+
 
 # ── 适配后的基金动量策略 ──
 
