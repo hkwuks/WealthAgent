@@ -53,7 +53,6 @@ export class FundQuantUI {
             <button class="sub-tab" data-view="backtest">🔄 回测</button>
             <button class="sub-tab" data-view="signal">🔔 信号</button>
             <button class="sub-tab" data-view="portfolio">💼 组合</button>
-            <button class="sub-tab" data-view="factor">🧪 因子</button>
           </nav>
           <div id="fq-content"><div class="fq-loading">加载中...</div></div>
         </div>
@@ -87,7 +86,6 @@ export class FundQuantUI {
       case 'backtest': this.showBacktestView(); break
       case 'signal': this.showSignalView(); break
       case 'portfolio': this.showPortfolioView(); break
-      case 'factor': this.showFactorView(); break
     }
   }
 
@@ -534,141 +532,6 @@ export class FundQuantUI {
       setTimeout(() => { this.sseSource = null; this.toggleSSE() }, 10000)
     }
     if (statusEl) statusEl.textContent = '📡 SSE 已连接'
-  }
-
-  // ═════════════════════════════════════════
-  // 因子视图
-  // ═════════════════════════════════════════
-
-  private async showFactorView() {
-    const content = this.container?.querySelector('#fq-content')
-    if (!content) return
-    content.innerHTML = `
-      <div class="fq-view">
-        <div class="fq-section-title">🧪 因子分析引擎</div>
-        <div class="fq-form-row">
-          <select id="fq-factor-domain" class="input" style="width:120px">
-            <option value="fund">基金因子</option>
-            <option value="gold">黄金因子</option>
-          </select>
-          <button class="btn btn-primary" id="fq-factor-audit-btn">全景审计</button>
-          <button class="btn btn-outline" id="fq-factor-reg-btn">注册因子</button>
-        </div>
-        <div id="fq-factor-list" class="fq-result-area"><div class="fq-loading">加载中...</div></div>
-        <div id="fq-factor-detail" class="fq-result-area"></div>
-      </div>`
-
-    this.loadFactorList()
-
-    content.querySelector('#fq-factor-audit-btn')?.addEventListener('click', () => this.runFactorAudit())
-    content.querySelector('#fq-factor-reg-btn')?.addEventListener('click', () => this.registerFactors())
-    content.querySelector('#fq-factor-domain')?.addEventListener('change', () => this.loadFactorList())
-  }
-
-  private async loadFactorList() {
-    const content = this.container?.querySelector('#fq-content')
-    const el = content?.querySelector('#fq-factor-list')
-    if (!el) return
-    const domain = (content?.querySelector('#fq-factor-domain') as HTMLSelectElement)?.value || 'fund'
-    try {
-      const res = await api.get(`${BASE}/factors/list?domain=${domain}`)
-      const factors = res.data || []
-      el.innerHTML = `
-        <div style="margin-bottom:8px;color:var(--text-secondary)">已注册 ${factors.length} 个 ${domain} 因子</div>
-        <table class="data-table">
-          <thead><tr><th>名称</th><th>显示名</th><th>类别</th><th>方向</th><th>说明</th></tr></thead>
-          <tbody>
-            ${factors.map((f: any) => `
-              <tr class="factor-row" data-name="${f.name}">
-                <td><code>${f.name}</code></td>
-                <td>${f.display_name}</td>
-                <td><span class="factor-cat tag-${f.category}">${f.category}</span></td>
-                <td>${f.direction > 0 ? '🟢 +1' : '🔴 -1'}</td>
-                <td style="font-size:0.85em;color:var(--text-secondary)">${f.description || '-'}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>`
-      el.querySelectorAll('.factor-row').forEach(row => {
-        row.addEventListener('click', () => {
-          const name = (row as HTMLElement).dataset.name
-          if (name) this.showFactorDetail(name)
-        })
-      })
-    } catch {
-      el.innerHTML = '<div class="fq-error">获取因子列表失败</div>'
-    }
-  }
-
-  private async showFactorDetail(name: string) {
-    const content = this.container?.querySelector('#fq-content')
-    const el = content?.querySelector('#fq-factor-detail')
-    if (!el) return
-    try {
-      const res = await api.get(`${BASE}/factors/${name}`)
-      if (!res.success) { el.innerHTML = `<div class="fq-error">${res.message}</div>`; return }
-      const meta = res.data
-      el.innerHTML = `
-        <div class="fq-section-title" style="margin-top:16px">📋 ${meta.display_name} (${meta.name})</div>
-        <table class="data-table">
-          <tr><td>类别</td><td>${meta.category}</td></tr>
-          <tr><td>域</td><td>${meta.domain}</td></tr>
-          <tr><td>方向</td><td>${meta.direction > 0 ? '🟢 越大越好' : '🔴 越小越好'}</td></tr>
-          <tr><td>公式</td><td><code>${meta.formula || '-'}</code></td></tr>
-          <tr><td>参数</td><td><code>${JSON.stringify(meta.params)}</code></td></tr>
-          <tr><td>说明</td><td>${meta.description}</td></tr>
-        </table>`
-    } catch {
-      el.innerHTML = '<div class="fq-error">获取因子详情失败</div>'
-    }
-  }
-
-  private async runFactorAudit() {
-    const content = this.container?.querySelector('#fq-content')
-    const el = content?.querySelector('#fq-factor-list')
-    if (!el) return
-    const domain = (content?.querySelector('#fq-factor-domain') as HTMLSelectElement)?.value || 'fund'
-    el.innerHTML = '<div class="fq-loading">⏳ 审计中...</div>'
-    try {
-      const res = await api.get(`${BASE}/factors/audit?domain=${domain}&years=3`)
-      const rows = res.data || []
-      if (!rows.length) {
-        el.innerHTML = '<div class="fq-warning">审计完成，但无有效因子数据（需要真实的净值/行情数据才能计算IC）</div>'
-        return
-      }
-      el.innerHTML = `
-        <div style="margin-bottom:8px;color:var(--text-secondary)">审计 ${rows.length} 个因子</div>
-        <table class="data-table">
-          <thead><tr><th>因子</th><th>类别</th><th>Rank IC</th><th>IC_IR</th><th>Spread t</th><th>换手率</th><th>结论</th></tr></thead>
-          <tbody>
-            ${rows.map((r: any) => `
-              <tr>
-                <td><code>${r['因子']}</code></td>
-                <td>${r['类别']}</td>
-                <td>${r['Rank IC']}</td>
-                <td>${r['IC_IR']}</td>
-                <td>${r['Spread t']}</td>
-                <td>${r['换手率']}</td>
-                <td><span class="factor-verdict-${r['结论']}">${r['结论']}</span></td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>`
-    } catch {
-      el.innerHTML = '<div class="fq-error">审计失败</div>'
-    }
-  }
-
-  private async registerFactors() {
-    try {
-      const res = await api.post(`${BASE}/factors/register`)
-      if (res.success) {
-        toast.success(`注册完成: 共 ${res.data.total} 个因子`)
-        this.loadFactorList()
-      }
-    } catch {
-      toast.error('注册失败')
-    }
   }
 
   // ═════════════════════════════════════════
