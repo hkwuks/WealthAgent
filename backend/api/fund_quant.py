@@ -605,3 +605,80 @@ async def data_status():
         "pending_count": len(pending),
         "pending": pending[:50],  # 只返回前50条
     }}
+
+
+# ═════════════════════════════════════════
+# 因子分析
+# ═════════════════════════════════════════
+
+
+@router.get("/factors/list")
+async def factor_list(domain: str = "fund"):
+    """列出已注册因子"""
+    from backend.core.factor import FactorRegistry
+    metas = FactorRegistry.list(domain=domain)
+    return {"success": True, "data": [
+        {"name": m.name, "display_name": m.display_name,
+         "category": m.category, "domain": m.domain,
+         "direction": m.direction, "description": m.description}
+        for m in metas
+    ]}
+
+
+@router.get("/factors/audit")
+async def factor_audit(domain: str = "fund", years: int = 3):
+    """因子全景审计"""
+    from datetime import date, timedelta
+    from backend.core.factor import FactorRegistry, EvaluationEngine, EvalConfig, FactorAudit
+
+    end = date.today()
+    start = end - timedelta(days=years * 365)
+
+    class _AuditFeed:
+        def get_forward_returns(self, symbols, from_date, to_date):
+            return {}
+        def get_factor_input(self, symbols, as_of, lookback):
+            return []
+
+    ee = EvaluationEngine(_AuditFeed(), EvalConfig(min_stocks_per_period=1))
+    audit = FactorAudit(ee)
+
+    try:
+        df = audit.audit_all(domain, [], (start, end))
+        return {"success": True, "data": df.to_dict(orient="records")}
+    except Exception as e:
+        return {"success": True, "data": [], "message": str(e)}
+
+
+@router.get("/factors/{name}")
+async def factor_detail(name: str):
+    """单因子详情"""
+    from backend.core.factor import FactorRegistry
+    try:
+        meta = FactorRegistry.get_meta(name)
+        return {"success": True, "data": {
+            "name": meta.name, "display_name": meta.display_name,
+            "category": meta.category, "domain": meta.domain,
+            "description": meta.description, "direction": meta.direction,
+            "params": meta.params, "formula": meta.formula,
+        }}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@router.post("/factors/register")
+async def factor_register():
+    """注册所有域因子"""
+    from backend.core.factor import FactorRegistry
+    from backend.fund_quant.adapter import FundDomainAdapter
+    from backend.gold.adapter import GoldDomainAdapter
+
+    count_before = FactorRegistry.count()
+    FundDomainAdapter().register_factors()
+    GoldDomainAdapter().register_factors()
+    count_after = FactorRegistry.count()
+
+    return {"success": True, "data": {
+        "registered": count_after - count_before,
+        "total": count_after,
+    }}
