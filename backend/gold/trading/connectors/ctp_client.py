@@ -45,27 +45,30 @@ _ORDER_STATUS_MAP = {
 # ── 模块选择 ──────────────────────────────────────────────────
 
 def _setup_locale():
-    """openctp_ctp/openctp_tts 的 C++ DSO 需要 zh_CN.GB18030"""
+    """openctp_ctp/openctp_tts 的 C++ DSO 需要 zh_CN.GB18030
+
+    尝试多种中文 locale，都不存在时保留当前 locale，
+    避免 C++ 层 locale::facet 崩溃。
+    """
     import locale
-
-    # 尝试找到可用的 locale 路径
-    locale_found = False
-    for path in ['/tmp/locale', '/usr/lib/locale', '/usr/share/locale']:
-        if os.path.isdir(os.path.join(path, 'zh_CN.GB18030')):
-            os.environ['LOCPATH'] = path
-            locale_found = True
-            break
-
-    # 设置环境变量（即使 locale 目录不存在也设置）
-    os.environ['LANG'] = 'zh_CN.GB18030'
-    os.environ['LC_ALL'] = 'zh_CN.GB18030'
-
-    # 尝试设置 locale，失败不报错
-    if locale_found:
+    candidates = ['zh_CN.GB18030', 'zh_CN.UTF-8', 'zh_CN']
+    # 尝试从 LOCPATH 或临时目录加载自定义 locale
+    for locpath in [os.environ.get('LOCPATH', ''), '/tmp/locale']:
+        if locpath and os.path.isdir(locpath):
+            for name in candidates:
+                full = os.path.join(locpath, name)
+                if os.path.isdir(full) or os.path.isfile(full + '/LC_CTYPE'):
+                    os.environ['LOCPATH'] = locpath
+                    break
+    for name in candidates:
         try:
-            locale.setlocale(locale.LC_ALL, 'zh_CN.GB18030')
+            locale.setlocale(locale.LC_ALL, name)
+            os.environ['LANG'] = name
+            os.environ['LC_ALL'] = name
+            return
         except locale.Error:
-            pass
+            continue
+    logger.warning("无中文 locale 可用，CTP 中文消息可能显示异常")
 
 
 def _get_ctp_modules(mode: str):
@@ -76,33 +79,13 @@ def _get_ctp_modules(mode: str):
     openctp → openctp_tts 模块 (v6.7.2, TTS 协议)
     """
     if mode == "openctp":
-        try:
-            _setup_locale()
-            import openctp_tts
-            logger.info("[CTP] 使用 openctp_tts 模块 (TTS 协议)")
-            return openctp_tts.mdapi, openctp_tts.tdapi
-        except Exception as e:
-            logger.error(f"[CTP] openctp_tts 导入失败: {e}")
-            logger.error("[CTP] 请确保 locale 设置正确: zh_CN.GB18030")
-            raise RuntimeError(
-                f"openctp_tts 模块导入失败: {e}\n"
-                "请检查:\n"
-                "1. locale 是否设置为 zh_CN.GB18030\n"
-                "2. openctp_tts 是否已安装 (pip install openctp_tts)\n"
-                "3. 系统是否支持 GB18030 编码"
-            )
+        _setup_locale()
+        import openctp_tts
+        logger.info("[CTP] 使用 openctp_tts 模块 (TTS 协议)")
+        return openctp_tts.mdapi, openctp_tts.tdapi
     else:
-        try:
-            import ctp as m
-            return m, m
-        except Exception as e:
-            logger.error(f"[CTP] ctp 模块导入失败: {e}")
-            raise RuntimeError(
-                f"ctp 模块导入失败: {e}\n"
-                "请检查:\n"
-                "1. ctp 是否已安装 (pip install ctp)\n"
-                "2. 系统是否满足编译依赖"
-            )
+        import ctp as m
+        return m, m
 
 
 # ── 客户端类 ──────────────────────────────────────────────────
@@ -284,8 +267,7 @@ class CtpClient:
                 })
 
             def OnRspQryInvestorPosition(self, pPosition, pRspInfo, nRequestID, bIsLast):
-                logger.debug(f"[CTP] OnRspQryInvestorPosition: pPosition={pPosition is not None}, bIsLast={bIsLast}")
-                if pPosition and pPosition.Position > 0:
+                if pPosition:
                     client._position_result.append({
                         "symbol": pPosition.InstrumentID,
                         "direction": "long" if pPosition.PosiDirection == _THOST_OPT_LONG else "short",
@@ -388,8 +370,8 @@ class CtpClient:
 
     def _init_sync(self):
         """CTP API 同步初始化（在线程池中运行）"""
-        from backend.gold.core.config import gold_settings
-        flow_dir = os.path.join(gold_settings.gold_data_dir, "ctp_flow")
+        from pathlib import Path
+        flow_dir = str(Path(__file__).parent.parent.parent.parent.parent / "data" / "backend" / "gold" / "ctp_flow")
         os.makedirs(flow_dir, exist_ok=True)
 
         self._md_api = self._md_module.CThostFtdcMdApi.CreateFtdcMdApi(
@@ -441,27 +423,19 @@ class CtpClient:
 
         ref = order_ref or int(time.time() * 1000) % 1000000
 
-        # 转换合约代码：AU0 -> 主力合约
-        ctp_symbol = symbol
-        if symbol.upper() == "AU0":
-            ctp_symbol = self.get_main_contract() or "AU2608"
-            if ctp_symbol != symbol:
-                logger.info(f"[CTP] 合约代码转换: {symbol} -> {ctp_symbol}")
-
         field = self._td_module.CThostFtdcInputOrderField()
         field.BrokerID = self._cfg.broker_id
         field.InvestorID = self._cfg.user_id
-        field.InstrumentID = ctp_symbol
+        field.InstrumentID = symbol
         field.LimitPrice = price
         field.VolumeTotalOriginal = volume
         field.OrderRef = str(ref)
         field.UserID = self._cfg.user_id
 
-        # ponytail: openctp TTS 用字符串代替 char 数组
         if direction in (SignalDirection.LONG, SignalDirection.SHORT):
-            field.CombOffsetFlag = _THOST_F_OPEN
+            field.CombOffsetFlag[0] = _THOST_F_OPEN
         else:
-            field.CombOffsetFlag = _THOST_F_CLOSE
+            field.CombOffsetFlag[0] = _THOST_F_CLOSE
 
         if direction in (SignalDirection.LONG, SignalDirection.CLOSE_SHORT):
             field.Direction = _THOST_OPT_LONG
@@ -469,26 +443,15 @@ class CtpClient:
             field.Direction = _THOST_OPT_SHORT
 
         field.OrderPriceType = "2"  # 限价
-        field.CombHedgeFlag = "1"  # 投机
+        field.CombHedgeFlag[0] = "1"  # 投机
         field.ContingentCondition = "1"  # 立即
-        field.ForceCloseReason = "0"
+        field.ForceCloseReason[0] = "0"
         field.IsAutoSuspend = 0
         field.TimeCondition = "3"  # 当日有效
         field.VolumeCondition = "1"
         field.MinVolume = 1
 
-        # ReqOrderInsert 是 C++ extension，用独立线程池避免占 GIL
-        # ponytail: 不能 loop.run_in_executor + .result()（同线程死锁），
-        # 所以独立出 ThreadPoolExecutor
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
-            fut = _pool.submit(self._td_api.ReqOrderInsert, field, ref)
-            try:
-                result = fut.result(timeout=5)
-            except Exception as e:
-                logger.error(f"[CTP] 下单异常: {e}")
-                return -1
-
+        result = self._td_api.ReqOrderInsert(field, ref)
         if result == 0:
             logger.info(f"[CTP] 下单成功: {symbol} {direction.value} {volume}手 @{price} ref={ref}")
         else:
@@ -498,8 +461,6 @@ class CtpClient:
 
     def cancel_order(self, symbol: str, order_ref: int,
                      front_id: int = 0, session_id: int = 0) -> int:
-        if symbol.upper() == "AU0":
-            symbol = self.get_main_contract() or "AU2608"
         field = self._td_module.CThostFtdcInputOrderActionField()
         field.BrokerID = self._cfg.broker_id
         field.InvestorID = self._cfg.user_id
@@ -514,7 +475,6 @@ class CtpClient:
 
     async def query_positions(self, symbol: str = "") -> list[dict]:
         if not self._td_logged_in:
-            logger.warning("[CTP] query_positions: not logged in")
             return []
         self._position_result = []
         self._position_done.clear()
@@ -522,17 +482,11 @@ class CtpClient:
         field.BrokerID = self._cfg.broker_id
         field.InvestorID = self._cfg.user_id
         if symbol:
-            # 转换合约代码
-            if symbol.upper() == "AU0":
-                symbol = self.get_main_contract() or "AU2608"
             field.InstrumentID = symbol
-        logger.info(f"[CTP] Querying positions for {symbol or 'all symbols'}")
         self._td_api.ReqQryInvestorPosition(field, 1)
         done = await self._loop.run_in_executor(None, lambda: self._position_done.wait(5.0))
         if not done:
             logger.warning("[CTP] 查询持仓超时")
-        else:
-            logger.info(f"[CTP] Positions query done, count={len(self._position_result)}")
         return self._position_result
 
     async def query_account(self) -> dict:
@@ -551,7 +505,6 @@ class CtpClient:
 
     async def query_orders(self, symbol: str = "") -> list[dict]:
         if not self._td_logged_in:
-            logger.warning("[CTP] query_orders: not logged in")
             return []
         self._order_result = []
         self._order_done.clear()
@@ -559,17 +512,11 @@ class CtpClient:
         field.BrokerID = self._cfg.broker_id
         field.InvestorID = self._cfg.user_id
         if symbol:
-            # 转换合约代码
-            if symbol.upper() == "AU0":
-                symbol = self.get_main_contract() or "AU2608"
             field.InstrumentID = symbol
-        logger.info(f"[CTP] Querying orders for {symbol or 'all symbols'}")
         self._td_api.ReqQryOrder(field, 1)
         done = await self._loop.run_in_executor(None, lambda: self._order_done.wait(5.0))
         if not done:
             logger.warning("[CTP] 查询委托超时")
-        else:
-            logger.info(f"[CTP] Orders query done, count={len(self._order_result)}")
         return self._order_result
 
     # ── 状态 ───────────────────────────────────────────────────

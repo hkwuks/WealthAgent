@@ -49,25 +49,10 @@ class LiveExecutor:
         if order.status == OrderStatus.REJECTED:
             return {"order": order, "executed": False, "reason": "风控拒绝"}
 
-        # 发送到交易后端 — 使用主力合约代码替换连续合约
+        # 发送到交易后端
         self._ref_counter += 1
-        # 获取主力合约（如果 adapter 支持）
-        ctp_symbol = signal.symbol
-        if hasattr(self.adapter, 'get_main_contract'):
-            main_contract = self.adapter.get_main_contract()
-            if main_contract:
-                ctp_symbol = main_contract
-                logger.info(f"[LiveExecutor] 使用主力合约 {ctp_symbol} 替代 {signal.symbol}")
-            else:
-                # 如果主力合约未检测到，使用默认合约
-                ctp_symbol = "AU2608"
-                logger.info(f"[LiveExecutor] 主力合约未检测到，使用默认合约 {ctp_symbol}")
-        else:
-            # 如果没有 get_main_contract 方法，使用默认合约
-            ctp_symbol = "AU2608"
-
         ref = self.adapter.send_order(
-            symbol=ctp_symbol,
+            symbol=signal.symbol,
             direction=signal.direction,
             price=signal.price,
             volume=signal.volume,

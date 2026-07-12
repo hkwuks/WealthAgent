@@ -9,6 +9,7 @@
 """
 
 import asyncio
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 import yfinance as yf
@@ -19,7 +20,7 @@ from loguru import logger
 from backend.data_store import data_store, StorageType
 from backend.config import settings
 
-logger.add("./logs/data_sync.log", encoding="utf-8", rotation="10 MB")
+logger.add(str(Path(__file__).parent.parent / "logs" / "data_sync.log"), encoding="utf-8", rotation="10 MB")
 
 
 class DataSyncManager:

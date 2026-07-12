@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query, Body
-from typing import Optional, List
+from typing import Optional, List, Tuple, Dict
 from backend.market_data import market_data_service, INDEX_MAPPING, GLOBAL_INDEX_MAPPING
 from backend.cache_service import data_cache_service
 from backend.api.schemas import (
@@ -284,6 +284,20 @@ async def get_cache_info():
 
 # ==================== 批量查询 API ====================
 
+async def _check_cache_batch(codes: List[str], data_type: str) -> Tuple[List[Dict], List[str]]:
+    """并发检查缓存，返回 (命中结果, 需获取列表)"""
+    async with asyncio.TaskGroup() as tg:
+        tasks = {code: tg.create_task(data_cache_service.get_cached_market_data(code, data_type, ttl=60)) for code in codes}
+    results, to_fetch = [], []
+    for code in codes:
+        cached = tasks[code].result()
+        if cached:
+            results.append({"code": code, "success": True, "data": cached, "cached": True})
+        else:
+            to_fetch.append(code)
+    return results, to_fetch
+
+
 @router.post(
     "/stock/batch",
     summary="批量获取股票行情",
@@ -302,12 +316,7 @@ async def get_stock_price_batch(stock_codes: List[str] = Body(...), use_cache: b
 
         # 首先检查缓存
         if use_cache:
-            for code in stock_codes:
-                cached_data = await data_cache_service.get_cached_market_data(code, "stock", ttl=60)
-                if cached_data:
-                    results.append({"code": code, "success": True, "data": cached_data, "cached": True})
-                else:
-                    codes_to_fetch.append(code)
+            results, codes_to_fetch = await _check_cache_batch(stock_codes, "stock")
         else:
             codes_to_fetch = stock_codes
 
@@ -355,12 +364,7 @@ async def get_index_price_batch(index_codes: List[str] = Body(...), use_cache: b
 
         # 首先检查缓存
         if use_cache:
-            for code in index_codes:
-                cached_data = await data_cache_service.get_cached_market_data(code, "index", ttl=60)
-                if cached_data:
-                    results.append({"code": code, "success": True, "data": cached_data, "cached": True})
-                else:
-                    codes_to_fetch.append(code)
+            results, codes_to_fetch = await _check_cache_batch(index_codes, "index")
         else:
             codes_to_fetch = index_codes
 
@@ -408,12 +412,7 @@ async def get_global_index_price_batch(index_codes: List[str] = Body(...), use_c
 
         # 首先检查缓存
         if use_cache:
-            for code in index_codes:
-                cached_data = await data_cache_service.get_cached_market_data(code, "global_index", ttl=60)
-                if cached_data:
-                    results.append({"code": code, "success": True, "data": cached_data, "cached": True})
-                else:
-                    codes_to_fetch.append(code)
+            results, codes_to_fetch = await _check_cache_batch(index_codes, "global_index")
         else:
             codes_to_fetch = index_codes
 
@@ -461,12 +460,7 @@ async def get_etf_price_batch(etf_codes: List[str] = Body(...), use_cache: bool 
 
         # 首先检查缓存
         if use_cache:
-            for code in etf_codes:
-                cached_data = await data_cache_service.get_cached_market_data(code, "etf", ttl=60)
-                if cached_data:
-                    results.append({"code": code, "success": True, "data": cached_data, "cached": True})
-                else:
-                    codes_to_fetch.append(code)
+            results, codes_to_fetch = await _check_cache_batch(etf_codes, "etf")
         else:
             codes_to_fetch = etf_codes
 
@@ -558,8 +552,14 @@ async def get_index_price_batch_stream(
     async def fetch_single_with_queue(code: str, queue: Queue):
         """获取单个指数并放入队列"""
         try:
-            result = await fetch_index_with_fallback(code, "domestic")
+            result = await asyncio.wait_for(
+                fetch_index_with_fallback(code, "domestic"),
+                timeout=15.0,
+            )
             await queue.put(("result", code, result))
+        except asyncio.TimeoutError:
+            logger.warning(f"获取国内指数 {code} 超时(15s)")
+            await queue.put(("error", code, "获取超时"))
         except Exception as e:
             logger.warning(f"获取指数 {code} 失败: {e}")
             await queue.put(("error", code, str(e)))
@@ -623,8 +623,15 @@ async def get_global_index_price_batch_stream(
     """流式批量获取海外指数行情"""
     async def fetch_single_with_queue(code: str, queue: Queue):
         try:
-            result = await fetch_index_with_fallback(code, "global")
+            # ponytail: 单个指数最多等15s，防止某个源拖死整个流
+            result = await asyncio.wait_for(
+                fetch_index_with_fallback(code, "global"),
+                timeout=15.0,
+            )
             await queue.put(("result", code, result))
+        except asyncio.TimeoutError:
+            logger.warning(f"获取海外指数 {code} 超时(15s)")
+            await queue.put(("error", code, "获取超时"))
         except Exception as e:
             logger.warning(f"获取海外指数 {code} 失败: {e}")
             await queue.put(("error", code, str(e)))

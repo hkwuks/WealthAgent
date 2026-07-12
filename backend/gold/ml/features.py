@@ -129,7 +129,7 @@ class FeatureEngineer:
             'bb_upper', 'bb_middle', 'bb_lower',
             'high_low_range',
         ]]
-        df_clean = df[feature_cols + ['target']].dropna()
+        df_clean = df[feature_cols + ['target']].replace([np.inf, -np.inf], np.nan).dropna()
         X = df_clean[feature_cols]
         y = df_clean['target']
         return X, y
@@ -148,7 +148,7 @@ class FeatureEngineer:
             'bb_upper', 'bb_middle', 'bb_lower',
             'high_low_range',
         ]]
-        X = df[feature_cols].dropna()
+        X = df[feature_cols].replace([np.inf, -np.inf], np.nan).dropna()
         if self.selected_features_ is not None:
             available = [f for f in self.selected_features_ if f in X.columns]
             if available:
