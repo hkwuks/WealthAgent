@@ -45,18 +45,30 @@ _ORDER_STATUS_MAP = {
 # ── 模块选择 ──────────────────────────────────────────────────
 
 def _setup_locale():
-    """openctp_ctp/openctp_tts 的 C++ DSO 需要 zh_CN.GB18030"""
-    for path in ['/tmp/locale', '/usr/lib/locale', '/usr/share/locale']:
-        if os.path.isdir(os.path.join(path, 'zh_CN.GB18030')):
-            os.environ['LOCPATH'] = path
-            break
-    os.environ['LANG'] = 'zh_CN.GB18030'
-    os.environ['LC_ALL'] = 'zh_CN.GB18030'
+    """openctp_ctp/openctp_tts 的 C++ DSO 需要 zh_CN.GB18030
+
+    尝试多种中文 locale，都不存在时保留当前 locale，
+    避免 C++ 层 locale::facet 崩溃。
+    """
     import locale
-    try:
-        locale.setlocale(locale.LC_ALL, 'zh_CN.GB18030')
-    except locale.Error:
-        pass
+    candidates = ['zh_CN.GB18030', 'zh_CN.UTF-8', 'zh_CN']
+    # 尝试从 LOCPATH 或临时目录加载自定义 locale
+    for locpath in [os.environ.get('LOCPATH', ''), '/tmp/locale']:
+        if locpath and os.path.isdir(locpath):
+            for name in candidates:
+                full = os.path.join(locpath, name)
+                if os.path.isdir(full) or os.path.isfile(full + '/LC_CTYPE'):
+                    os.environ['LOCPATH'] = locpath
+                    break
+    for name in candidates:
+        try:
+            locale.setlocale(locale.LC_ALL, name)
+            os.environ['LANG'] = name
+            os.environ['LC_ALL'] = name
+            return
+        except locale.Error:
+            continue
+    logger.warning("无中文 locale 可用，CTP 中文消息可能显示异常")
 
 
 def _get_ctp_modules(mode: str):
@@ -358,7 +370,8 @@ class CtpClient:
 
     def _init_sync(self):
         """CTP API 同步初始化（在线程池中运行）"""
-        flow_dir = os.path.join("data", "backend", "gold", "ctp_flow")
+        from pathlib import Path
+        flow_dir = str(Path(__file__).parent.parent.parent.parent.parent / "data" / "backend" / "gold" / "ctp_flow")
         os.makedirs(flow_dir, exist_ok=True)
 
         self._md_api = self._md_module.CThostFtdcMdApi.CreateFtdcMdApi(

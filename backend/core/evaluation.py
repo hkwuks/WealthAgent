@@ -13,19 +13,24 @@ class Metrics:
     total_return: float = 0.0
     annual_return: float = 0.0
     monthly_returns: list[float] = field(default_factory=list)
+    period_returns: dict[str, float] = field(default_factory=dict)
     # 风险
     volatility: float = 0.0
     max_drawdown: float = 0.0
     var_95: float = 0.0
     cvar_95: float = 0.0
+    max_consecutive_loss_days: int = 0
     # 风险调整
     sharpe_ratio: float = 0.0
     sortino_ratio: float = 0.0
     calmar_ratio: float = 0.0
+    information_ratio: float = 0.0
     # 交易统计
     total_trades: int = 0
     win_rate: float = 0.0
     profit_loss_ratio: float = 0.0
+    turnover_rate: float = 0.0
+    fee_leakage: float = 0.0
 
 
 class MetricsCalculator:
@@ -35,8 +40,14 @@ class MetricsCalculator:
     def calculate(equity_curve: list[float],
                   trades: list[dict] | None = None,
                   risk_free: float = 0.02,
-                  periods_per_year: int = 252) -> Metrics:
+                  periods_per_year: int = 252,
+                  dates: list[str] | None = None,
+                  benchmark_returns: list[float] | None = None) -> Metrics:
         """计算全部指标
+
+        Args:
+            dates: 每个权益点的日期字符串 ["2025-01-01", ...]，用于分年度收益
+            benchmark_returns: 基准每日收益率序列，用于信息比率
 
         >>> m = MetricsCalculator.calculate([100, 110, 108, 115, 120])
         >>> round(m.total_return, 2)
@@ -103,6 +114,37 @@ class MetricsCalculator:
         var_95 = abs(sorted_r[var_idx])
         cvar_95 = abs(sum(sorted_r[:var_idx + 1]) / (var_idx + 1))
 
+        # 最大连续亏损天数
+        max_consecutive = 0
+        streak = 0
+        for r in returns:
+            if r < 0:
+                streak += 1
+                max_consecutive = max(max_consecutive, streak)
+            else:
+                streak = 0
+
+        # 分年度收益
+        period_returns = {}
+        if dates and len(dates) >= len(equity_curve):
+            year_map: dict[str, list[float]] = {}
+            for dt, eq in zip(dates, equity_curve):
+                year_map.setdefault(dt[:4], []).append(eq)
+            for yr, vals in year_map.items():
+                if len(vals) > 1 and vals[0] > 0:
+                    period_returns[yr] = round(vals[-1] / vals[0] - 1, 6)
+
+        # 信息比率
+        information_ratio = 0.0
+        if benchmark_returns and len(benchmark_returns) >= n:
+            bench = benchmark_returns[-n:]
+            excess = [r - b for r, b in zip(returns, bench)]
+            excess_mean = sum(excess) / n
+            excess_var = sum((x - excess_mean) ** 2 for x in excess) / n
+            te = math.sqrt(excess_var * periods_per_year)
+            if te > 1e-10:
+                information_ratio = (annual_return - (1 + sum(bench)) ** (periods_per_year / n) - 1 + risk_free) / te  # noqa
+
         metrics = Metrics(
             total_return=round(total_return, 6),
             annual_return=round(annual_return, 6),
@@ -113,6 +155,9 @@ class MetricsCalculator:
             calmar_ratio=round(calmar, 4),
             var_95=round(var_95, 6),
             cvar_95=round(cvar_95, 6),
+            max_consecutive_loss_days=max_consecutive,
+            period_returns=period_returns,
+            information_ratio=round(information_ratio, 4),
         )
 
         # 交易统计
@@ -126,6 +171,20 @@ class MetricsCalculator:
             avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0
             avg_loss = abs(sum(t["pnl"] for t in losses) / len(losses)) if losses else 1
             metrics.profit_loss_ratio = avg_win / avg_loss if avg_loss > 0 else 0.0
+
+            # 换手率 = (总买入+总卖出)/2 / 平均市值
+            buy_vol = sum(t.get("cost", 0) for t in trades if "open" in str(t.get("type", "")) or t.get("type") == "open")
+            sell_vol = sum(t.get("proceeds", t.get("pnl", 0)) for t in trades if "close" in str(t.get("type", "")) or t.get("type") == "close")
+            avg_capital = (equity_curve[0] + equity_curve[-1]) / 2
+            if avg_capital > 0:
+                metrics.turnover_rate = round((buy_vol + sell_vol) / 2 / avg_capital, 4)
+
+            # 费率损耗率 = 总费用 / max(总利润, 初始资金)
+            total_commission = sum(t.get("commission", 0) for t in trades)
+            total_profit = equity_curve[-1] - equity_curve[0]
+            denom = max(total_profit, equity_curve[0])
+            if denom > 0:
+                metrics.fee_leakage = round(total_commission / denom, 6)
 
         return metrics
 
