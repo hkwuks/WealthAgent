@@ -4,6 +4,7 @@ import { fundManagerUI } from './fundManagerUI'
 import { marketDataUI } from './marketDataUI'
 import { goldTradingUI } from './goldTradingUI'
 import { FundQuantUI } from './fundQuantUI'
+import { QuantEngineUI } from './quantEngineUI'
 
 toast.init();
 
@@ -76,6 +77,10 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <span class="tab-button-icon">🌍</span>
         市场数据
       </button>
+      <button class="tab-button" data-tab="quant-engine" role="tab" aria-selected="false">
+        <span class="tab-button-icon">🧠</span>
+        量化引擎
+      </button>
     </nav>
 
     <!-- 标签内容区域 -->
@@ -84,6 +89,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="tab-content" id="gold-trading-container" role="tabpanel"></div>
       <div class="tab-content" id="fund-quant-container" role="tabpanel"></div>
       <div class="tab-content" id="market-data-container" role="tabpanel"></div>
+      <div class="tab-content" id="quant-engine-container" role="tabpanel"></div>
     </main>
   </div>
 `
@@ -116,6 +122,11 @@ async function initApp() {
   const fundQuantContainer = document.querySelector<HTMLDivElement>('#fund-quant-container')!
   const fundQuantUI = new FundQuantUI()
   fundQuantUI.init(fundQuantContainer)
+
+  // 初始化量化引擎界面
+  const quantEngineContainer = document.querySelector<HTMLDivElement>('#quant-engine-container')!
+  const quantEngineUI = new QuantEngineUI()
+  quantEngineUI.init(quantEngineContainer)
 }
 
 initApp().catch(console.error)

@@ -4069,3 +4069,24 @@ body::after {
 .factor-verdict-noise::before { content:"❌ "; }
 .factor-row { cursor:pointer; transition:background .15s; }
 .factor-row:hover { background:rgba(59,130,246,0.05); }
+
+/* ── 量化引擎页面 ── */
+.quant-engine-page .qe-nav { display:flex; gap:4px; margin-bottom:16px; flex-wrap:wrap; }
+.quant-engine-page .qe-nav-btn { padding:8px 16px; border:1px solid var(--border); border-radius:6px; background:var(--bg-card); cursor:pointer; transition:all .15s; font-size:.9em; }
+.quant-engine-page .qe-nav-btn:hover { background:var(--bg-hover); }
+.quant-engine-page .qe-nav-btn.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+.qe-content { min-height:300px; }
+.qe-stats-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:20px; }
+.qe-stat-card { background:var(--bg-card); border:1px solid var(--border); border-radius:8px; padding:20px; text-align:center; }
+.qe-stat-num { font-size:2em; font-weight:700; color:var(--primary); }
+.qe-stat-label { font-size:.85em; color:var(--text-secondary); margin-top:4px; }
+.qe-section-title { font-size:1.05em; font-weight:600; margin:16px 0 8px; color:var(--text); }
+.qe-toolbar { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+.qe-form-row { display:flex; gap:8px; align-items:center; }
+.qe-result-area { margin-top:12px; }
+.qe-hint { background:var(--bg-card); border:1px solid var(--border); border-radius:8px; padding:16px; font-size:.9em; }
+.qe-warning { background:rgba(245,158,11,0.1); border:1px solid #f59e0b; border-radius:8px; padding:12px; color:#f59e0b; }
+.qe-methods { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px; }
+.qe-method-card { background:var(--bg-card); border:1px solid var(--border); border-radius:8px; padding:16px; }
+.qe-method-title { font-weight:600; margin-bottom:4px; }
+.qe-method-desc { font-size:.85em; color:var(--text-secondary); }
