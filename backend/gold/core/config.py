@@ -1,13 +1,17 @@
+from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings
+
+# 项目根目录 (backend/gold/core/config.py → 4层到项目根)
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 
 
 class GoldSettings(BaseSettings):
     """黄金量化系统配置"""
 
     # 数据目录
-    gold_data_dir: str = "data/backend/gold"
-    gold_db_path: str = "data/backend/gold/gold.db"
+    gold_data_dir: str = str(_PROJECT_ROOT / "data" / "backend" / "gold")
+    gold_db_path: str = str(_PROJECT_ROOT / "data" / "backend" / "gold" / "gold.db")
 
     # SHFE AU合约参数
     au_multiplier: int = 1000       # 合约乘数：1000克/手
@@ -24,6 +28,11 @@ class GoldSettings(BaseSettings):
 
     # 模拟交易模式切换: "simnow" / "openctp"
     trading_mode: str = "simnow"
+
+    # ---- computed paths (用于非Pydantic字段的相对路径) ----
+    @property
+    def project_root(self) -> Path:
+        return _PROJECT_ROOT
 
     # 风控参数
     max_drawdown_pct: float = 0.10
@@ -42,8 +51,8 @@ class GoldSettings(BaseSettings):
     ctp_main_symbol: str = "AU0"                          # 前端显示用的主连代码（仅展示）
 
     # ---- SimNow 连接 ----
-    simnow_md_address: str = "tcp://182.254.243.31:40011"
-    simnow_td_address: str = "tcp://182.254.243.31:40001"
+    simnow_md_address: str = "tcp://180.168.146.187:10131"
+    simnow_td_address: str = "tcp://180.168.146.187:10130"
     simnow_user_id: str = ""
     simnow_password: str = ""
 

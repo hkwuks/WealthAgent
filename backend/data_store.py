@@ -14,6 +14,7 @@ import json
 import os
 import sqlite3
 import pickle
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union, Tuple
 from dataclasses import dataclass, asdict
@@ -22,7 +23,7 @@ from enum import Enum
 import pandas as pd
 from loguru import logger
 
-logger.add("./logs/data_store.log", encoding="utf-8", rotation="10 MB")
+logger.add(str(Path(__file__).parent.parent / "logs" / "data_store.log"), encoding="utf-8", rotation="10 MB")
 
 
 class StorageType(Enum):

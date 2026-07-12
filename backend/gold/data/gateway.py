@@ -1,40 +1,55 @@
+import asyncio
+import time
 import pandas as pd
+from pathlib import Path
 from datetime import datetime, timedelta
 from loguru import logger
 
 from backend.gold.core.models import GoldBarData
 from backend.gold.data.storage import GoldDataStore
 from backend.gold.data.quality import DataQualityChecker
-from backend.gold.core.config import gold_settings
+from backend.rate_limiter import RateLimiterGroup
 
 
 class GoldDataGateway:
     """黄金数据网关 — AkShare(SHFE) → 直连新浪(SHFE) → yFinance(COMEX) 三级降级"""
 
-    def __init__(self, db_path: str = None):
+    _req_cache: dict = {}       # ponytail: per-param dedup cache, 5s TTL
+    _CACHE_TTL: float = 5.0    # seconds
+    _last_refresh: dict = {}    # (symbol, period) → timestamp, 30s cooldown
+
+    def __init__(self, db_path: str | None = None):
         if db_path is None:
-            db_path = gold_settings.gold_db_path
+            db_path = str(Path(__file__).parent.parent.parent.parent / "data" / "backend" / "gold" / "gold.db")
         self.db_path = db_path
         self.store = GoldDataStore(db_path)
+        self._rate_limiter_group = RateLimiterGroup(max_concurrent=2, min_interval=1.0)
 
     async def get_bars(self, symbol: str = "AU0", period: str = "d",
                        start: str = None, end: str = None,
                        limit: int = None, refresh: bool = False,
                        skip_quality_check: bool = False) -> list[GoldBarData]:
         """获取K线数据 — 优先SQLite，数据过期或refresh=True时从AkShare刷新"""
+        # ponytail: cache_key 不含 limit/refresh，同 symbol/period/start/end 共享一次外部请求
+        # 页面加载时 /bars(limit=200) + /market-data(limit=300) + /analysis(limit=500)
+        # + /strategy-comparison(limit=120) 4路并发只触发1次外部获取
+        cache_key = (symbol, period, start, end)
+        now = time.monotonic()
+        cached = self._req_cache.get(cache_key)
+        if cached and (now - cached['t']) < self._CACHE_TTL:
+            bars = cached['v']
+            return self._slice_result(bars, limit)
+
         today = datetime.now().strftime("%Y-%m-%d")
+        now_naive = datetime.now()
 
-        # 确保 start 和 end 是字符串或 None
-        start = str(start) if start else None
-        end = str(end) if end else None
-
-        # 非强制刷新时先查缓存
+        # 非强制刷新时先查SQLite缓存
         if not refresh:
             bars = self.store.get_bars(symbol, period, start, end, limit)
             if bars:
-                latest = bars[-1].datetime  # ASC顺序，最新在末尾
-                age_days = (datetime.now() - latest).days
-                # 日线超过1天未更新，视为过期
+                latest = bars[-1].datetime
+                latest_naive = latest.replace(tzinfo=None) if latest.tzinfo else latest
+                age_days = (now_naive - latest_naive).days
                 if (period == "d" and age_days <= 1) or period != "d":
                     if not skip_quality_check:
                         qc = DataQualityChecker()
@@ -44,32 +59,67 @@ class GoldDataGateway:
                     return bars
 
         # 缓存miss或过期，从外部源获取
+        # ponytail: refresh 冷却 — 日线60s内不重复拉取，分钟线30s
+        if refresh:
+            cool_down = 60 if period == "d" else 30
+            last = self._last_refresh.get((symbol, period), 0)
+            if now - last < cool_down:
+                bars = self.store.get_bars(symbol, period, start, end, None)
+                if bars:
+                    logger.debug(f"refresh冷却中({now-last:.0f}s)，复用SQLite")
+                    result = self._slice_result(bars, limit)
+                    self._req_cache[cache_key] = {'v': bars, 't': time.monotonic()}
+                    return result
         fetch_start = start or "2025-01-01"
         fetch_end = end or today
         # 三级降级: AkShare → 直连新浪 → yFinance COMEX
-        bars = await self._fetch_from_akshare(symbol, period, fetch_start, fetch_end)
-        if not bars:
-            bars = await self._fetch_from_sina_direct(symbol, period, fetch_start, fetch_end)
+        # 每级拿完检查新鲜度，过期就继续 fallback
+        for source_name, fetch_fn in [
+            ("AkShare SHFE", lambda: self._fetch_from_akshare(symbol, period, fetch_start, fetch_end)),
+            ("Sina直连", lambda: self._fetch_from_sina_direct(symbol, period, fetch_start, fetch_end)),
+            ("yFinance COMEX", lambda: self._fetch_from_yfinance(fetch_start, fetch_end, period, output_symbol=symbol)),
+        ]:
+            bars = await fetch_fn()
             if bars:
-                logger.info(f"Sina直连补充数据: {len(bars)}条")
-        if not bars:
-            bars = await self._fetch_from_yfinance(fetch_start, fetch_end, period)
-            if bars:
-                logger.warning(f"使用yFinance COMEX黄金作为备选 ({len(bars)}条) — 美元价格，非SHFE")
+                latest_dt = bars[-1].datetime
+                latest_naive = latest_dt.replace(tzinfo=None) if latest_dt.tzinfo else latest_dt
+                age_days = (now_naive - latest_naive).days if latest_dt else 999
+                # AkShare SHFE 已过期 → 继续试下个源（数据只到2024年）
+                if source_name == "AkShare SHFE" and period == "d" and age_days > 3:
+                    self.store.save_bars(bars, period)  # 存了当历史参考
+                    logger.info(f"AkShare SHFE 数据已过期 ({age_days}天前)，尝试下个源")
+                    bars = None
+                    continue
+                if bars:
+                    logger.info(f"{source_name} 获取数据: {len(bars)}条 (最新 {latest_dt})")
+                    break
 
         if bars:
             self.store.save_bars(bars, period)
+            self._last_refresh[(symbol, period)] = time.monotonic()
+            if len(self._last_refresh) > 16:
+                self._last_refresh.clear()
 
-            # 刷新路径也做数据质量检查
-            if not skip_quality_check:
-                qc = DataQualityChecker()
-                report = qc.check(bars)
-                if not report.passed:
-                    logger.warning(f"已刷新数据质量问题: {report.summary}")
+        # 并发竞争检查：另一个请求可能已经完成了fetch并写入SQLite
+        if not bars:
+            bars = self.store.get_bars(symbol, period, start, end, None)
+            if bars:
+                logger.info(f"从并发写入的SQLite读取: {len(bars)}条")
 
-        # 重新从存储查询（含旧数据+新数据）
-        result = self.store.get_bars(symbol, period, start, end, limit)
+        # 重新从存储查询（含旧数据+新数据，不分 limit 以便缓存复用）
+        full_result = self.store.get_bars(symbol, period, start, end, limit=None)
+        result = self._slice_result(full_result, limit)
+        self._req_cache[cache_key] = {'v': full_result if full_result else bars, 't': time.monotonic()}
+        if len(self._req_cache) > 128:  # ponytail: 容量上限
+            self._req_cache.clear()
         return result if result else bars
+
+    @staticmethod
+    def _slice_result(bars: list, limit: int = None) -> list:
+        """按 limit 截取尾部（ASC 顺序，最新在末尾）"""
+        if bars and limit and len(bars) > limit:
+            return bars[-limit:]
+        return bars
 
     async def _fetch_from_akshare(self, symbol: str, period: str,
                                    start: str = None, end: str = None) -> list[GoldBarData]:
@@ -77,21 +127,18 @@ class GoldDataGateway:
 
         优先级: 日线→ futures_zh_daily_sina | 分钟线→ futures_zh_minute_sina
         """
-        try:
+        def _sync():
             import akshare as ak
-        except ImportError:
-            logger.warning("akshare not installed, skip AkShare fetch")
-            return []
-
-        try:
             if period == "d":
                 df = ak.futures_zh_daily_sina(symbol)
             else:
                 period_map = {"1": "1", "5": "5", "15": "15", "30": "30", "60": "60"}
                 ak_period = period_map.get(period, "5")
                 df = ak.futures_zh_minute_sina(symbol=symbol, period=ak_period)
-
             return self._df_to_bars(df, symbol, period)
+        try:
+            async with self._rate_limiter_group.limit("https://akshare/api"):
+                return await asyncio.to_thread(_sync) or []
         except Exception as e:
             logger.warning(f"AkShare数据获取失败: {symbol} {period}, {e}")
             return []
@@ -104,7 +151,7 @@ class GoldDataGateway:
         except ImportError:
             return []
 
-        try:
+        def _sync():
             if period == "d":
                 url = f"https://stock.finance.sina.com.cn/futures/api/json_v2.php/IndexService.getInnerFuturesDailyKLine?symbol={symbol}"
             else:
@@ -115,38 +162,41 @@ class GoldDataGateway:
             resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
             resp.encoding = "gbk"
             rows = resp.json()
-
             if not rows:
-                return []
+                return None
 
             import pandas as pd
             df = pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "volume"])
             df = df[(df["date"] >= (start or "2000")) & (df["date"] <= (end or "2030"))]
             df = df.astype({"open": float, "high": float, "low": float, "close": float, "volume": float})
             df.columns = ["日期", "开盘价", "最高价", "最低价", "收盘价", "成交量"]
-
             return self._df_to_bars(df, symbol, period)
+
+        try:
+            async with self._rate_limiter_group.limit("https://stock.finance.sina.com.cn/api"):
+                return await asyncio.to_thread(_sync) or []
         except Exception as e:
             logger.warning(f"Sina直连获取失败: {e}")
             return []
 
     async def _fetch_from_yfinance(self, start: str, end: str,
-                                    period: str = "d") -> list[GoldBarData]:
+                                    period: str = "d",
+                                    output_symbol: str = "GC=F") -> list[GoldBarData]:
         """备选2: yFinance COMEX黄金（GC=F, 美元/盎司, 仅供参考）"""
-        try:
+        def _sync():
             import yfinance as yf
-        except ImportError:
-            return []
+            ticker = yf.Ticker("GC=F")
+            return ticker.history(start=start, end=end)
 
         try:
-            ticker = yf.Ticker("GC=F")
-            df = ticker.history(start=start, end=end)
-            if df.empty:
+            async with self._rate_limiter_group.limit("https://query1.finance.yahoo.com/api"):
+                df = await asyncio.to_thread(_sync)
+            if df is None or df.empty:
                 return []
             bars = []
             for idx, row in df.iterrows():
                 bars.append(GoldBarData(
-                    symbol="GC=F", exchange="COMEX", period=period,
+                    symbol=output_symbol, exchange="COMEX", period=period,
                     datetime=idx.to_pydatetime(),
                     open=float(row["Open"]), high=float(row["High"]),
                     low=float(row["Low"]), close=float(row["Close"]),
@@ -165,7 +215,7 @@ class GoldDataGateway:
 
         bars = []
         for _, row in df.iterrows():
-            dt = row.get("日期") or row.get("时间") or row.get("datetime") or row.get("date")
+            dt = row.get("日期") or row.get("时间") or row.get("datetime")
             if isinstance(dt, str):
                 dt = pd.to_datetime(dt)
             elif hasattr(dt, 'to_pydatetime'):
@@ -182,49 +232,25 @@ class GoldDataGateway:
                 close=float(row.get("收盘价", row.get("close", 0))),
                 volume=float(row.get("成交量", row.get("volume", 0))),
                 turnover=float(row.get("成交额", row.get("turnover", 0))),
-                open_interest=float(row.get("持仓量", row.get("hold", row.get("open_interest", 0)))),
+                open_interest=float(row.get("持仓量", row.get("open_interest", 0))),
             )
             bars.append(bar)
         return bars
 
-    async def get_realtime_quote(self, symbol: str = "AU0") -> dict:
-        """获取期货实时行情 — 使用 AkShare futures_zh_spot"""
-        try:
-            import akshare as ak
-        except ImportError:
-            logger.warning("akshare not installed, skip realtime quote")
-            return {}
-
-        try:
-            df = ak.futures_zh_spot(symbol=symbol)
-            if df is None or df.empty:
-                return {}
-
-            row = df.iloc[0]
-            return {
-                "symbol": symbol,
-                "name": row.get("symbol", ""),
-                "time": str(row.get("time", "")),
-                "open": float(row.get("open", 0)),
-                "high": float(row.get("high", 0)),
-                "low": float(row.get("low", 0)),
-                "current_price": float(row.get("current_price", 0)),
-                "bid_price": float(row.get("bid_price", 0)),
-                "ask_price": float(row.get("ask_price", 0)),
-                "volume": float(row.get("volume", 0)),
-                "hold": float(row.get("hold", 0)),
-                "last_settle": float(row.get("last_settle_price", 0)),
-                "source": "akshare_spot",
-            }
-        except Exception as e:
-            logger.warning(f"Realtime quote fetch failed: {e}")
-            return {}
+    async def get_gold_etf_price(self, code: str = "518880") -> dict:
+        """获取黄金ETF实时价格 — 复用现有market_data.py"""
+        from backend.market_data import market_data_service
+        return await market_data_service.get_etf_price(code)
 
     async def get_macro_data(self, start: str = "2024-01-01", end: str = None) -> pd.DataFrame:
         """获取宏观指标数据（DXY, VIX, US10Y）用于ML预测
 
         返回每日DataFrame，含 date, DXY_value, VIX_value, US10Y_value 列
         """
+        cached = self._req_cache.get(("_macro_", start, end))
+        if cached and (time.monotonic() - cached['t']) < self._CACHE_TTL:
+            return cached['v']
+
         try:
             import yfinance as yf
         except ImportError:
@@ -238,22 +264,28 @@ class GoldDataGateway:
             "US10Y_value": "^TNX",
         }
 
-        dfs = {}
-        for col, ticker in indicators.items():
-            try:
-                t = yf.Ticker(ticker)
-                hist = t.history(start=start, end=end)
-                if not hist.empty:
-                    dfs[col] = hist["Close"].rename(col)
-            except Exception as e:
-                logger.warning(f"Failed to fetch {ticker}: {e}")
+        def _sync():
+            dfs = {}
+            for col, ticker in indicators.items():
+                try:
+                    t = yf.Ticker(ticker)
+                    hist = t.history(start=start, end=end)
+                    if not hist.empty:
+                        dfs[col] = hist["Close"].rename(col)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch {ticker}: {e}")
+            if not dfs:
+                return pd.DataFrame()
+            result = pd.concat(dfs, axis=1).reset_index()
+            result["date"] = result["Date"].dt.strftime("%Y-%m-%d") if hasattr(result["Date"], "dt") else result["Date"]
+            return result[["date"] + list(indicators.keys())]
 
-        if not dfs:
-            return pd.DataFrame()
-
-        result = pd.concat(dfs, axis=1).reset_index()
-        result["date"] = result["Date"].dt.strftime("%Y-%m-%d") if hasattr(result["Date"], "dt") else result["Date"]
-        return result[["date"] + list(indicators.keys())]
+        async with self._rate_limiter_group.limit("https://query1.finance.yahoo.com/api"):
+            result = await asyncio.to_thread(_sync)
+        self._req_cache[("_macro_", start, end)] = {'v': result, 't': time.monotonic()}
+        if len(self._req_cache) > 128:
+            self._req_cache.clear()
+        return result
 
     async def get_cot_data(self, symbol: str = "088691") -> pd.DataFrame:
         """
@@ -268,53 +300,52 @@ class GoldDataGateway:
         Returns:
             DataFrame: date, spec_long, spec_short, comm_long, comm_short, total_oi
         """
-        try:
+        def _sync():
             import requests
             import pandas as pd
-        except ImportError:
-            return pd.DataFrame()
 
-        try:
-            # 使用 Quantsuz 的 COT 数据源（免费，无需 API key）
-            url = f"https://data.quantsuz.com/api/v1/cftc/{symbol}"
-            resp = requests.get(url, timeout=10)
-            if resp.status_code != 200:
-                # fallback: 尝试 alternative source
-                url = f"https://www.cftc.gov/dea/futures/past/pa{int(symbol)}_past.txt"
+            try:
+                # 使用 Quantsuz 的 COT 数据源（免费，无需 API key）
+                url = f"https://data.quantsuz.com/api/v1/cftc/{symbol}"
                 resp = requests.get(url, timeout=10)
                 if resp.status_code != 200:
-                    logger.warning(f"COT data fetch failed for {symbol}")
-                    return pd.DataFrame()
-                # 解析 CFTC legacy 文本格式
-                lines = resp.text.strip().split("\n")
-                if len(lines) < 4:
-                    return pd.DataFrame()
-                records = []
-                for line in lines[3:]:
-                    parts = line.strip().split(",")
-                    if len(parts) < 20:
-                        continue
-                    try:
-                        records.append({
-                            "date": parts[0].strip(),
-                            "spec_long": int(parts[6]),
-                            "spec_short": int(parts[7]),
-                            "comm_long": int(parts[10]),
-                            "comm_short": int(parts[11]),
-                            "total_oi": int(parts[1]),
-                        })
-                    except (ValueError, IndexError):
-                        continue
-                return pd.DataFrame(records)
+                    # fallback: 尝试 alternative source
+                    url = f"https://www.cftc.gov/dea/futures/past/pa{int(symbol)}_past.txt"
+                    resp = requests.get(url, timeout=10)
+                    if resp.status_code != 200:
+                        logger.warning(f"COT data fetch failed for {symbol}")
+                        return pd.DataFrame()
+                    lines = resp.text.strip().split("\n")
+                    if len(lines) < 4:
+                        return pd.DataFrame()
+                    records = []
+                    for line in lines[3:]:
+                        parts = line.strip().split(",")
+                        if len(parts) < 20:
+                            continue
+                        try:
+                            records.append({
+                                "date": parts[0].strip(),
+                                "spec_long": int(parts[6]),
+                                "spec_short": int(parts[7]),
+                                "comm_long": int(parts[10]),
+                                "comm_short": int(parts[11]),
+                                "total_oi": int(parts[1]),
+                            })
+                        except (ValueError, IndexError):
+                            continue
+                    return pd.DataFrame(records)
 
-            data = resp.json()
-            if "data" in data:
-                return pd.DataFrame(data["data"])
-            return pd.DataFrame()
+                data = resp.json()
+                if "data" in data:
+                    return pd.DataFrame(data["data"])
+                return pd.DataFrame()
 
-        except Exception as e:
-            logger.warning(f"COT data error: {e}")
-            return pd.DataFrame()
+            except Exception as e:
+                logger.warning(f"COT data error: {e}")
+                return pd.DataFrame()
+
+        return await asyncio.to_thread(_sync)
 
     async def get_training_data(self, symbol: str = 'GC',
                                  lookback_days: int = 2520) -> pd.DataFrame:

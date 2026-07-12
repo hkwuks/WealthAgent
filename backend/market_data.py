@@ -16,7 +16,9 @@ import json
 import re
 import time
 import random
+from pathlib import Path
 from datetime import datetime
+from functools import partial
 from typing import Dict, List, Optional, Any
 from loguru import logger
 import akshare as ak
@@ -29,8 +31,10 @@ from backend.models import (
     MarketType,
     AssetType,
 )
+from backend.rate_limiter import RateLimiter, RateLimiterGroup
+from backend.ttl_cache import TtlCache
 
-logger.add("./logs/market_data.log", encoding="utf-8", rotation="10 MB")
+logger.add(str(Path(__file__).parent.parent / "logs" / "market_data.log"), encoding="utf-8", rotation="10 MB")
 
 # ==================== 常量定义 ====================
 
@@ -262,6 +266,7 @@ class StockPriceAPI:
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         ]
         self.current_user_agent = random.choice(self.user_agents)
+        self._rate_limiter_group = RateLimiterGroup(max_concurrent=3, min_interval=0.3)
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
@@ -344,24 +349,25 @@ class StockPriceAPI:
                     delay = base_delay * (2 ** attempt) + random.uniform(0.1, 0.3)
                     await asyncio.sleep(delay)
 
-                async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
-                    if response.status == 200:
-                        return await response.text()
-                    elif response.status == 429:
-                        # 请求过于频繁，延长等待时间
-                        wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.0)
-                        logger.debug(f"Request rate limited (429), waiting {wait_time:.1f}s")
-                        await asyncio.sleep(wait_time)
-                    elif response.status == 403:
-                        # 可能被反爬拦截，更换 User-Agent 重试
-                        logger.debug(f"Request forbidden (403), changing User-Agent")
-                        self.current_user_agent = random.choice(self.user_agents)
-                        wait_time = 1.0 * (attempt + 1)
-                        await asyncio.sleep(wait_time)
-                    else:
-                        logger.debug(f"Request returned status {response.status}")
-                        wait_time = 0.5 * (attempt + 1) + random.uniform(0.2, 0.5)
-                        await asyncio.sleep(wait_time)
+                async with self._rate_limiter_group.limit(url):
+                    async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
+                        if response.status == 200:
+                            return await response.text()
+                        elif response.status == 429:
+                            # 请求过于频繁，延长等待时间
+                            wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.0)
+                            logger.debug(f"Request rate limited (429), waiting {wait_time:.1f}s")
+                            await asyncio.sleep(wait_time)
+                        elif response.status == 403:
+                            # 可能被反爬拦截，更换 User-Agent 重试
+                            logger.debug(f"Request forbidden (403), changing User-Agent")
+                            self.current_user_agent = random.choice(self.user_agents)
+                            wait_time = 1.0 * (attempt + 1)
+                            await asyncio.sleep(wait_time)
+                        else:
+                            logger.debug(f"Request returned status {response.status}")
+                            wait_time = 0.5 * (attempt + 1) + random.uniform(0.2, 0.5)
+                            await asyncio.sleep(wait_time)
 
             except aiohttp.ClientResponseError as e:
                 logger.debug(f"HTTP error (attempt {attempt + 1}/{max_retries}): {e.status} {e.message}")
@@ -539,9 +545,8 @@ class FundPriceAPI:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
         ]
         self.current_user_agent = random.choice(self.user_agents)
-        self.cache = {}
-        self.cache_timestamp = 0
-        self.cache_ttl = 60
+        self._rate_limiter_group = RateLimiterGroup(max_concurrent=3, min_interval=0.3)
+        self._cache = TtlCache(default_ttl=60, maxsize=512)
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
@@ -571,32 +576,18 @@ class FundPriceAPI:
                 headers.update(self._get_random_headers())
                 timeout = kwargs.pop("timeout", aiohttp.ClientTimeout(total=15.0))
 
-                async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
-                    if response.status == 200:
-                        return await response.text()
-                    elif response.status in [429, 403]:
-                        await asyncio.sleep(2 * (attempt + 1))
-                    else:
-                        await asyncio.sleep(1 * (attempt + 1))
+                async with self._rate_limiter_group.limit(url):
+                    async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
+                        if response.status == 200:
+                            return await response.text()
+                        elif response.status in [429, 403]:
+                            await asyncio.sleep(2 * (attempt + 1))
+                        else:
+                            await asyncio.sleep(1 * (attempt + 1))
             except Exception as e:
                 logger.debug(f"Request failed (attempt {attempt + 1}): {e}")
                 await asyncio.sleep(1 * (attempt + 1))
         return None
-
-    def _is_cache_valid(self):
-        current_time = time.time()
-        return current_time - self.cache_timestamp < self.cache_ttl
-
-    def _get_cache(self, key):
-        if self._is_cache_valid():
-            return self.cache.get(key)
-        return None
-
-    def _set_cache(self, key, value):
-        if not self._is_cache_valid():
-            self.cache = {}
-            self.cache_timestamp = time.time()
-        self.cache[key] = value
 
     async def get_fund_data(self, code: str) -> Optional[FundData]:
         """
@@ -610,7 +601,7 @@ class FundPriceAPI:
         """
         # 检查缓存
         cache_key = f"fund_data_{code}"
-        cached = self._get_cache(cache_key)
+        cached = self._cache.get(cache_key)
         if cached:
             return cached
 
@@ -696,7 +687,14 @@ class FundPriceAPI:
             # 检查是否成功获取到净值数据
             if nav is None and fund_name == code:
                 # 基金名称等于代码，说明天天基金网没有收录该基金
-                # 可能是香港互认基金、私募基金或其他特殊基金
+                # 可能是香港互认基金(968开头)、私募基金或其他特殊基金
+                # 尝试海外基金 API 获取名称和净值
+                if code.startswith("968"):
+                    overseas_data = await self._get_overseas_fund_data(code)
+                    if overseas_data:
+                        fund_data = overseas_data
+                        self._cache.set(cache_key, fund_data)
+                        return fund_data
                 logger.warning(f"基金 {code} 在天天基金网没有收录，无法获取数据")
                 return None
 
@@ -729,12 +727,155 @@ class FundPriceAPI:
                 timestamp=datetime.now(),
             )
 
-            self._set_cache(cache_key, fund_data)
+            self._cache.set(cache_key, fund_data)
             return fund_data
 
         except Exception as e:
             logger.error(f"获取基金数据失败 {code}: {e}")
             return None
+
+    async def _get_overseas_fund_data(self, code: str) -> Optional[FundData]:
+        """968 开头香港互认基金数据 — 三级降级
+
+        1. fundgz.1234567.com.cn  基金实时估值 API（名称+净值+估值）
+        2. datacenter.eastmoney   数据中心 API（名称+类型）
+        3. yfinance               Yahoo Finance 兜底
+        """
+        for source_name, fetch_fn in [
+            ("fundgz实时估值", partial(self._overseas_source_fundgz, code)),
+            ("datacenter API", partial(self._overseas_source_datacenter, code)),
+            ("yfinance", partial(self._overseas_source_yfinance, code)),
+        ]:
+            try:
+                result = await fetch_fn()
+                if result:
+                    logger.info(f"海外基金 {code} 数据来源: {source_name}")
+                    return result
+            except Exception as e:
+                logger.debug(f"海外基金 {code} 来源 [{source_name}] 失败: {e}")
+                continue
+
+        logger.warning(f"海外基金 {code} 所有数据源均失败")
+        return None
+
+    async def _overseas_source_fundgz(self, code: str) -> Optional[FundData]:
+        """数据源 1: fundgz.1234567.com.cn 海外基金实时估值 API"""
+        url = f"https://fundgz.1234567.com.cn/js/{code}.js"
+        content = await self._request_with_retry("GET", url)
+        if not content:
+            return None
+
+        match = re.search(r'jsonpgz\((.+)\)', content)
+        if not match:
+            return None
+
+        import json
+        data = json.loads(match.group(1))
+        fund_name = data.get("name", code)
+        nav = float(data["dwjz"]) if "dwjz" in data else None
+        estimated_nav = float(data["gsz"]) if "gsz" in data else None
+        nav_date = data.get("jzrq")
+
+        previous_nav = estimated_nav if estimated_nav else nav
+        change = 0.0
+        change_percent = 0.0
+        if nav and previous_nav and previous_nav > 0:
+            change = nav - previous_nav
+            change_percent = (change / previous_nav * 100)
+
+        return FundData(
+            fund_code=code,
+            fund_name=fund_name,
+            fund_type="海外混合",
+            nav=nav, nav_date=nav_date, previous_nav=previous_nav,
+            establish_date=None, market_type=MarketType.UNKNOWN,
+            benchmark=None, tracking_index=None,
+            price=estimated_nav or nav, change=change,
+            change_percent=change_percent, volume=0.0,
+            timestamp=datetime.now(),
+        )
+
+    async def _overseas_source_datacenter(self, code: str) -> Optional[FundData]:
+        """数据源 2: fundf10.eastmoney.com 基金概况页（名称+类型）"""
+        url = f"https://fundf10.eastmoney.com/jbgk_{code}.html"
+        content = await self._request_with_retry("GET", url)
+        if not content:
+            return None
+
+        # 从 title 提取基金名称
+        title_match = re.search(r'<title>(.+?)基金基本概况', content)
+        name_from_title = title_match.group(1).strip() if title_match else None
+        # 清理标题中的括号部分，如 "(968006)基金基本概况" → ""
+        if name_from_title and re.match(r'^\(\d{6}\)$', name_from_title):
+            name_from_title = None
+
+        # 从 FundArchivesDatas API 尝试获取（部分海外基金可用）
+        api_url = (f"https://api.fund.eastmoney.com/f10/FundArchivesDatas"
+                   f"?type=jjgk&code={code}&topline=10")
+        api_content = await self._request_with_retry("GET", api_url)
+        fund_name = None
+        fund_type = "海外混合"
+        if api_content:
+            try:
+                api_data = json.loads(api_content)
+                if api_data.get("Data"):
+                    rows = api_data["Data"]
+                    if rows and isinstance(rows, list) and len(rows) > 0:
+                        row = rows[0]
+                        fund_name = row.get("FUND_NAME") or row.get("fund_name")
+                        fund_type = row.get("FUND_TYPE") or row.get("fund_type", "海外混合")
+            except (json.JSONDecodeError, AttributeError, KeyError):
+                pass
+
+        if not fund_name:
+            fund_name = name_from_title or code
+
+        return FundData(
+            fund_code=code,
+            fund_name=fund_name,
+            fund_type=fund_type,
+            nav=None, nav_date=None, previous_nav=None,
+            establish_date=None, market_type=MarketType.UNKNOWN,
+            benchmark=None, tracking_index=None,
+            price=None, change=0.0, change_percent=0.0,
+            volume=0.0, timestamp=datetime.now(),
+        )
+
+    async def _overseas_source_yfinance(self, code: str) -> Optional[FundData]:
+        """数据源 3: yfinance Yahoo Finance 兜底"""
+        try:
+            import yfinance as yf
+
+            def _sync():
+                ticker = yf.Ticker(f"{code}.HK")
+                return ticker.info
+
+            info = await asyncio.to_thread(_sync)
+        except Exception:
+            return None
+
+        fund_name = info.get("shortName") or info.get("longName") or code
+        price = info.get("regularMarketPrice") or info.get("previousClose")
+        prev_close = info.get("previousClose") or price
+        nav_date = datetime.now().strftime("%Y-%m-%d")
+
+        change = 0.0
+        change_percent = 0.0
+        if price and prev_close and prev_close > 0:
+            change = price - prev_close
+            change_percent = (change / prev_close * 100)
+
+        return FundData(
+            fund_code=code,
+            fund_name=fund_name,
+            fund_type="海外混合",
+            nav=price, nav_date=nav_date, previous_nav=prev_close,
+            establish_date=None, market_type=MarketType.UNKNOWN,
+            benchmark=None, tracking_index=None,
+            price=price, change=change,
+            change_percent=change_percent, volume=0.0,
+            timestamp=datetime.now(),
+        )
 
     async def _get_fund_type(self, code: str) -> Optional[str]:
         """获取基金类型"""
@@ -775,6 +916,7 @@ class FundHoldingsAPI:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         ]
         self.current_user_agent = random.choice(self.user_agents)
+        self._rate_limiter_group = RateLimiterGroup(max_concurrent=3, min_interval=0.3)
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
@@ -804,10 +946,11 @@ class FundHoldingsAPI:
                 headers.update(self._get_random_headers())
                 timeout = kwargs.pop("timeout", aiohttp.ClientTimeout(total=10.0))
 
-                async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
-                    if response.status == 200:
-                        return await response.text()
-                    await asyncio.sleep(1 * (attempt + 1))
+                async with self._rate_limiter_group.limit(url):
+                    async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
+                        if response.status == 200:
+                            return await response.text()
+                        await asyncio.sleep(1 * (attempt + 1))
             except Exception as e:
                 logger.debug(f"Request failed (attempt {attempt + 1}): {e}")
                 await asyncio.sleep(1 * (attempt + 1))
@@ -1098,6 +1241,7 @@ class IndexPriceAPI:
     1. 腾讯财经 API (最快，最稳定)
     2. 新浪财经 API
     3. 东方财富 Push API
+    4. AkShare (兜底)
     """
 
     def __init__(self):
@@ -1114,6 +1258,9 @@ class IndexPriceAPI:
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
         ]
         self.current_user_agent = random.choice(self.user_agents)
+        self._rate_limiter_group = RateLimiterGroup(max_concurrent=3, min_interval=0.3)
+        # ponytail: 30s TTL 避免高频重复请求触发反爬
+        self._cache = TtlCache(default_ttl=30, maxsize=64)
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
@@ -1154,19 +1301,20 @@ class IndexPriceAPI:
                     delay = base_delay * (2 ** attempt) + random.uniform(0.1, 0.3)
                     await asyncio.sleep(delay)
 
-                async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
-                    if response.status == 200:
-                        return await response.text()
-                    elif response.status == 429:
-                        wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.0)
-                        await asyncio.sleep(wait_time)
-                    elif response.status == 403:
-                        self.current_user_agent = random.choice(self.user_agents)
-                        wait_time = 1.0 * (attempt + 1)
-                        await asyncio.sleep(wait_time)
-                    else:
-                        wait_time = 0.5 * (attempt + 1) + random.uniform(0.2, 0.5)
-                        await asyncio.sleep(wait_time)
+                async with self._rate_limiter_group.limit(url):
+                    async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
+                        if response.status == 200:
+                            return await response.text()
+                        elif response.status == 429:
+                            wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.0)
+                            await asyncio.sleep(wait_time)
+                        elif response.status == 403:
+                            self.current_user_agent = random.choice(self.user_agents)
+                            wait_time = 1.0 * (attempt + 1)
+                            await asyncio.sleep(wait_time)
+                        else:
+                            wait_time = 0.5 * (attempt + 1) + random.uniform(0.2, 0.5)
+                            await asyncio.sleep(wait_time)
 
             except aiohttp.ClientResponseError as e:
                 logger.debug(f"HTTP error (attempt {attempt + 1}/{max_retries}): {e.status}")
@@ -1194,6 +1342,12 @@ class IndexPriceAPI:
         if index_info.get("type") == "bond":
             logger.debug(f"债券指数 {code} 不支持实时数据获取")
             return None
+
+        # ponytail: 30s TTL 缓存避免高频重复请求
+        cache_key = f"idx_{code}"
+        cached = self._cache.get(cache_key)
+        if cached:
+            return cached
 
         # ===== 数据源 1: 腾讯财经 API (最稳定) =====
         try:
@@ -1223,7 +1377,7 @@ class IndexPriceAPI:
                         change_percent = (change / previous_close * 100) if previous_close else 0
 
                         logger.debug(f"腾讯指数 {code} 成功：price={price}, change_percent={change_percent}%")
-                        return MarketData(
+                        md = MarketData(
                             code=code,
                             name=name,
                             price=price,
@@ -1231,6 +1385,8 @@ class IndexPriceAPI:
                             change_percent=round(change_percent, 2),
                             timestamp=datetime.now(),
                         )
+                        self._cache.set(cache_key, md)
+                        return md
         except Exception as e:
             logger.debug(f"Tencent index API error: {e}")
 
@@ -1256,7 +1412,7 @@ class IndexPriceAPI:
                                 change_percent = ((price - previous_close) / previous_close * 100) if previous_close else 0
 
                             logger.debug(f"新浪指数 {code} 成功：price={price}, change_percent={change_percent}%")
-                            return MarketData(
+                            md = MarketData(
                                 code=code,
                                 name=name,
                                 price=price,
@@ -1264,6 +1420,8 @@ class IndexPriceAPI:
                                 change_percent=change_percent,
                                 timestamp=datetime.now(),
                             )
+                            self._cache.set(cache_key, md)
+                            return md
         except Exception as e:
             logger.debug(f"Sina index API error: {e}")
 
@@ -1281,6 +1439,7 @@ class IndexPriceAPI:
 
                 url = "https://push2.eastmoney.com/api/qt/stock/get"
                 params = {"secid": secid, "fields": "f43,f44,f45,f46,f47,f48,f49,f14,f169,f170"}
+                kwargs["headers"] = {"Referer": "https://quote.eastmoney.com/"}
 
                 content = await self._request_with_retry("GET", url, params=params, timeout=aiohttp.ClientTimeout(total=5.0))
                 if content:
@@ -1293,7 +1452,7 @@ class IndexPriceAPI:
                         change_percent = (change / open_price * 100) if open_price > 0 else 0
 
                         logger.debug(f"东方财富指数 {code} 成功：price={price}, change_percent={change_percent}%")
-                        return MarketData(
+                        md = MarketData(
                             code=code,
                             name=tick.get("f14", code) or index_info["name"],
                             price=price,
@@ -1302,6 +1461,8 @@ class IndexPriceAPI:
                             volume=float(tick.get("f47", 0)),
                             timestamp=datetime.now(),
                         )
+                        self._cache.set(cache_key, md)
+                        return md
             except Exception as e:
                 logger.debug(f"EastMoney index API error: {e}")
 
@@ -1313,6 +1474,7 @@ class IndexPriceAPI:
         if etf_code:
             try:
                 url = f"https://push2.eastmoney.com/api/qt/stock/get?secid=1.{etf_code}&fields=f43,f44,f45,f46,f47,f48,f49,f14,f169,f170"
+                kwargs["headers"] = {"Referer": "https://quote.eastmoney.com/"}
                 content = await self._request_with_retry("GET", url, timeout=aiohttp.ClientTimeout(total=5.0))
                 if content:
                     data = json.loads(content)
@@ -1324,7 +1486,7 @@ class IndexPriceAPI:
                         change_percent = float(tick.get("f170", 0)) / 100
 
                         logger.info(f"指数 {code} 使用 ETF {etf_code} 价格作为替代：price={price}, change_percent={change_percent}%")
-                        return MarketData(
+                        md = MarketData(
                             code=code,
                             name=f"{index_info['name']} ({etf_code} 替代)",
                             price=price,
@@ -1332,6 +1494,8 @@ class IndexPriceAPI:
                             change_percent=round(change_percent, 2),
                             timestamp=datetime.now(),
                         )
+                        self._cache.set(cache_key, md)
+                        return md
             except Exception as e:
                 logger.debug(f"使用 ETF 替代指数数据失败：{e}")
 
@@ -1383,13 +1547,13 @@ class BondIndexAPI:
 
     def __init__(self):
         self.session = None
-        self.cache = {}
-        self.cache_ttl = 60  # 债券指数缓存 60 秒（波动小，不需要频繁更新）
+        self._cache = TtlCache(default_ttl=60, maxsize=256)
         self.user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
         ]
+        self._rate_limiter_group = RateLimiterGroup(max_concurrent=3, min_interval=0.3)
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
@@ -1402,19 +1566,6 @@ class BondIndexAPI:
             await self.session.close()
             self.session = None
 
-    def _get_cache(self, cache_key: str) -> Optional[Dict]:
-        """获取缓存数据"""
-        if cache_key in self.cache:
-            cache_entry = self.cache[cache_key]
-            if time.time() - cache_entry["timestamp"] < self.cache_ttl:
-                return cache_entry["data"]
-            del self.cache[cache_key]
-        return None
-
-    def _set_cache(self, cache_key: str, data: Dict):
-        """设置缓存数据"""
-        self.cache[cache_key] = {"data": data, "timestamp": time.time()}
-
     async def _request_with_retry(self, method: str, url: str, max_retries: int = 3, **kwargs):
         """带重试的请求"""
         for attempt in range(max_retries):
@@ -1424,10 +1575,11 @@ class BondIndexAPI:
                 headers["User-Agent"] = random.choice(self.user_agents)
                 timeout = kwargs.pop("timeout", aiohttp.ClientTimeout(total=10.0))
 
-                async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
-                    if response.status == 200:
-                        return await response.text()
-                    await asyncio.sleep(1 * (attempt + 1))
+                async with self._rate_limiter_group.limit(url):
+                    async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
+                        if response.status == 200:
+                            return await response.text()
+                        await asyncio.sleep(1 * (attempt + 1))
             except Exception as e:
                 logger.debug(f"BondIndexAPI 请求失败 (尝试 {attempt + 1}/{max_retries}): {type(e).__name__}: {e}")
                 await asyncio.sleep(1 * (attempt + 1))
@@ -1445,7 +1597,7 @@ class BondIndexAPI:
         """
         # 检查缓存
         cache_key = f"bond_index_{index_code}"
-        cached_data = self._get_cache(cache_key)
+        cached_data = self._cache.get(cache_key)
         if cached_data:
             logger.debug(f"债券指数 {index_code} 使用缓存数据")
             return cached_data
@@ -1461,26 +1613,26 @@ class BondIndexAPI:
         if index_info.get("source") == "chinabond" or index_code.startswith("CBA"):
             data = await self._get_chinabond_index_data(index_code)
             if data:
-                self._set_cache(cache_key, data)
+                self._cache.set(cache_key, data)
                 return data
 
         # ===== 数据源 2: 中证指数公司 API =====
         if index_info.get("source") == "csi" or index_code.startswith("H110"):
             data = await self._get_csi_bond_index_data(index_code)
             if data:
-                self._set_cache(cache_key, data)
+                self._cache.set(cache_key, data)
                 return data
 
         # ===== 数据源 3: 东方财富债券指数 API =====
         data = await self._get_eastmoney_bond_index_data(index_code)
         if data:
-            self._set_cache(cache_key, data)
+            self._cache.set(cache_key, data)
             return data
 
         # ===== 数据源 4: AkShare (最后备用) =====
         data = await self._get_akshare_bond_index_data(index_code)
         if data:
-            self._set_cache(cache_key, data)
+            self._cache.set(cache_key, data)
             return data
 
         logger.warning(f"债券指数 {index_code} 所有数据源均失败")
@@ -1644,10 +1796,12 @@ class GlobalIndexAPI:
     """
     海外指数价格 API
 
-    数据源：
-    1. yfinance (Yahoo Finance)
-    2. 新浪财经海外接口
-    3. 东方财富海外指数 API
+    数据源（按指数路由）：
+    - US 指数: 腾讯API (qt.gtimg.cn) → yfinance
+    - HK 指数: 新浪 (hq.sinajs.cn) → 腾讯API → yfinance
+    - 欧/亚/其他: yfinance (Yahoo Finance)
+
+    ponytail: 已移除失效的新浪美股(gb_$)、Investing.com、东方财富海外源
     """
 
     def __init__(self):
@@ -1664,6 +1818,7 @@ class GlobalIndexAPI:
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
         ]
         self.current_user_agent = random.choice(self.user_agents)
+        self._rate_limiter_group = RateLimiterGroup(max_concurrent=3, min_interval=0.3)
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
@@ -1692,34 +1847,35 @@ class GlobalIndexAPI:
             "sec-ch-ua-platform": '"Windows"',
         }
 
-    async def _request_with_retry(self, method: str, url: str, max_retries: int = 5, use_exponential_backoff: bool = True, **kwargs):
+    async def _request_with_retry(self, method: str, url: str, max_retries: int = 2, use_exponential_backoff: bool = True, **kwargs):
         """带重试机制的请求（增强反爬版）"""
         for attempt in range(max_retries):
             try:
                 session = await self._ensure_session()
                 headers = kwargs.pop("headers", {})
                 headers.update(self._get_random_headers())
-                timeout = kwargs.pop("timeout", aiohttp.ClientTimeout(total=15.0))
+                timeout = kwargs.pop("timeout", aiohttp.ClientTimeout(total=8.0))
 
                 # 指数退避 + 随机抖动
                 if attempt > 0:
-                    base_delay = 0.3 if use_exponential_backoff else 0.5
+                    base_delay = 0.5 if use_exponential_backoff else 0.5
                     delay = base_delay * (2 ** attempt) + random.uniform(0.1, 0.3)
                     await asyncio.sleep(delay)
 
-                async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
-                    if response.status == 200:
-                        return await response.text()
-                    elif response.status == 429:
-                        wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.0)
-                        await asyncio.sleep(wait_time)
-                    elif response.status == 403:
-                        self.current_user_agent = random.choice(self.user_agents)
-                        wait_time = 1.0 * (attempt + 1)
-                        await asyncio.sleep(wait_time)
-                    else:
-                        wait_time = 0.5 * (attempt + 1) + random.uniform(0.2, 0.5)
-                        await asyncio.sleep(wait_time)
+                async with self._rate_limiter_group.limit(url):
+                    async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
+                        if response.status == 200:
+                            return await response.text()
+                        elif response.status == 429:
+                            wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.0)
+                            await asyncio.sleep(wait_time)
+                        elif response.status == 403:
+                            self.current_user_agent = random.choice(self.user_agents)
+                            wait_time = 1.0 * (attempt + 1)
+                            await asyncio.sleep(wait_time)
+                        else:
+                            wait_time = 0.5 * (attempt + 1) + random.uniform(0.2, 0.5)
+                            await asyncio.sleep(wait_time)
 
             except aiohttp.ClientResponseError as e:
                 logger.debug(f"HTTP error (attempt {attempt + 1}/{max_retries}): {e.status}")
@@ -1744,219 +1900,175 @@ class GlobalIndexAPI:
         Args:
             index_code: 指数代码 (nasdaq, sp500, hsi, nikkei 等)
 
-        Returns:
-            Optional[Dict]: 指数数据
+        数据源优先级（按指数类型）:
+        - 美股 (us.*): 腾讯API 快取 → yfinance
+        - 港股 (hk*):  新浪HK → 腾讯HK → yfinance
+        - 其他 (欧/亚/商品): yfinance 直取
         """
         index_info = GLOBAL_INDEX_MAPPING.get(index_code)
         if not index_info:
             return None
 
-        # ===== 数据源 1: 新浪财经海外接口 (优先级最高，最快) =====
-        try:
-            sina_code = index_info.get("sina", "")
-            if sina_code:
-                url = f"https://hq.sinajs.cn/list={sina_code}"
-                content = await self._request_with_retry("GET", url, timeout=aiohttp.ClientTimeout(total=5.0))
-                if content:
-                    match = re.search(r'"([^"]+)"', content)
-                    if match:
-                        parts = match.group(1).split(",")
-                        if len(parts) >= 7:
-                            name = parts[0]
-                            # 新浪全球指数接口格式：name,price,change_percent,change,volume,...
-                            # parts[1] = 当前价, parts[2] = 涨跌幅(%), parts[3] = 涨跌额
-                            price = float(parts[1]) if parts[1] else 0
-                            change_percent = float(parts[2]) if parts[2] else 0
-                            change = float(parts[3]) if parts[3] else 0
+        qq_code = index_info.get("qq", "")
+        sina_code = index_info.get("sina", "")
+        yf_code = index_info.get("yf", index_info.get("code", ""))
 
-                            logger.debug(f"新浪海外指数 {index_code} 成功：price={price}, change_percent={change_percent}%")
-                            return {
-                                "code": index_code,
-                                "name": name or index_info["name"],
-                                "price": price,
-                                "change_percent": round(change_percent, 2),
-                                "change": round(change, 2),
-                            }
-        except Exception as e:
-            logger.debug(f"Sina global index API error: {e}")
+        # ===== 美股: 腾讯API (us.*) 最快，<1s =====
+        if qq_code and qq_code.startswith("us."):
+            data = await self._get_tencent_index_data(qq_code, index_info["name"])
+            if data:
+                return data
 
-        # ===== 数据源 2: Investing.com (新增，覆盖最全) =====
-        try:
-            investing_code = index_info.get("investing", "")
-            if investing_code:
-                data = await self._get_investing_index_data(investing_code, index_info["name"])
-                if data:
-                    logger.debug(f"Investing.com 海外指数 {index_code} 成功：price={data['price']}, change_percent={data['change_percent']}%")
-                    return data
-        except Exception as e:
-            logger.debug(f"Investing.com global index API error: {e}")
+        # ===== 港股: 新浪HK (延迟低，格式稳定) =====
+        if sina_code and sina_code.startswith("hk"):
+            data = await self._get_sina_hk_index_data(sina_code, index_info["name"])
+            if data:
+                return data
 
-        # ===== 数据源 3: 东方财富海外指数 API =====
-        try:
-            secid = index_info.get("secid", "")
-            if secid:
-                url = "https://push2.eastmoney.com/api/qt/stock/get"
-                params = {"secid": secid, "fields": "f43,f44,f45,f46,f47,f48,f49,f14,f169,f170"}
+        # ===== 港股/其他: 腾讯HK (新浪兜底后) =====
+        if qq_code and not qq_code.startswith("us."):
+            data = await self._get_tencent_index_data(qq_code, index_info["name"])
+            if data:
+                return data
 
-                content = await self._request_with_retry("GET", url, params=params, timeout=aiohttp.ClientTimeout(total=5.0))
-                if content:
-                    data = json.loads(content)
-                    if data.get("data"):
-                        tick = data["data"]
-                        price = float(tick.get("f43", 0)) / 100
-                        change = float(tick.get("f169", 0)) / 100
-                        change_percent = float(tick.get("f170", 0)) / 100
-
-                        logger.debug(f"东方财富海外指数 {index_code} 成功：price={price}, change_percent={change_percent}%")
-                        return {
-                            "code": index_code,
-                            "name": tick.get("f14", index_info["name"]),
-                            "price": price,
-                            "change_percent": round(change_percent, 2),
-                            "change": round(change, 2),
-                        }
-        except Exception as e:
-            logger.debug(f"EastMoney global index API error: {e}")
-
-        # ===== 数据源 3: yfinance (最后备用) =====
-        try:
-            yf_code = index_info.get("yf", index_info.get("code", ""))
-            if yf_code:
-                def _fetch_yfinance():
-                    ticker = yf.Ticker(yf_code)
-                    hist = ticker.history(period="1d")
-                    if not hist.empty:
-                        price = float(hist["Close"].iloc[-1])
-                        info = ticker.info
-                        return price, info
-                    return None, None
-
-                # 使用 to_thread 运行同步代码，并设置超时
-                price, info = await asyncio.wait_for(
-                    asyncio.to_thread(_fetch_yfinance),
-                    timeout=10.0
-                )
-
-                if price is not None and info is not None:
-                    prev_close = info.get("previousClose", price)
-                    change = price - prev_close
-                    change_percent = (change / prev_close * 100) if prev_close else 0
-
-                    logger.debug(f"yfinance 指数 {index_code} 成功：price={price}, change_percent={change_percent}%")
-                    return {
-                        "code": index_code,
-                        "name": index_info["name"],
-                        "price": price,
-                        "change_percent": round(change_percent, 2),
-                        "change": round(change, 2),
-                    }
-        except asyncio.TimeoutError:
-            logger.debug(f"yfinance 指数 {index_code} 超时")
-        except Exception as e:
-            logger.debug(f"yfinance index API error: {e}")
-
-        # ===== 数据源 4: 腾讯财经港股接口 (针对港股指数优化) =====
-        try:
-            qq_code = index_info.get("qq", "")
-            if qq_code:
-                url = f"https://qt.gtimg.cn/q={qq_code}"
-                content = await self._request_with_retry("GET", url, timeout=aiohttp.ClientTimeout(total=5.0))
-                if content:
-                    match = re.search(r'"([^"]+)"', content)
-                    if match:
-                        parts = match.group(1).split("~")
-                        if len(parts) >= 6:
-                            name = parts[1] if len(parts) > 1 else index_info["name"]
-                            price = float(parts[3]) if len(parts) > 3 and parts[3] else 0
-                            previous_close = float(parts[4]) if len(parts) > 4 and parts[4] else 0
-                            change_percent = float(parts[32]) if len(parts) > 32 and parts[32] else 0
-
-                            logger.debug(f"腾讯海外指数 {index_code} 成功：price={price}, change_percent={change_percent}%")
-                            return {
-                                "code": index_code,
-                                "name": name,
-                                "price": price,
-                                "change_percent": round(change_percent, 2),
-                                "change": round(price - previous_close, 2),
-                            }
-        except Exception as e:
-            logger.debug(f"Tencent global index API error: {e}")
+        # ===== 通用兜底: yfinance (2~5s, 覆盖所有指数) =====
+        if yf_code:
+            data = await self._get_yfinance_index_data(yf_code, index_info["name"])
+            if data:
+                return data
 
         logger.warning(f"海外指数 {index_code} 所有数据源均失败")
 
-        # ===== 数据源 5: 指数回退机制 (当特定指数失效时使用替代指数) =====
+        # ===== 指数回退机制 =====
         fallback_map = {
-            "hshk_dividend": "hsi",  # 恒生港股通高股息 -> 恒生指数
-            "sp_hkconnect": "hsi",   # 标普港股通低波红利 -> 恒生指数
+            "hshk_dividend": "hsi",
+            "sp_hkconnect": "hsi",
         }
-
         if index_code in fallback_map:
             fallback_code = fallback_map[index_code]
-            logger.info(f"指数 {index_code} 所有数据源失败，尝试使用替代指数 {fallback_code}")
+            logger.info(f"指数 {index_code} 尝试使用替代指数 {fallback_code}")
             fallback_data = await self.get_global_index_realtime_data(fallback_code)
             if fallback_data:
-                # 保留原指数代码，但使用替代指数的数据
                 fallback_data["code"] = index_code
                 fallback_data["name"] = index_info["name"]
                 fallback_data["fallback_from"] = fallback_code
-                logger.info(f"指数 {index_code} 使用替代指数 {fallback_code} 数据成功")
                 return fallback_data
 
         return None
 
-    async def _get_investing_index_data(self, investing_code: str, index_name: str) -> Optional[Dict[str, Any]]:
-        """
-        从 Investing.com 获取指数数据
-
-        Investing.com 提供全球主要指数的实时数据
-        指数代码示例：166 (标普 500), 179 (恒生指数), 178 (日经 225)
-
-        Args:
-            investing_code: Investing.com 指数代码
-            index_name: 指数名称
-
-        Returns:
-            Optional[Dict]: 指数数据
-        """
+    async def _get_tencent_index_data(self, qq_code: str, index_name: str) -> Optional[Dict[str, Any]]:
+        """腾讯财经 API - 美股/港股指数，最快数据源"""
         try:
-            # Investing.com 指数行情页面
-            url = f"https://cn.investing.com/index-{investing_code}"
-            headers = {
-                "User-Agent": random.choice(self.user_agents),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                "Referer": "https://cn.investing.com/",
+            url = f"https://qt.gtimg.cn/q={qq_code}"
+            content = await self._request_with_retry("GET", url, max_retries=2, timeout=aiohttp.ClientTimeout(total=5.0))
+            if not content:
+                return None
+
+            match = re.search(r'"([^"]+)"', content)
+            if not match:
+                return None
+
+            parts = match.group(1).split("~")
+            if len(parts) < 6:
+                return None
+
+            name = parts[1] if len(parts) > 1 else index_name
+            price_str = parts[3] if len(parts) > 3 else ""
+            prev_close_str = parts[4] if len(parts) > 4 else ""
+            change_pct_str = parts[32] if len(parts) > 32 else ""
+
+            if not price_str:
+                return None
+
+            price = float(price_str)
+            previous_close = float(prev_close_str) if prev_close_str else 0
+            change_percent = float(change_pct_str) if change_pct_str else 0
+            change = price - previous_close if previous_close else 0
+
+            return {
+                "code": qq_code,
+                "name": name,
+                "price": price,
+                "change_percent": round(change_percent, 2),
+                "change": round(change, 2),
+                "source": "tencent",
             }
-
-            session = await self._ensure_session()
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10.0)) as response:
-                if response.status == 200:
-                    content = await response.text()
-
-                    # 从 HTML 中提取数据
-                    # Investing.com 格式：<span class="last">(价格)</span>
-                    price_match = re.search(r'"last_price":(\d+\.?\d*)', content)
-                    change_match = re.search(r'"last_change":([+-]?\d+\.?\d*)', content)
-                    change_pct_match = re.search(r'"last_change_pct":([+-]?\d+\.?\d*)', content)
-
-                    if price_match:
-                        price = float(price_match.group(1))
-                        change = float(change_match.group(1)) if change_match else 0
-                        change_percent = float(change_pct_match.group(1)) if change_pct_match else 0
-
-                        return {
-                            "code": investing_code,
-                            "name": index_name,
-                            "price": price,
-                            "change": round(change, 2),
-                            "change_percent": round(change_percent, 2),
-                            "source": "investing",
-                        }
         except Exception as e:
-            logger.debug(f"Investing.com 数据获取失败：{e}")
-
+            logger.debug(f"Tencent index API error ({qq_code}): {e}")
         return None
 
+    async def _get_sina_hk_index_data(self, sina_code: str, index_name: str) -> Optional[Dict[str, Any]]:
+        """新浪财经港股指数 API"""
+        try:
+            url = f"https://hq.sinajs.cn/list={sina_code}"
+            content = await self._request_with_retry("GET", url, max_retries=2, timeout=aiohttp.ClientTimeout(total=5.0))
+            if not content:
+                return None
+
+            match = re.search(r'"([^"]+)"', content)
+            if not match:
+                return None
+
+            parts = match.group(1).split(",")
+            if len(parts) < 7:
+                return None
+
+            name = parts[0] or index_name
+            previous_close = float(parts[2]) if parts[2] else 0
+            price = float(parts[3]) if parts[3] else 0
+
+            if price == 0:
+                return None
+
+            change = price - previous_close
+            change_percent = (change / previous_close * 100) if previous_close else 0
+
+            return {
+                "code": sina_code,
+                "name": name,
+                "price": price,
+                "change_percent": round(change_percent, 2),
+                "change": round(change, 2),
+                "source": "sina",
+            }
+        except Exception as e:
+            logger.debug(f"Sina HK index API error ({sina_code}): {e}")
+        return None
+
+    async def _get_yfinance_index_data(self, yf_code: str, index_name: str) -> Optional[Dict[str, Any]]:
+        """yfinance (Yahoo Finance) - 通用兜底"""
+        try:
+            def _fetch():
+                ticker = yf.Ticker(yf_code)
+                hist = ticker.history(period="1d")
+                if not hist.empty:
+                    price = float(hist["Close"].iloc[-1])
+                    info = ticker.info
+                    return price, info
+                return None, None
+
+            price, info = await asyncio.wait_for(
+                asyncio.to_thread(_fetch),
+                timeout=10.0
+            )
+
+            if price is not None and info is not None:
+                prev_close = info.get("previousClose", price)
+                change = price - prev_close
+                change_percent = (change / prev_close * 100) if prev_close else 0
+
+                return {
+                    "code": yf_code,
+                    "name": index_name,
+                    "price": round(price, 2),
+                    "change_percent": round(change_percent, 2),
+                    "change": round(change, 2),
+                    "source": "yfinance",
+                }
+        except asyncio.TimeoutError:
+            logger.debug(f"yfinance {yf_code} 超时")
+        except Exception as e:
+            logger.debug(f"yfinance error ({yf_code}): {e}")
         return None
 
     async def __aenter__(self):
@@ -1993,11 +2105,10 @@ class ETFPriceAPI:
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         ]
         self.current_user_agent = random.choice(self.user_agents)
+        self._rate_limiter_group = RateLimiterGroup(max_concurrent=3, min_interval=0.3)
 
         # 缓存相关
-        self.cache = {}
-        self.cache_timestamp = 0
-        self.cache_ttl = 30  # 默认缓存 30 秒
+        self._cache = TtlCache(default_ttl=30, maxsize=512)
 
         # QDII ETF 列表（这些 ETF 投资海外市场，交易时间不同）
         self.qdii_etfs = {
@@ -2039,46 +2150,8 @@ class ETFPriceAPI:
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         }
 
-    def _is_cache_valid(self, cache_key: str) -> bool:
-        """检查缓存是否有效"""
-        if cache_key not in self.cache:
-            return False
-        current_time = time.time()
-        cache_entry = self.cache[cache_key]
-        ttl = cache_entry.get("ttl", self.cache_ttl)
-        return current_time - cache_entry["timestamp"] < ttl
-
-    def _get_cache(self, cache_key: str) -> Optional[Dict]:
-        """获取缓存数据"""
-        if self._is_cache_valid(cache_key):
-            logger.debug(f"缓存命中：{cache_key}")
-            return self.cache[cache_key]["data"]
-        return None
-
-    def _set_cache(self, cache_key: str, value: Dict, ttl: Optional[int] = None):
-        """设置缓存数据"""
-        if value is None:
-            # 对于失败的结果也缓存，但时间更短（避免频繁重试）
-            ttl = 10
-        self.cache[cache_key] = {
-            "data": value,
-            "timestamp": time.time(),
-            "ttl": ttl or self.cache_ttl
-        }
-        # 定期清理过期缓存
-        self._cleanup_cache()
-
-    def _cleanup_cache(self):
-        """清理过期缓存"""
-        current_time = time.time()
-        expired_keys = [
-            k for k, v in self.cache.items()
-            if current_time - v["timestamp"] > v.get("ttl", self.cache_ttl)
-        ]
-        for key in expired_keys:
-            del self.cache[key]
-
-    def _get_cache_key(self, code: str) -> str:
+    @staticmethod
+    def _get_cache_key(code: str) -> str:
         """生成缓存键"""
         return f"etf_{code}"
 
@@ -2111,20 +2184,21 @@ class ETFPriceAPI:
                 headers.update(self._get_random_headers())
                 timeout = kwargs.pop("timeout", aiohttp.ClientTimeout(total=10.0))
 
-                async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
-                    if response.status == 200:
-                        return await response.text()
-                    elif response.status == 429:
-                        # 请求过于频繁，延长等待时间
-                        wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.0)
-                        await asyncio.sleep(wait_time)
-                    elif response.status == 403:
-                        # 切换 User-Agent
-                        self.current_user_agent = random.choice(self.user_agents)
-                        wait_time = 1.0 * (attempt + 1)
-                        await asyncio.sleep(wait_time)
-                    else:
-                        await asyncio.sleep(0.5 * (attempt + 1))
+                async with self._rate_limiter_group.limit(url):
+                    async with session.request(method, url, headers=headers, timeout=timeout, **kwargs) as response:
+                        if response.status == 200:
+                            return await response.text()
+                        elif response.status == 429:
+                            # 请求过于频繁，延长等待时间
+                            wait_time = 2.0 * (attempt + 1) + random.uniform(0.5, 1.0)
+                            await asyncio.sleep(wait_time)
+                        elif response.status == 403:
+                            # 切换 User-Agent
+                            self.current_user_agent = random.choice(self.user_agents)
+                            wait_time = 1.0 * (attempt + 1)
+                            await asyncio.sleep(wait_time)
+                        else:
+                            await asyncio.sleep(0.5 * (attempt + 1))
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 logger.debug(f"Request failed (attempt {attempt + 1}/{max_retries}): {type(e).__name__}")
                 await asyncio.sleep(0.5 * (attempt + 1))
@@ -2168,7 +2242,7 @@ class ETFPriceAPI:
             ttl = 300
 
         # 检查缓存
-        cached_data = self._get_cache(cache_key)
+        cached_data = self._cache.get(cache_key)
         if cached_data:
             logger.debug(f"ETF {code} 使用缓存数据（TTL={ttl}s）")
             return cached_data
@@ -2200,7 +2274,7 @@ class ETFPriceAPI:
                             "previous_close": previous_close,
                         }
                         logger.debug(f"ETF {code} 数据获取成功（腾讯）：price={price}, change={change_percent}%")
-                        self._set_cache(cache_key, result, ttl)
+                        self._cache.set(cache_key, result, ttl)
                         return result
         except Exception as e:
             logger.debug(f"Tencent ETF API error for {code}: {e}")
@@ -2230,7 +2304,7 @@ class ETFPriceAPI:
                             "previous_close": previous_close,
                         }
                         logger.debug(f"ETF {code} 数据获取成功（新浪）：price={price}, change={change_percent}%")
-                        self._set_cache(cache_key, result, ttl)
+                        self._cache.set(cache_key, result, ttl)
                         return result
         except Exception as e:
             logger.debug(f"Sina ETF API error for {code}: {e}")
@@ -2271,7 +2345,7 @@ class ETFPriceAPI:
                         "previous_close": previous_close,
                     }
                     logger.debug(f"ETF {code} 数据获取成功（东方财富）：price={price}, change={change_percent}%")
-                    self._set_cache(cache_key, result, ttl)
+                    self._cache.set(cache_key, result, ttl)
                     return result
         except Exception as e:
             logger.debug(f"EastMoney ETF API error for {code}: {e}")
@@ -2313,7 +2387,7 @@ class ETFPriceAPI:
                             "previous_close": previous_close,
                         }
                         logger.debug(f"ETF {code} 数据获取成功（腾讯财经）：price={price}, change={change_percent}%")
-                        self._set_cache(cache_key, result, ttl)
+                        self._cache.set(cache_key, result, ttl)
                         return result
         except Exception as e:
             logger.debug(f"Tencent ETF API error for {code}: {e}")
@@ -2353,7 +2427,7 @@ class ETFPriceAPI:
                     "change_percent": result['change_percent'],
                     "previous_close": result['previous_close'],
                 }
-                self._set_cache(cache_key, result_data, ttl)
+                self._cache.set(cache_key, result_data, ttl)
                 return result_data
         except asyncio.TimeoutError:
             logger.debug(f"AkShare ETF API timeout for {code}")
@@ -2362,7 +2436,7 @@ class ETFPriceAPI:
 
         # 所有数据源都失败，缓存失败结果（短时间）
         logger.warning(f"ETF {code} 数据获取失败（所有数据源均不可用）")
-        self._set_cache(cache_key, None, 10)  # 失败结果缓存 10 秒
+        self._cache.set(cache_key, None, 10)  # 失败结果缓存 10 秒
         return None
 
     async def __aenter__(self):
@@ -2391,9 +2465,8 @@ class MacroIndicatorAPI:
 
     def __init__(self):
         self.session = None
-        self._cache = {}
-        self._cache_ts = 0.0
-        self._cache_ttl = 300  # 5分钟缓存
+        self._cache = TtlCache(default_ttl=300, maxsize=16)  # 5分钟缓存
+        self._rate_limiter_group = RateLimiterGroup(max_concurrent=3, min_interval=0.3)
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
@@ -2407,10 +2480,10 @@ class MacroIndicatorAPI:
 
     async def get_macro_indicators(self) -> Dict[str, Optional[float]]:
         """获取宏观指标 (DXY, VIX, US10Y, TIPS, Breakeven)"""
-        import time
         now = time.time()
-        if self._cache and (now - self._cache_ts) < self._cache_ttl:
-            return self._cache
+        cached = self._cache.get("macro")
+        if cached:
+            return cached
 
         macro = {}
 
@@ -2429,14 +2502,12 @@ class MacroIndicatorAPI:
         if macro.get("us10y") is not None and macro.get("tips") is not None:
             macro["breakeven"] = round(macro["us10y"] - macro["tips"], 4)
 
-        self._cache = macro
-        self._cache_ts = time.time()
+        self._cache.set("macro", macro)
         return macro
 
     async def _fetch_akshare_bond_rate(self) -> Dict:
         """Source 1a: AkShare bond_zh_us_rate — US10Y（中国直连）"""
-        result = {}
-        try:
+        def _sync():
             import akshare as ak
             df = ak.bond_zh_us_rate()
             if df is not None and not df.empty:
@@ -2444,24 +2515,25 @@ class MacroIndicatorAPI:
                 for col in df.columns:
                     if '10' in str(col) and '美' in str(col):
                         try:
-                            result["us10y"] = round(float(last[col]), 4)
+                            return {"us10y": round(float(last[col]), 4)}
                         except (ValueError, TypeError):
                             pass
-                        break
+            return {}
+        try:
+            return await asyncio.to_thread(_sync)
         except Exception as e:
             logger.debug(f"AkShare bond_zh_us_rate failed: {e}")
-        return result
+            return {}
 
     async def _fetch_akshare_futures_spot(self) -> Dict:
         """Source 1b: AkShare futures_hq_spot — DXY + VIX（新浪外盘期货实时行情）"""
-        result = {}
-        try:
+        def _sync():
             import akshare as ak
             df = ak.futures_hq_spot()
             if df is None or df.empty:
-                return result
+                return {}
 
-            # DXY — 美元指数（USDX）
+            result = {}
             dxy_row = df[df["symbol"].str.upper().isin(self._DXY_SYMBOLS)]
             if not dxy_row.empty:
                 try:
@@ -2469,16 +2541,18 @@ class MacroIndicatorAPI:
                 except (ValueError, TypeError, KeyError):
                     pass
 
-            # VIX — 恐慌指数
             vix_row = df[df["symbol"].str.upper().isin(self._VIX_SYMBOLS)]
             if not vix_row.empty:
                 try:
                     result["vix"] = round(float(vix_row.iloc[0]["current_price"]), 2)
                 except (ValueError, TypeError, KeyError):
                     pass
+            return result
+        try:
+            return await asyncio.to_thread(_sync)
         except Exception as e:
             logger.debug(f"AkShare futures_hq_spot failed: {e}")
-        return result
+            return {}
 
     async def _fetch_fred_yfinance(self, existing: Dict) -> Dict:
         """Source 2: FRED DFII10 (TIPS) + yFinance 补漏 DXY/VIX/US10Y"""
@@ -2488,18 +2562,22 @@ class MacroIndicatorAPI:
         need_us10y = not existing.get("us10y")
 
         if need_dxy or need_vix or need_us10y:
-            try:
+            def _sync_yf():
                 import yfinance as yf
+                r = {}
                 for sym, key in [("DX-Y.NYB", "dxy"), ("^VIX", "vix"), ("^TNX", "us10y")]:
                     if (key == "dxy" and need_dxy) or (key == "vix" and need_vix) or (key == "us10y" and need_us10y):
                         try:
                             t = yf.Ticker(sym)
                             h = t.history(period="1d")
                             if not h.empty:
-                                result[key] = round(float(h['Close'].iloc[-1]), 4)
+                                r[key] = round(float(h['Close'].iloc[-1]), 4)
                         except Exception:
                             pass
-            except ImportError:
+                return r
+            try:
+                result.update(await asyncio.to_thread(_sync_yf))
+            except Exception:
                 pass
 
         # FRED DFII10 for TIPS
@@ -2507,24 +2585,27 @@ class MacroIndicatorAPI:
             try:
                 await self._ensure_session()
                 url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DFII10"
-                async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                    if resp.status == 200:
-                        text = await resp.text()
-                        lines = [l for l in text.strip().split('\n') if l and not l.startswith('date')]
-                        if lines:
-                            last = lines[-1].split(',')
-                            if len(last) >= 2 and last[1].strip():
-                                result["tips"] = round(float(last[1].strip()), 4)
+                async with self._rate_limiter_group.limit(url):
+                    async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                        if resp.status == 200:
+                            text = await resp.text()
+                            lines = [l for l in text.strip().split('\n') if l and not l.startswith('date')]
+                            if lines:
+                                last = lines[-1].split(',')
+                                if len(last) >= 2 and last[1].strip():
+                                    result["tips"] = round(float(last[1].strip()), 4)
             except Exception:
                 pass
         return result
 
     async def _fetch_tip_etf(self) -> Dict:
         """Source 3: TIP ETF SEC yield（TIPS 最终兜底，偏高~0.6%）"""
-        try:
+        def _sync():
             import yfinance as yf
             t = yf.Ticker("TIP")
-            info = t.info
+            return t.info
+        try:
+            info = await asyncio.to_thread(_sync)
             sy = info.get("yield") or info.get("trailingAnnualDividendYield")
             if sy:
                 return {"tips": round(float(sy) * 100, 4)}
@@ -2599,6 +2680,14 @@ class MarketDataService:
         await self.etf_price_api._close_session()
         await self.bond_index_api._close_session()
         await self.macro_indicator_api._close_session()
+
+    def clear_cache(self):
+        """清除所有 API 类的内存缓存"""
+        for api in [self.stock_price_api, self.fund_price_api, self.index_price_api,
+                    self.bond_index_api, self.global_index_api, self.etf_price_api,
+                    self.macro_indicator_api]:
+            if hasattr(api, '_cache'):
+                api._cache.clear()
 
 
 # ==================== 单例实例 ====================

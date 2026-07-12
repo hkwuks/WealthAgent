@@ -52,12 +52,11 @@ def _generate_au_contracts(count: int = 6) -> list[str]:
         if quarter_months[idx] <= month and y == year:
             idx += 1
             continue
-        # CTP 合约代码大写
-        ym = f"AU{y % 100:02d}{quarter_months[idx]:02d}"
+        ym = f"au{y % 100:02d}{quarter_months[idx]:02d}"
         contracts.append(ym)
         idx += 1
 
-    return contracts if contracts else [f"AU{year % 100:02d}{quarter_months[-1]:02d}"]
+    return contracts if contracts else [f"au{year % 100:02d}{quarter_months[-1]:02d}"]
 
 
 class CtpConfig:

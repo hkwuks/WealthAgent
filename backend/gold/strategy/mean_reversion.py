@@ -87,14 +87,6 @@ class MeanReversionStrategy(StrategyBase):
                                  self.position_size, reason="ATR止损", bar_datetime=dt)
                 self._position = 0
 
-    def reset_for_signal(self):
-        """重置持仓状态 — 信号生成模式只看当前bar是否满足入场条件
-        保留已计算的K线历史，仅清空持仓状态和信号列表。
-        """
-        self._position = 0
-        self._entry_price = 0
-        self._signals = []
-
     def _calc_bollinger(self):
         if len(self._bars) < self.boll_period:
             return None, None, None

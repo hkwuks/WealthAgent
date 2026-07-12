@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional, Tuple
+from pathlib import Path
 from datetime import datetime
 from backend.models import (
     Holding,
@@ -14,7 +15,7 @@ from backend.market_data import (
 )
 from loguru import logger
 
-logger.add("./logs/fund_valuation.log", encoding="utf-8")
+logger.add(str(Path(__file__).parent.parent / "logs" / "fund_valuation.log"), encoding="utf-8")
 
 
 
