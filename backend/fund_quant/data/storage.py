@@ -77,9 +77,12 @@ def init_db():
 
         CREATE TABLE IF NOT EXISTS fund_type_defaults (
             fund_type TEXT PRIMARY KEY,
-            mgmt_fee_default REAL,
-            custody_fee_default REAL,
-            sub_fee_default REAL
+            sub_fee REAL DEFAULT 0.015,
+            mgmt_fee REAL DEFAULT 0.015,
+            custody_fee REAL DEFAULT 0.0025,
+            c_class_service_fee REAL DEFAULT 0.004,
+            redemption_tiers_json TEXT DEFAULT '{"7": 1.5, "30": 0.75, "365": 0.5, "730": 0.25}',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS signals (
@@ -134,6 +137,43 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_signals_created ON signals(created_at);
         CREATE INDEX IF NOT EXISTS idx_backtest_strategy ON backtest_results(strategy_name);
         """)
+
+        # 兼容存量数据库：删除旧列，添加新列
+        _OLD_FEE_COLS = ["mgmt_fee_default", "custody_fee_default", "sub_fee_default"]
+        for col in _OLD_FEE_COLS:
+            try:
+                conn.execute(f"ALTER TABLE fund_type_defaults DROP COLUMN {col}")
+            except Exception:
+                pass
+
+        _NEW_FEE_COLS = {
+            "sub_fee": "REAL DEFAULT 0.015",
+            "mgmt_fee": "REAL DEFAULT 0.015",
+            "custody_fee": "REAL DEFAULT 0.0025",
+            "c_class_service_fee": "REAL DEFAULT 0.004",
+            "redemption_tiers_json": "TEXT DEFAULT '{\"7\": 1.5, \"30\": 0.75, \"365\": 0.5, \"730\": 0.25}'",
+        }
+        for col, col_type in _NEW_FEE_COLS.items():
+            try:
+                conn.execute(f"ALTER TABLE fund_type_defaults ADD COLUMN {col} {col_type}")
+            except Exception:
+                pass
+
+        # 写入默认费率数据
+        conn.executemany("""
+            INSERT OR IGNORE INTO fund_type_defaults
+            (fund_type, sub_fee, mgmt_fee, custody_fee, c_class_service_fee, redemption_tiers_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, [
+            ("equity", 0.015, 0.015, 0.0025, 0.004, '{"7":1.5,"30":0.75,"365":0.5,"730":0.25,"999999":0}'),
+            ("index", 0.010, 0.005, 0.0010, 0.0025, '{"7":1.5,"30":0.75,"365":0.5,"730":0.25,"999999":0}'),
+            ("balanced", 0.012, 0.012, 0.0020, 0.0035, '{"7":1.5,"30":0.75,"365":0.5,"730":0.25,"999999":0}'),
+            ("bond", 0.008, 0.006, 0.0015, 0.0025, '{"7":1.5,"30":0.75,"365":0.5,"730":0.25,"999999":0}'),
+            ("money", 0.0, 0.003, 0.0005, 0.0025, '{"7":0,"30":0,"365":0,"730":0,"999999":0}'),
+            ("qdii", 0.015, 0.015, 0.0025, 0.004, '{"7":1.5,"30":0.75,"365":0.5,"730":0.25,"999999":0}'),
+            ("commodity", 0.010, 0.010, 0.0020, 0.0035, '{"7":1.5,"30":0.75,"365":0.5,"730":0.25,"999999":0}'),
+            ("fof", 0.012, 0.010, 0.0020, 0.0035, '{"7":1.5,"30":0.75,"365":0.5,"730":0.25,"999999":0}'),
+        ])
 
 
 # ═══════════════════════════════════════════
@@ -278,6 +318,29 @@ def get_funds_by_type(fund_type: str) -> list[str]:
             (fund_type,)
         ).fetchall()
         return [r["fund_code"] for r in rows]
+
+
+def get_fee_rates(fund_type: str) -> Optional[dict]:
+    """查询某基金类型的费率配置
+
+    Args:
+        fund_type: FundType 枚举值字符串
+
+    Returns:
+        dict 包含 sub_fee/mgmt_fee/custody_fee/c_class_service_fee/redemption_tiers
+        或 None（未找到）
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM fund_type_defaults WHERE fund_type = ?",
+            (fund_type,)
+        ).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        if result.get("redemption_tiers_json"):
+            result["redemption_tiers"] = json.loads(result["redemption_tiers_json"])
+        return result
 
 
 # ═══════════════════════════════════════════

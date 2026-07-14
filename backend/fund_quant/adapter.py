@@ -13,53 +13,43 @@ from core import (
     Signal, Direction, Fill,
     DataFeed, FundNavPoint, Bar,
 )
+from backend.fund_quant.data.storage import get_fee_rates
 
 
 class FundCostModel(CostModel):
-    """基金费率模型
+    """基金费率模型 — 费率从 DB 读取，DB 无数据时回退静态默认值"""
 
-    申购费按金额比例，赎回费按持有天数阶梯，管理费+托管费年化日提。
-    A/C份额区分，FOF双重费率穿透，分红税。
-    """
-
-    # ── 费率表 ──
-    SUB_RATES = {
-        "stock": 0.015, "hybrid": 0.015, "bond": 0.008,
-        "index": 0.010, "qdii": 0.015, "money": 0.0, "fof": 0.012,
-    }
-    MGMT_RATES = {
-        "stock": 0.015, "hybrid": 0.012, "bond": 0.006,
-        "index": 0.005, "qdii": 0.015, "money": 0.003, "fof": 0.010,
-    }
-    CUSTODY_RATES = {
-        "stock": 0.0025, "hybrid": 0.0020, "bond": 0.0015,
-        "index": 0.0010, "qdii": 0.0025, "money": 0.0005, "fof": 0.0020,
-    }
-    # 赎回费率阶梯: {持有天数上限: 费率%}
-    REDEMPTION_TIERS = {
-        7: 1.50,       # <7天: 1.5%
-        30: 0.75,      # 7-30天: 0.75%
-        365: 0.50,     # 30天-1年: 0.5%
-        730: 0.25,     # 1-2年: 0.25%
-        999999: 0.0,   # >2年: 0%
+    # 兜底默认值（DB 无数据时使用）
+    _FALLBACK = {
+        "sub_fee": 0.015, "mgmt_fee": 0.015, "custody_fee": 0.0025,
+        "c_class_service_fee": 0.004,
+        "redemption_tiers": {7: 1.50, 30: 0.75, 365: 0.50, 730: 0.25, 999999: 0.0},
     }
 
-    def __init__(self, fund_type: str = "stock",
-                 subscription_rate: Optional[float] = None,
-                 management_rate: Optional[float] = None,
-                 custody_rate: Optional[float] = None,
+    def __init__(self, fund_type: str = "equity",
                  is_c_class: bool = False,
                  fof_underlying_fee: float = 0.0,
                  dividend_tax_short: float = 0.10,
                  dividend_tax_long: float = 0.0):
         self.fund_type = fund_type
-        self._sub_rate = subscription_rate or self.SUB_RATES.get(fund_type, 0.015)
-        self._mgmt_rate = management_rate or self.MGMT_RATES.get(fund_type, 0.015)
-        self._custody_rate = custody_rate or self.CUSTODY_RATES.get(fund_type, 0.0025)
         self._is_c_class = is_c_class
-        self._fof_underlying_fee = fof_underlying_fee  # FOF底层基金费率穿透
+        self._fof_underlying_fee = fof_underlying_fee
         self._div_tax_short = dividend_tax_short
         self._div_tax_long = dividend_tax_long
+        self._load_rates()
+
+    def _load_rates(self):
+        """从 DB 加载费率，失败时回退默认"""
+        rates = get_fee_rates(self.fund_type)
+        if rates is None:
+            rates = self._FALLBACK
+        self._sub_rate = rates.get("sub_fee", self._FALLBACK["sub_fee"])
+        self._mgmt_rate = rates.get("mgmt_fee", self._FALLBACK["mgmt_fee"])
+        self._custody_rate = rates.get("custody_fee", self._FALLBACK["custody_fee"])
+        self._c_service_fee = rates.get("c_class_service_fee",
+                                        self._FALLBACK["c_class_service_fee"])
+        self._redemption_tiers = rates.get("redemption_tiers",
+                                           self._FALLBACK["redemption_tiers"])
 
     def calc(self, signal: Signal, fill: Fill) -> float:
         """计算单笔交易综合成本
@@ -96,7 +86,7 @@ class FundCostModel(CostModel):
         if self._is_c_class:
             # C类持有超过阈值免赎回费
             return 0.0 if holding_days >= 30 else amount * 0.005
-        for limit, pct in sorted(self.REDEMPTION_TIERS.items()):
+        for limit, pct in sorted(self._redemption_tiers.items()):
             if holding_days < limit:
                 return amount * (pct / 100)
         return 0.0
@@ -132,7 +122,7 @@ class FundDomainAdapter(DomainAdapter):
 
     def create_cost_model(self, config: dict) -> CostModel:
         return FundCostModel(
-            fund_type=config.get("fund_type", "stock"),
+            fund_type=config.get("fund_type", "equity"),
         )
 
     def default_risk_checks(self) -> list[RiskCheck]:
@@ -291,7 +281,7 @@ def demo():
 
     adapter = FundDomainAdapter()
     assert adapter.name == "fund"
-    cost = adapter.create_cost_model({"fund_type": "stock"})
+    cost = adapter.create_cost_model({"fund_type": "equity"})
     signal = Signal(id="", strategy="test", symbol="000001",
                     direction=Direction.LONG, price=1.5, volume=10000)
     fill = Fill(order_id="o1", price=1.5, volume=10000)
