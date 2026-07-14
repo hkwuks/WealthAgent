@@ -259,6 +259,27 @@ def get_all_fund_codes() -> List[str]:
         return [r["fund_code"] for r in rows]
 
 
+def get_funds_by_type(fund_type: str) -> list[str]:
+    """按基金类型获取基金代码列表
+
+    Args:
+        fund_type: FundType 枚举值字符串，如 "equity", "bond"
+
+    Returns:
+        匹配该类型的基金代码列表
+
+    >>> codes = get_funds_by_type("bond")
+    >>> isinstance(codes, list)
+    True
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT fund_code FROM fund_metadata WHERE fund_type = ? ORDER BY fund_code",
+            (fund_type,)
+        ).fetchall()
+        return [r["fund_code"] for r in rows]
+
+
 # ═══════════════════════════════════════════
 # 信号操作
 # ═══════════════════════════════════════════

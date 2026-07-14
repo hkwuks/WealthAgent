@@ -9,6 +9,7 @@ from loguru import logger
 from ..core.errors import DataCollectionError
 from ..core.models import NavPoint, FundHolding, HoldingItem, FundMeta
 from ..core.config import fund_quant_settings
+from ..data.classifier import classify_fund_for_quant
 
 
 class FundDataCollector:
@@ -283,7 +284,7 @@ class FundDataCollector:
             info_dict = info.set_index("item")["value"].to_dict() if "item" in info.columns else {}
 
             meta.fund_name = info_dict.get("基金简称", "")
-            meta.fund_type = self._classify_fund_type(info_dict.get("基金类型", ""))
+            meta.fund_type = classify_fund_for_quant(info_dict.get("基金类型", ""), info_dict.get("基金简称", "")).value
 
             fee_str = info_dict.get("管理费率", "0")
             try:
@@ -313,18 +314,6 @@ class FundDataCollector:
             raise DataCollectionError("akshare not installed", fund_code)
         except Exception as e:
             raise DataCollectionError(str(e), fund_code)
-
-    @staticmethod
-    def _classify_fund_type(raw_type: str) -> str:
-        mapping = {
-            "股票": "stock", "混合": "hybrid", "债券": "bond",
-            "货币": "money", "指数": "index", "ETF": "etf",
-            "联接": "etf_link", "QDII": "qdii", "FOF": "fof",
-        }
-        for key, value in mapping.items():
-            if key in raw_type:
-                return value
-        return "hybrid"
 
     # ── 汇率数据采集 ──
 
