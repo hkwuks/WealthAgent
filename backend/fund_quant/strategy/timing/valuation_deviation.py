@@ -23,7 +23,7 @@ class ValuationDeviationStrategy(FundStrategyBase):
         "z_threshold": {"min": 1.0, "max": 3.0},
         "lookback_days": {"min": 20, "max": 126},
     }
-    applicable_fund_types = ["stock", "hybrid", "index"]
+    applicable_fund_types = ["equity", "index", "balanced", "qdii"]
     min_history_days = 60
 
     def on_evaluate(self, portfolio: Optional[Portfolio],

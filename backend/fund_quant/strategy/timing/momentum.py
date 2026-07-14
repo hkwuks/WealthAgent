@@ -24,7 +24,7 @@ class MomentumStrategy(FundStrategyBase):
         "buy_threshold": {"min": 0.01, "max": 0.1},
         "skip_days": {"min": 0, "max": 10},
     }
-    applicable_fund_types = ["stock", "hybrid", "index"]
+    applicable_fund_types = ["equity", "index", "balanced", "qdii"]
     min_history_days = 120
 
     def on_evaluate(self, portfolio: Optional[Portfolio],

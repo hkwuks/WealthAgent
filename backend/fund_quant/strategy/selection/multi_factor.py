@@ -30,7 +30,7 @@ class MultiFactorSelection(FundStrategyBase):
         "custom_weights": None,
         "min_factor_verdict": "usable",
     }
-    applicable_fund_types = ["stock", "hybrid", "bond", "index"]
+    applicable_fund_types = ["equity", "index", "balanced", "bond", "qdii"]
     min_history_days = 365
 
     def on_evaluate(self, portfolio: Optional[Portfolio],
@@ -43,6 +43,7 @@ class MultiFactorSelection(FundStrategyBase):
         from backend.core.factor import (
             FactorRegistry, EvaluationEngine, EvalConfig,
         )
+        from ...core.models import TYPE_COMPAT
         from ...data.storage import get_all_fund_codes, get_fund_meta, get_nav_history
 
         if params:
@@ -66,11 +67,14 @@ class MultiFactorSelection(FundStrategyBase):
             weights = self._compute_weights(active)
 
         # 3. 计算每只基金评分
+        filter_type = TYPE_COMPAT.get(fund_type, fund_type)  # 新/旧值统一
         fund_scores = []
         for code in candidates:
             meta = get_fund_meta(code)
-            if meta and meta.get("fund_type") != fund_type and fund_type != "all":
-                continue
+            if meta and filter_type != "all":
+                mt = TYPE_COMPAT.get(meta.get("fund_type", ""), meta.get("fund_type", ""))
+                if mt != filter_type:
+                    continue
 
             navs = get_nav_history(code)
             if len(navs) < 60:
