@@ -56,7 +56,7 @@ class MultiFactorSelection(FundStrategyBase):
                     "top_n": top_n, "rankings": [], "total_candidates": 0}
 
         # 1. 获取因子评价结果
-        active = self._load_active_factors(candidates)
+        active = self._load_active_factors(candidates, fund_type=fund_type)
         if not active:
             logger.warning("没有通过评价的可用因子，回退等权")
             return self._fallback_screen(fund_type, top_n)
@@ -137,8 +137,9 @@ class MultiFactorSelection(FundStrategyBase):
             "rankings": rankings,
         }
 
-    def _load_active_factors(self, symbols: list[str]) -> list[tuple]:
-        """加载经过IC评价的可用因子"""
+    def _load_active_factors(self, symbols: list[str],
+                              fund_type: str | None = None) -> list[tuple]:
+        """加载经过IC评价的可用因子，支持按基金类型过滤"""
         from backend.core.factor import FactorRegistry, EvaluationEngine, EvalConfig
 
         from datetime import date, timedelta
@@ -155,6 +156,10 @@ class MultiFactorSelection(FundStrategyBase):
 
         active = []
         for meta in FactorRegistry.list(domain="fund"):
+            # 按基金类型过滤因子
+            if fund_type and meta.fund_types:
+                if fund_type not in meta.fund_types:
+                    continue
             try:
                 f_cls = FactorRegistry.get(meta.name)
                 f = f_cls()
