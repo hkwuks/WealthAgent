@@ -11,7 +11,7 @@ from loguru import logger
 
 from ..fund_quant.core.models import (
     FundSignal, FundQuantResult, BacktestConfig, BacktestResult,
-    RiskMetrics, CostModelConfig, FusionSignal,
+    RiskMetrics, CostModelConfig, FusionSignal, TYPE_COMPAT,
 )
 from ..fund_quant.core.enums import SignalType, Direction
 from ..fund_quant.data.storage import (
@@ -24,6 +24,8 @@ from ..fund_quant.signal.output import signal_output_service
 from ..fund_quant.risk.metrics import risk_metrics_calculator
 
 router = APIRouter(prefix="/fund-quant", tags=["基金量化"])
+
+# TYPE_COMPAT 定义在 backend.fund_quant.core.models 中
 
 
 # ── 请求/响应模型 ──
@@ -104,9 +106,19 @@ async def timing_evaluate(req: TimingRequest):
     if not nav_data:
         raise HTTPException(status_code=404, detail=f"基金 {req.fund_code} 净值数据不足")
 
-    # 并行运行所有择时策略
+    # 获取基金类型（兼容旧值映射）
+    fund_meta = await asyncio.to_thread(get_fund_meta, req.fund_code)
+    db_type = (fund_meta or {}).get("fund_type", "")
+    fund_type = TYPE_COMPAT.get(db_type, db_type)
+
+    # 并行运行所有匹配的择时策略
     registry = StrategyRegistry()
-    timing_strategies = await asyncio.to_thread(registry.list_by_type, "timing")
+    all_timing = await asyncio.to_thread(registry.list_by_type, "timing")
+
+    # 按基金类型过滤策略
+    matched = [s for s in all_timing
+               if not s["applicable_fund_types"]
+               or fund_type in s["applicable_fund_types"]]
 
     # 从数据库获取净值序列用于策略计算
     nav_values = [r.get("nav", 0) for r in nav_data if r.get("nav")]
@@ -127,7 +139,7 @@ async def timing_evaluate(req: TimingRequest):
             logger.warning(f"择时策略 [{s_info['name']}] 评估异常: {e}")
             return []
 
-    tasks = [run_strategy(s) for s in timing_strategies]
+    tasks = [run_strategy(s) for s in matched]
     results = await asyncio.gather(*tasks)
     all_signals = [s for sublist in results for s in sublist]
 
@@ -139,9 +151,10 @@ async def timing_evaluate(req: TimingRequest):
         "data": {
             "fund_code": req.fund_code,
             "fund_name": nav_data[0].get("fund_name", req.fund_code),
+            "fund_type": fund_type,
+            "strategies_run": len(matched),
             "nav_count": len(nav_values),
             "date_range": f"{dates[0]} ~ {dates[-1]}" if len(dates) >= 2 else dates[0] if dates else None,
-            "strategies_run": len([t for t in results if t]),
             "signals": [s.model_dump() for s in all_signals],
             "fusion_signal": fusion.model_dump() if fusion else None,
         },
@@ -178,7 +191,23 @@ async def selection_screen(req: SelectionRequest):
     """基金筛选"""
     from ..fund_quant.strategy.selection.multi_factor import MultiFactorSelection
     strategy = MultiFactorSelection()
-    result = await asyncio.to_thread(partial(strategy.screen, fund_type=req.fund_type, top_n=req.top_n, params=req.params))
+
+    # 兼容旧值映射
+    fund_type = TYPE_COMPAT.get(req.fund_type, req.fund_type)
+
+    # 校验请求的 fund_type 是否在策略适用范围内
+    if fund_type not in strategy.applicable_fund_types:
+        # commodity/fof 等无 selection 策略的类型 → 返回空结果而非 400
+        return {"success": True, "data": {
+            "strategy": strategy.strategy_name,
+            "fund_type": fund_type,
+            "top_n": req.top_n,
+            "rankings": [],
+            "total_candidates": 0,
+            "message": f"所选类型 '{fund_type}' 暂不支持 selection 策略",
+        }}
+
+    result = await asyncio.to_thread(partial(strategy.screen, fund_type=fund_type, top_n=req.top_n, params=req.params))
     return {"success": True, "data": result}
 
 

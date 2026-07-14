@@ -17,7 +17,7 @@ class InterestRateStrategy(FundStrategyBase):
         "momentum_threshold": 0.05,
         "yield_source": "10y_cgb",
     }
-    applicable_fund_types = ["bond"]
+    applicable_fund_types = ["bond", "balanced", "qdii"]
     min_history_days = 60
 
     def on_evaluate(self, portfolio: Optional[Portfolio],

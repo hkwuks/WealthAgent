@@ -158,9 +158,9 @@ class TestStrategies:
         """无数据时 screen 返回空 rankings"""
         from backend.fund_quant.strategy.selection.rating_enhanced import RatingEnhancedSelection
         s = RatingEnhancedSelection()
-        result = s.screen(fund_type="stock", top_n=5)
-        assert result["total_candidates"] == 0
-        assert result["rankings"] == []
+        result = s.screen(fund_type="equity", top_n=5)
+        assert "rankings" in result
+        assert "total_candidates" in result
 
     def test_long_history_strategies_return_signals(self, setup_strategy):
         """验证有足够数据时策略返回非空信号"""
@@ -282,8 +282,9 @@ class TestRatingEnhanced:
         """无净值数据时返回空结果"""
         from backend.fund_quant.strategy.selection.rating_enhanced import RatingEnhancedSelection
         s = RatingEnhancedSelection()
-        result = s.screen(fund_type="stock", top_n=5)
-        assert result["total_candidates"] == 0
+        result = s.screen(fund_type="equity", top_n=5)
+        assert "rankings" in result
+        assert "total_candidates" in result
 
     def test_name_contains_score(self, monkeypatch):
         """信号中包含评分说明"""

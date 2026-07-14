@@ -5,6 +5,14 @@ from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
 from .enums import SignalType, Direction, FundType, StrategyType
 
+# 新旧 FundType 兼容映射：前端/K线/DB 数据可能传旧值
+TYPE_COMPAT = {
+    "stock": "equity",
+    "hybrid": "equity",
+    "etf": "index",
+    "etf_link": "index",
+}
+
 
 # ═══════════════════════════════════════════
 # 策略上下文
@@ -115,7 +123,7 @@ class RiskCheckResult(BaseModel):
 
 class CostModelConfig(BaseModel):
     """费率模型配置"""
-    fund_type: str = "stock"
+    fund_type: str = "equity"
     subscription_fee_tiers: Dict[str, float] = Field(
         default_factory=lambda: {
             "stock": 0.015,

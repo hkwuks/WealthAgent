@@ -22,7 +22,7 @@ class RatingEnhancedSelection(FundStrategyBase):
         "z_deviation_threshold": 1.5,
         "min_history_days": 60,
     }
-    applicable_fund_types = ["stock", "hybrid", "bond", "index"]
+    applicable_fund_types = ["equity", "index", "balanced", "bond"]
     min_history_days = 365
 
     # ── 评级归一化 ──────────────────────────────────────────────
@@ -118,6 +118,7 @@ class RatingEnhancedSelection(FundStrategyBase):
         Returns:
             dict: 含 rankings 列表的筛选结果
         """
+        from ...core.models import TYPE_COMPAT
         from ...data.storage import get_all_fund_codes, get_fund_meta, get_nav_history
 
         if params:
@@ -130,11 +131,14 @@ class RatingEnhancedSelection(FundStrategyBase):
                     "top_n": top_n, "rankings": [], "total_candidates": 0}
 
         # ── 逐基金计算原始因子 ──────────────────────────────
+        filter_type = TYPE_COMPAT.get(fund_type, fund_type)  # 新/旧值统一
         fund_data = []
         for code in candidates:
             meta = get_fund_meta(code)
-            if meta and meta.get("fund_type") != fund_type and fund_type != "all":
-                continue
+            if meta and filter_type != "all":
+                mt = TYPE_COMPAT.get(meta.get("fund_type", ""), meta.get("fund_type", ""))
+                if mt != filter_type:
+                    continue
 
             navs = get_nav_history(code)
             if len(navs) < self.params["min_history_days"]:
