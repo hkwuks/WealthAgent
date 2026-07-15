@@ -84,7 +84,11 @@ class ValuationDeviationStrategy(FundStrategyBase):
             SignalType.TIMING, fund_code, direction,
             confidence=confidence, reason=reason,
             valuation_deviation=float(z_score),
-            suggested_pct=0.1 if direction == Direction.BUY else -0.1,
+            suggested_pct=self.calc_suggested_pct(
+                z_score, buy_threshold=-z_threshold,
+                sell_threshold=z_threshold, max_pct=0.15,
+                nav_values=nav_values,
+            ),
         )]
 
 
