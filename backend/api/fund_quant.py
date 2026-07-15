@@ -143,8 +143,14 @@ async def timing_evaluate(req: TimingRequest):
     results = await asyncio.gather(*tasks)
     all_signals = [s for sublist in results for s in sublist]
 
-    # 融合信号
-    fusion = signal_fusion.fuse(all_signals) if all_signals else None
+    # 融合信号（balanced 基金按仓位加权，Phase 2 接入真实指数数据）
+    position_weights = None
+    if fund_type == "balanced" and len(nav_values) >= 60:
+        # ponytail: 仓位估算需要实时沪深300/中债指数数据，当前跳过
+        # 待 Phase 2 接入后在此处调用 estimate_position_ols()
+        pass
+    fusion = signal_fusion.fuse(all_signals, fund_type=fund_type,
+                                position_weights=position_weights) if all_signals else None
 
     return {
         "success": True,
