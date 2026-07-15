@@ -22,7 +22,7 @@ class RatingEnhancedSelection(FundStrategyBase):
         "z_deviation_threshold": 1.5,
         "min_history_days": 60,
     }
-    applicable_fund_types = ["equity", "index", "balanced", "bond"]
+    applicable_fund_types = ["equity", "balanced"]
     min_history_days = 365
 
     # ── 评级归一化 ──────────────────────────────────────────────
