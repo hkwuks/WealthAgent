@@ -44,9 +44,12 @@ def classify_qdii_subtype(fund_name: str) -> str:
 
     Returns:
         "index" — QDII 指数基金（跟踪特定海外指数）
+        "bond"  — QDII 债券基金
         "equity" — QDII 主动管理基金（默认）
     """
     name = fund_name or ""
+    if "债券" in name:
+        return "bond"
     index_kw = ["指数", "ETF", "纳斯达克", "标普", "恒生", "港股通",
                 "美股指数", "日经", "富时", "德国DAX"]
     for kw in index_kw:
