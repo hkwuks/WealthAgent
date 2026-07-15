@@ -120,6 +120,19 @@ async def timing_evaluate(req: TimingRequest):
                if not s["applicable_fund_types"]
                or fund_type in s["applicable_fund_types"]]
 
+    # QDII 子类过滤：根据底层资产类型排除不适用的策略
+    if fund_type == "qdii":
+        from ..fund_quant.data.classifier import classify_qdii_subtype
+        fund_name = nav_data[0].get("fund_name", "") if nav_data else ""
+        qdii_sub = classify_qdii_subtype(fund_name)
+        if qdii_sub == "index":
+            # QDII 指数基金：不跑估值偏差
+            matched = [s for s in matched if s["name"] != "valuation_deviation"]
+        elif qdii_sub == "bond":
+            # QDII 债券基金：只跑利率敏感度 + 汇率动量
+            matched = [s for s in matched
+                       if s["name"] in ("interest_rate", "fx_momentum")]
+
     # 从数据库获取净值序列用于策略计算
     nav_values = [r.get("nav", 0) for r in nav_data if r.get("nav")]
     dates = [r["date"] for r in nav_data if r.get("nav")]

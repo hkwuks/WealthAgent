@@ -58,3 +58,9 @@ def test_qdii_subtype():
     assert classify_qdii_subtype("某标普500ETF") == "index"
     assert classify_qdii_subtype("某优选精选混合") == "equity"
     assert classify_qdii_subtype("") == "equity"
+
+
+def test_qdii_subtype_bond():
+    """QDII 债券子类"""
+    assert classify_qdii_subtype("某海外债券基金") == "bond"
+    assert classify_qdii_subtype("某亚洲债券ETF") == "bond"  # 债券优先于 ETF
