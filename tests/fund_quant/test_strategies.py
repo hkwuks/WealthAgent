@@ -492,3 +492,25 @@ class TestSignalFusion:
         result = self.fusion.fuse(sigs)
         assert result.direction == Direction.BUY  # 择时覆盖
         assert result.override_reason is not None
+
+    def test_balanced_weighted_fusion(self):
+        """balanced 基金按仓位权重加权"""
+        sigs = [
+            FundSignal(signal_id="s1", fund_code="000001", fund_name="Test",
+                       signal_type=SignalType.TIMING, direction=Direction.BUY,
+                       strategy_name="momentum", confidence=1.0, reason="momentum_buy"),
+            FundSignal(signal_id="s2", fund_code="000001", fund_name="Test",
+                       signal_type=SignalType.TIMING, direction=Direction.SELL,
+                       strategy_name="interest_rate", confidence=1.0, reason="rate_sell"),
+        ]
+        # 80% 权益 → momentum 占优 → BUY
+        r1 = self.fusion.fuse(sigs, fund_type="balanced",
+                               position_weights={"equity_ratio": 0.8, "bond_ratio": 0.2})
+        assert r1.direction == Direction.BUY, f"got {r1.direction}"
+        # 80% 债券 → interest_rate 占优 → SELL
+        r2 = self.fusion.fuse(sigs, fund_type="balanced",
+                               position_weights={"equity_ratio": 0.2, "bond_ratio": 0.8})
+        assert r2.direction == Direction.SELL, f"got {r2.direction}"
+        # 不传 fund_type 时不加权
+        r3 = self.fusion.fuse(sigs)
+        assert r3 is not None
