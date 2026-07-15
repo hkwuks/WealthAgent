@@ -1,4 +1,4 @@
-"""策略引擎测试：注册表 + 10个策略 + 信号融合"""
+"""策略引擎测试：注册表 + 11个策略 + 信号融合"""
 
 import sys; sys.path.insert(0, 'backend/..')
 import pytest
@@ -13,12 +13,12 @@ class TestStrategyRegistry:
     def setup_method(self):
         self.registry = StrategyRegistry()
 
-    def test_all_9_strategies_registered(self):
+    def test_all_strategies_registered(self):
         strategies = self.registry.list_strategies()
         names = {s["name"] for s in strategies}
         expected = {
             "valuation_deviation", "momentum", "interest_rate",
-            "fx_momentum", "smart_dca", "gold_momentum", "multi_factor",
+            "fx_momentum", "smart_dca", "gold_momentum", "credit_spread", "multi_factor",
             "rating_enhanced", "risk_parity", "black_litterman",
         }
         assert names == expected, f"缺失: {expected - names}, 多余: {names - expected}"
@@ -28,7 +28,7 @@ class TestStrategyRegistry:
         by_type = {}
         for s in strategies:
             by_type.setdefault(s["type"], []).append(s["name"])
-        assert len(by_type.get("timing", [])) == 6, "择时策略应为6个"
+        assert len(by_type.get("timing", [])) == 7, "择时策略应为7个"
         assert len(by_type.get("selection", [])) == 2, "选基策略应为2个"
         assert len(by_type.get("allocation", [])) == 2, "配置策略应为2个"
 
@@ -137,6 +137,39 @@ class TestStrategies:
         assert len(signals) >= 1
         sig = signals[0]
         assert sig.signal_type == SignalType.TIMING
+
+    def test_credit_spread_no_data(self, setup_strategy):
+        """信用利差策略无数据时返回 HOLD"""
+        s = setup_strategy("credit_spread")
+        signals = s.on_evaluate(None, None)
+        assert len(signals) >= 1
+        assert signals[0].direction == Direction.HOLD
+
+    def test_credit_spread_with_data(self, setup_strategy):
+        """信用利差策略有数据时生成买卖信号"""
+        s = setup_strategy("credit_spread")
+        # 注入利差走阔数据（模拟信用恶化）
+        spread_widening = [0.01 * i for i in range(30)]
+        s._state["credit_spread_history"] = spread_widening
+        signals = s.on_evaluate(None, None)
+        assert len(signals) >= 1
+        assert signals[0].direction == Direction.SELL
+
+        # 利差收窄 → BUY
+        s2 = setup_strategy("credit_spread")
+        spread_narrowing = [0.03 - 0.001 * i for i in range(30)]
+        s2._state["credit_spread_history"] = spread_narrowing
+        signals2 = s2.on_evaluate(None, None)
+        assert signals2[0].direction == Direction.BUY
+
+    def test_credit_spread_curve_signal(self, setup_strategy):
+        """收益率曲线信号独立工作"""
+        s = setup_strategy("credit_spread")
+        # 无利差数据，但有曲线数据
+        curve_steepening = [0.005 * i for i in range(30)]
+        s._state["yield_curve_history"] = curve_steepening
+        signals = s.on_evaluate(None, None)
+        assert len(signals) >= 1
 
     def test_multi_factor(self):
         registry = StrategyRegistry()
