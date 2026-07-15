@@ -1,4 +1,4 @@
-"""策略引擎测试：注册表 + 11个策略 + 信号融合"""
+"""策略引擎测试：注册表 + 12个策略 + 信号融合"""
 
 import sys; sys.path.insert(0, 'backend/..')
 import pytest
@@ -19,7 +19,7 @@ class TestStrategyRegistry:
         expected = {
             "valuation_deviation", "momentum", "interest_rate",
             "fx_momentum", "smart_dca", "gold_momentum", "credit_spread", "multi_factor",
-            "rating_enhanced", "risk_parity", "black_litterman",
+            "rating_enhanced", "index_selection", "risk_parity", "black_litterman",
         }
         assert names == expected, f"缺失: {expected - names}, 多余: {names - expected}"
 
@@ -29,7 +29,7 @@ class TestStrategyRegistry:
         for s in strategies:
             by_type.setdefault(s["type"], []).append(s["name"])
         assert len(by_type.get("timing", [])) == 7, "择时策略应为7个"
-        assert len(by_type.get("selection", [])) == 2, "选基策略应为2个"
+        assert len(by_type.get("selection", [])) == 3, "选基策略应为3个"
         assert len(by_type.get("allocation", [])) == 2, "配置策略应为2个"
 
     def test_get_strategy_returns_instance(self):
@@ -202,6 +202,50 @@ class TestStrategies:
         result = s.screen(fund_type="equity", top_n=5)
         assert "rankings" in result
         assert "total_candidates" in result
+
+    def test_index_selection_registered(self, setup_strategy):
+        """指数基金选基策略注册正确"""
+        s = setup_strategy("index_selection")
+        assert s.strategy_name == "index_selection"
+        assert "index" in s.applicable_fund_types
+
+    def test_index_selection_empty_db(self):
+        """无数据时返回空结果"""
+        from backend.fund_quant.strategy.selection.index_selection import IndexSelectionStrategy
+        s = IndexSelectionStrategy()
+        result = s.screen(fund_type="index", top_n=5)
+        assert "rankings" in result
+
+    def test_index_selection_scoring(self, monkeypatch):
+        """有模拟数据时评分排序"""
+        from backend.fund_quant.strategy.selection.index_selection import IndexSelectionStrategy
+
+        mock_funds = ["000001", "110011"]
+        mock_metas = {
+            "000001": {"fund_code": "000001", "fund_name": "IndexA",
+                       "fund_type": "index", "management_fee": 0.005,
+                       "custody_fee": 0.001, "scale": 50_000_000_000},
+            "110011": {"fund_code": "110011", "fund_name": "IndexB",
+                       "fund_type": "index", "management_fee": 0.008,
+                       "custody_fee": 0.002, "scale": 100_000_000},
+        }
+
+        def mock_get_all():
+            return mock_funds
+        def mock_get_meta(code):
+            return mock_metas.get(code)
+        def mock_get_nav_history(code):
+            return [{"nav": 1.0 + i * 0.001} for i in range(120)]
+
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_all_fund_codes", mock_get_all)
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_fund_meta", mock_get_meta)
+        monkeypatch.setattr("backend.fund_quant.data.storage.get_nav_history", mock_get_nav_history)
+
+        s = IndexSelectionStrategy()
+        result = s.screen(fund_type="index", top_n=5)
+        assert result["total_candidates"] == 2
+        # IndexA（低费率+大规模）总分应高于 IndexB
+        assert result["rankings"][0]["fund_code"] == "000001"
 
     def test_long_history_strategies_return_signals(self, setup_strategy):
         """验证有足够数据时策略返回非空信号"""

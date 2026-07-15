@@ -11,5 +11,6 @@ from .timing import commodity
 from .timing import credit_spread
 from .selection import multi_factor
 from .selection import rating_enhanced
+from .selection import index_selection
 from .allocation import risk_parity
 from .allocation import black_litterman
