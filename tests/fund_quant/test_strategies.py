@@ -1,4 +1,4 @@
-"""策略引擎测试：注册表 + 9个策略 + 信号融合"""
+"""策略引擎测试：注册表 + 10个策略 + 信号融合"""
 
 import sys; sys.path.insert(0, 'backend/..')
 import pytest
@@ -18,7 +18,7 @@ class TestStrategyRegistry:
         names = {s["name"] for s in strategies}
         expected = {
             "valuation_deviation", "momentum", "interest_rate",
-            "fx_momentum", "smart_dca", "multi_factor",
+            "fx_momentum", "smart_dca", "gold_momentum", "multi_factor",
             "rating_enhanced", "risk_parity", "black_litterman",
         }
         assert names == expected, f"缺失: {expected - names}, 多余: {names - expected}"
@@ -28,7 +28,7 @@ class TestStrategyRegistry:
         by_type = {}
         for s in strategies:
             by_type.setdefault(s["type"], []).append(s["name"])
-        assert len(by_type.get("timing", [])) == 5, "择时策略应为5个"
+        assert len(by_type.get("timing", [])) == 6, "择时策略应为6个"
         assert len(by_type.get("selection", [])) == 2, "选基策略应为2个"
         assert len(by_type.get("allocation", [])) == 2, "配置策略应为2个"
 
@@ -129,6 +129,14 @@ class TestStrategies:
         s._state["nav_values"] = vals
         signals = s.on_evaluate(None, None)
         assert len(signals) >= 1
+
+    def test_gold_momentum(self, setup_strategy):
+        """黄金动量策略能生成信号"""
+        s = setup_strategy("gold_momentum")
+        signals = s.on_evaluate(None, None)
+        assert len(signals) >= 1
+        sig = signals[0]
+        assert sig.signal_type == SignalType.TIMING
 
     def test_multi_factor(self):
         registry = StrategyRegistry()
