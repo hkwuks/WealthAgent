@@ -5,6 +5,7 @@ import asyncio
 from functools import partial
 from datetime import date, datetime
 from typing import Optional, List
+import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from loguru import logger
@@ -17,11 +18,16 @@ from ..fund_quant.core.enums import SignalType, Direction
 from ..fund_quant.data.storage import (
     init_db, get_signals, save_backtest_result, get_backtest_result,
     list_backtest_results, get_nav_history, get_fund_meta, save_nav_points,
+    get_index_nav_prices,
+    get_bond_yield_data,
+    get_etf_market_data,
+    compute_tracking_errors,
 )
 from ..fund_quant.data.collector import fund_data_collector
 from ..fund_quant.data.quality import data_quality_checker
 from ..fund_quant.signal.output import signal_output_service
 from ..fund_quant.risk.metrics import risk_metrics_calculator
+from ..fund_quant.analysis.position_estimator import estimate_position_ols
 
 router = APIRouter(prefix="/fund-quant", tags=["基金量化"])
 
@@ -97,6 +103,14 @@ async def get_strategy_params(name: str):
 # ── 择时评估 ──
 
 @router.post("/timing/evaluate")
+def _prices_to_returns(prices: list[float]) -> list[float]:
+    """价格序列 → 日收益率序列"""
+    arr = np.array(prices, dtype=np.float64)
+    if len(arr) < 2:
+        return []
+    return ((arr[1:] - arr[:-1]) / arr[:-1]).tolist()
+
+
 async def timing_evaluate(req: TimingRequest):
     """单基金择时评估 (并行运行所有择时策略)"""
     from ..fund_quant.strategy.base import StrategyRegistry
@@ -137,6 +151,13 @@ async def timing_evaluate(req: TimingRequest):
     nav_values = [r.get("nav", 0) for r in nav_data if r.get("nav")]
     dates = [r["date"] for r in nav_data if r.get("nav")]
 
+    # 债券/平衡基金：注入信用利差和收益率曲线数据
+    yield_data = {}
+    if fund_type in ("bond", "balanced", "qdii"):
+        yield_data = await asyncio.to_thread(get_bond_yield_data)
+        if yield_data:
+            logger.debug(f"{req.fund_code}: 已加载收益率数据 ({len(yield_data.get('credit_spread_history',[]))} 期)")
+
     async def run_strategy(s_info: dict) -> List[FundSignal]:
         strategy = await asyncio.to_thread(registry.get_strategy, s_info["name"])
         if not strategy:
@@ -146,6 +167,10 @@ async def timing_evaluate(req: TimingRequest):
             strategy._state["nav_values"] = nav_values
             strategy._state["nav_dates"] = dates
             strategy._state["fund_code"] = req.fund_code
+            # 注入信用利差/收益率数据（信用利差策略和利率策略需要）
+            if yield_data:
+                strategy._state["credit_spread_history"] = yield_data.get("credit_spread_history", [])
+                strategy._state["yield_curve_history"] = yield_data.get("yield_curve_history", [])
             result = await asyncio.to_thread(strategy.on_evaluate, None, None)
             return result or []
         except Exception as e:
@@ -156,12 +181,22 @@ async def timing_evaluate(req: TimingRequest):
     results = await asyncio.gather(*tasks)
     all_signals = [s for sublist in results for s in sublist]
 
-    # 融合信号（balanced 基金按仓位加权，Phase 2 接入真实指数数据）
+    # 融合信号（balanced 基金按仓位加权）
     position_weights = None
     if fund_type == "balanced" and len(nav_values) >= 60:
-        # ponytail: 仓位估算需要实时沪深300/中债指数数据，当前跳过
-        # 待 Phase 2 接入后在此处调用 estimate_position_ols()
-        pass
+        fund_returns = _prices_to_returns(nav_values)
+        index_data = {}
+        for key in ("csi300", "cbi"):
+            prices = await asyncio.to_thread(get_index_nav_prices, key)
+            if prices and len(prices) >= len(nav_values):
+                aligned = prices[-len(nav_values):]
+                index_data[key] = _prices_to_returns(aligned)
+        if len(index_data) == 2 and len(fund_returns) >= 20:
+            position_weights = await asyncio.to_thread(
+                estimate_position_ols, fund_returns, index_data
+            )
+            if position_weights:
+                logger.info(f"Balanced {req.fund_code}: 仓位估算={position_weights}")
     fusion = signal_fusion.fuse(all_signals, fund_type=fund_type,
                                 position_weights=position_weights) if all_signals else None
 
@@ -213,6 +248,30 @@ async def selection_screen(req: SelectionRequest):
 
     # 兼容旧值映射
     fund_type = TYPE_COMPAT.get(req.fund_type, req.fund_type)
+
+    # 指数基金使用独立的 5 维度评分策略
+    if fund_type == "index":
+        from ..fund_quant.strategy.selection.index_selection import IndexSelectionStrategy
+        idx_strategy = IndexSelectionStrategy()
+        # 注入 ETF 市场数据
+        etf_data = await asyncio.to_thread(get_etf_market_data)
+        if etf_data:
+            idx_strategy._state["liquidity_data"] = etf_data.get("liquidity", {})
+            idx_strategy._state["premium_vol_data"] = etf_data.get("premium", {})
+        # 对每个候选基金计算跟踪误差
+        from ..fund_quant.data.storage import get_all_fund_codes, get_nav_history
+        tracking = {}
+        for code in (get_all_fund_codes() or []):
+            navs = await asyncio.to_thread(get_nav_history, code, limit=120)
+            nav_vals = [r["nav"] for r in navs if r.get("nav")]
+            te = await asyncio.to_thread(compute_tracking_errors, code, nav_vals)
+            if te is not None:
+                tracking[code] = te
+        idx_strategy._state["tracking_errors"] = tracking
+
+        result = await asyncio.to_thread(
+            partial(idx_strategy.screen, fund_type="index", top_n=req.top_n, params=req.params))
+        return {"success": True, "data": result}
 
     # 校验请求的 fund_type 是否在策略适用范围内
     if fund_type not in strategy.applicable_fund_types:
@@ -729,4 +788,61 @@ async def factor_register():
     return {"success": True, "data": {
         "registered": count_after - count_before,
         "total": count_after,
+    }}
+
+
+# ═══════════════════════════════════════════
+# FOF 穿透分析
+# ═══════════════════════════════════════════
+
+class FofPenetrateRequest(BaseModel):
+    fund_code: str
+    nav_limit: int = 200
+
+
+@router.post("/fof/penetrate")
+async def fof_penetrate(req: FofPenetrateRequest):
+    """FOF 穿透分析 — 估算底层资产配置
+
+    基于子类先验 + OLS 净值回归，生成穿透后权益/固收仓位。
+    """
+    from ..fund_quant.analysis.fof_penetration import analyze_fof_penetration_full
+    from ..fund_quant.data.storage import get_nav_history, get_fund_meta
+
+    # 获取基金元数据（含 fund_type 原始分类）
+    meta = await asyncio.to_thread(get_fund_meta, req.fund_code)
+    if not meta:
+        raise HTTPException(404, detail=f"基金 {req.fund_code} 未找到")
+    fund_type_raw = meta.get("fund_type", "")
+
+    # 获取净值
+    nav_data = await asyncio.to_thread(get_nav_history, req.fund_code,
+                                        limit=req.nav_limit)
+    nav_values = [r["nav"] for r in nav_data if r.get("nav")]
+
+    result = await asyncio.to_thread(
+        analyze_fof_penetration_full,
+        req.fund_code, fund_type_raw, nav_values,
+    )
+
+    # 尝试用定期报告数据增强（Level 5）
+    if result.confidence < 0.9:
+        try:
+            from ..fund_quant.analysis.report_parser import enrich_fof_penetration_with_report
+            result = await asyncio.to_thread(
+                enrich_fof_penetration_with_report, req.fund_code, result)
+        except Exception as e:
+            logger.debug(f"FOF {req.fund_code} 报告解析跳过: {e}")
+
+    return {"success": True, "data": {
+        "fund_code": result.fund_code,
+        "fund_type": result.fund_type,
+        "subtype": result.subtype,
+        "equity_ratio": result.equity_ratio,
+        "bond_ratio": result.bond_ratio,
+        "method": result.method,
+        "confidence": result.confidence,
+        "ols_r_squared": result.ols_r_squared,
+        "nav_count": len(nav_values),
+        "details": result.details,
     }}

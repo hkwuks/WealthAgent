@@ -110,12 +110,12 @@ class GoldMomentumStrategy(FundStrategyBase):
             None: COT 数据不可用
         """
         try:
-            from backend.gold.factors.sentiment import COTSignalFactor
-            from datetime import date, timedelta
-            # ponytail: 简化实现 — 直接返回 None 表示 COT 数据暂不可用
-            # Phase 2 接入 gold 数据网关后补全
+            from backend.fund_quant.data.storage import get_gold_cot_signal
+            cot = get_gold_cot_signal()
+            if cot:
+                return cot["signal"]
             return None
-        except ImportError:
+        except Exception:
             return None
 
 
