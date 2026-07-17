@@ -20,6 +20,7 @@ class TestStrategyRegistry:
             "valuation_deviation", "momentum", "interest_rate",
             "fx_momentum", "smart_dca", "gold_momentum", "credit_spread", "multi_factor",
             "rating_enhanced", "index_selection", "risk_parity", "black_litterman",
+            "etf_global_rotation", "all_weather",
         }
         assert names == expected, f"缺失: {expected - names}, 多余: {names - expected}"
 
@@ -30,7 +31,7 @@ class TestStrategyRegistry:
             by_type.setdefault(s["type"], []).append(s["name"])
         assert len(by_type.get("timing", [])) == 7, "择时策略应为7个"
         assert len(by_type.get("selection", [])) == 3, "选基策略应为3个"
-        assert len(by_type.get("allocation", [])) == 2, "配置策略应为2个"
+        assert len(by_type.get("allocation", [])) == 4, "配置策略应为4个（risk_parity, black_litterman, etf_global_rotation, all_weather）"
 
     def test_get_strategy_returns_instance(self):
         s = self.registry.get_strategy("momentum")
