@@ -302,12 +302,45 @@ async def selection_score(req: SelectionRequest):
 
 @router.post("/allocation/optimize")
 async def allocation_optimize(req: AllocationRequest):
-    """组合配置优化"""
+    """组合配置优化（默认使用风险平价策略）
+
+    可选策略: risk_parity, black_litterman, etf_global_rotation, all_weather
+    通过 req.params.strategy 指定。
+    """
     try:
-        from ..fund_quant.strategy.allocation.risk_parity import RiskParityStrategy
-        strategy = RiskParityStrategy()
-        result = await asyncio.to_thread(partial(strategy.optimize, fund_codes=req.fund_codes, params=req.params))
+        strategy_name = req.params.get("strategy", "risk_parity")
+        from ..fund_quant.strategy.base import StrategyRegistry
+        registry = StrategyRegistry()
+        strategy_cls = registry.get_strategy_class(strategy_name)
+        if not strategy_cls:
+            raise HTTPException(status_code=404, detail=f"策略 {strategy_name} 未找到")
+
+        strategy = strategy_cls()
+        result = await asyncio.to_thread(
+            partial(strategy.optimize, fund_codes=req.fund_codes, params=req.params))
         return {"success": True, "data": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/allocation/run/{strategy_name}")
+async def allocation_run(strategy_name: str, req: AllocationRequest):
+    """运行指定的配置策略（显式路由）"""
+    try:
+        from ..fund_quant.strategy.base import StrategyRegistry
+        registry = StrategyRegistry()
+        strategy_cls = registry.get_strategy_class(strategy_name)
+        if not strategy_cls:
+            raise HTTPException(status_code=404, detail=f"策略 {strategy_name} 未找到")
+
+        strategy = strategy_cls()
+        result = await asyncio.to_thread(
+            partial(strategy.optimize, fund_codes=req.fund_codes, params=req.params))
+        return {"success": True, "data": result}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

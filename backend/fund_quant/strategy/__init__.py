@@ -14,3 +14,5 @@ from .selection import rating_enhanced
 from .selection import index_selection
 from .allocation import risk_parity
 from .allocation import black_litterman
+from .allocation import etf_rotation
+from .allocation import all_weather
