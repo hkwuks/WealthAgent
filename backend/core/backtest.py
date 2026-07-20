@@ -713,6 +713,7 @@ class BacktestEngine:
 
         report.final_equity = report.equity_curve[-1]["equity"]
         report.total_return = (report.final_equity / self.config.initial_capital) - 1
+        self._captured_signals = _signals_published
         bus.publish(Event(EventType.ENGINE_STOP, {"reason": "completed"}, source="engine"))
         return report
 
