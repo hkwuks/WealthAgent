@@ -214,6 +214,7 @@ def _make_wrapper(name: str) -> type:
             "strategy_type": getattr(old_cls, "strategy_type", ""),
             "description": getattr(old_cls, "description", ""),
             "default_params": getattr(old_cls, "default_params", {}),
+            "param_ranges": getattr(old_cls, "param_ranges", {}),
             "__init__": lambda self, oc=old_cls: [
                 GoldStrategyAdapter.__init__(self),
                 setattr(self, '_old', oc()),
@@ -241,6 +242,14 @@ class AdaptedTrendFollowing(Strategy):
         "donchian_entry": 20,
         "donchian_exit": 10,
         "position_size": 1,
+    }
+    param_ranges = {
+        "ma_periods": [[3, 5, 8, 10], [5, 10, 20, 30], [5, 20, 60], [10, 20, 50, 100]],
+        "atr_period": [7, 10, 14, 20, 30],
+        "atr_stop_multiplier": [1.0, 1.5, 2.0, 2.5, 3.0, 4.0],
+        "donchian_entry": [10, 15, 20, 25, 30],
+        "donchian_exit": [5, 10, 15, 20],
+        "position_size": [1, 2, 3, 5],
     }
 
     def __init__(self):
