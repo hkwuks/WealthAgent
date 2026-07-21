@@ -188,6 +188,8 @@ class BacktestConfig(BaseModel):
     rebalance_freq: str = "monthly"
     cost_model: CostModelConfig = Field(default_factory=CostModelConfig)
     subscription_discount: float = Field(default=0.10, ge=0.0, le=1.0)
+    dividend_policy: str = "reinvest"  # "reinvest" or "cash"
+    dividend_calendar: Dict[str, Dict[str, float]] = Field(default_factory=dict)  # {date_str: {fund_code: div_per_share}}
     params: dict = Field(default_factory=dict)
 
 
