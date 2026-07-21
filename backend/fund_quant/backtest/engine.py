@@ -115,6 +115,31 @@ class FundBacktester:
                 config=config, status="failed",
             )
 
+        # ── 数据质量检查 ──
+        total_trading_days = len(trading_days)
+        for code, records in self._nav_data.items():
+            coverage = len(records) / max(total_trading_days, 1)
+            if coverage < self._config.min_nav_records_pct:
+                logger.warning(f"低数据质量: {code} 数据覆盖率 {coverage:.1%} < {self._config.min_nav_records_pct:.0%}")
+
+        # 根据 gap_policy 填充缺口
+        fill_policy = getattr(self._config, 'nav_gap_policy', 'forward_fill')
+        if fill_policy == 'forward_fill':
+            for code in self._nav_data:
+                records = self._nav_data[code]
+                filled = []
+                last_nav = None
+                records_by_date = {r["date"]: r for r in records}
+                for d in trading_days:
+                    if d in records_by_date:
+                        last_nav = records_by_date[d]["nav"]
+                        filled.append(records_by_date[d])
+                    elif last_nav is not None:
+                        filled.append({"date": d, "nav": last_nav})
+                self._nav_data[code] = filled
+                # 重建 code_nav_map 包含填充的缺口
+                code_nav_map[code] = {r["date"]: r for r in filled}
+
         # ── 逐日推进 ──
         for idx, day_str in enumerate(trading_days):
             current_date = datetime.strptime(day_str, "%Y-%m-%d").date()
