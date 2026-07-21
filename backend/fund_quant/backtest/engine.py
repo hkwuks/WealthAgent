@@ -12,6 +12,7 @@ from ..core.models import (
 from ..core.enums import Direction, FundType
 from .cost_model import FundCostModel
 from .redemption_gate import RedemptionGate
+from .liquidation import LiquidationHandler
 
 
 class SimPosition:
@@ -67,6 +68,7 @@ class FundBacktester:
         self._cost_model = FundCostModel()
         self._redemption_gate = RedemptionGate()
         self._dividend_calendar: dict = {}
+        self._liquidation = LiquidationHandler()
 
     def run(self, config: BacktestConfig,
             nav_data: Optional[Dict[str, List[dict]]] = None) -> BacktestResult:
@@ -140,6 +142,9 @@ class FundBacktester:
                 # 重建 code_nav_map 包含填充的缺口
                 code_nav_map[code] = {r["date"]: r for r in filled}
 
+        # 注册有效基金到清盘检测器
+        self._liquidation._active_funds = set(config.fund_codes)
+
         # ── 逐日推进 ──
         for idx, day_str in enumerate(trading_days):
             current_date = datetime.strptime(day_str, "%Y-%m-%d").date()
@@ -156,6 +161,9 @@ class FundBacktester:
 
             # ── 步骤 2.5: 处理分红事件 ──
             self._process_dividends(day_str, current_date, code_nav_map)
+
+            # ── 步骤 2.6: 检查清盘/合并 ──
+            self._check_liquidations(day_str, current_date)
 
             # ── 步骤3: 记录权益曲线 ──
             total = self._calc_total_value(prev_date_str, code_nav_map)
@@ -300,6 +308,27 @@ class FundBacktester:
                 pos.shares = dividend_handler.reinvest(result, pos.shares)
             else:  # cash
                 self._cash += dividend_handler.cash_dividend(result)
+
+    def _check_liquidations(self, day_str: str, current_date: date):
+        """检查清盘/合并事件并处理持仓"""
+        for code in list(self._positions.keys()):
+            event = self._liquidation.check(code, current_date)
+            if event is None:
+                continue
+            pos = self._positions[code]
+            if event.reason == "基金清盘":
+                self._cash += pos.shares * pos.buy_nav
+                del self._positions[code]
+                logger.warning(f"基金清盘: {code} 于 {day_str}")
+            elif event.reason == "基金合并" and event.merge_target:
+                new_code = event.merge_target
+                ratio = event.merge_ratio or 1.0
+                new_shares = pos.shares * ratio
+                self._positions[new_code] = SimPosition(
+                    new_code, new_shares, pos.buy_date, pos.buy_nav,
+                )
+                del self._positions[code]
+                logger.info(f"基金合并: {code} -> {new_code}, 比例 {ratio}")
 
     def _calc_total_value(self, date_str: str,
                            code_nav_map: Dict[str, Dict[str, dict]]) -> float:
