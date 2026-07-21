@@ -190,6 +190,8 @@ class BacktestConfig(BaseModel):
     subscription_discount: float = Field(default=0.10, ge=0.0, le=1.0)
     dividend_policy: str = "reinvest"  # "reinvest" or "cash"
     dividend_calendar: Dict[str, Dict[str, float]] = Field(default_factory=dict)  # {date_str: {fund_code: div_per_share}}
+    nav_gap_policy: str = "forward_fill"  # forward_fill / skip / interpolate / raise
+    min_nav_records_pct: float = 0.8  # 低于此比例时标记低数据质量
     params: dict = Field(default_factory=dict)
 
 
