@@ -102,7 +102,6 @@ async def get_strategy_params(name: str):
 
 # ── 择时评估 ──
 
-@router.post("/timing/evaluate")
 def _prices_to_returns(prices: list[float]) -> list[float]:
     """价格序列 → 日收益率序列"""
     arr = np.array(prices, dtype=np.float64)
@@ -111,6 +110,7 @@ def _prices_to_returns(prices: list[float]) -> list[float]:
     return ((arr[1:] - arr[:-1]) / arr[:-1]).tolist()
 
 
+@router.post("/timing/evaluate")
 async def timing_evaluate(req: TimingRequest):
     """单基金择时评估 (并行运行所有择时策略)"""
     from ..fund_quant.strategy.base import StrategyRegistry
@@ -261,7 +261,8 @@ async def selection_screen(req: SelectionRequest):
         # 对每个候选基金计算跟踪误差
         from ..fund_quant.data.storage import get_all_fund_codes, get_nav_history
         tracking = {}
-        for code in (get_all_fund_codes() or []):
+        all_codes = await asyncio.to_thread(get_all_fund_codes) or []
+        for code in all_codes:
             navs = await asyncio.to_thread(get_nav_history, code, limit=120)
             nav_vals = [r["nav"] for r in navs if r.get("nav")]
             te = await asyncio.to_thread(compute_tracking_errors, code, nav_vals)
