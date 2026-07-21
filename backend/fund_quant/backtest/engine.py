@@ -69,6 +69,7 @@ class FundBacktester:
             nav_data: Optional[Dict[str, List[dict]]] = None) -> BacktestResult:
         """事件驱动回测主循环"""
         self._config = config
+        self._dividend_calendar = config.dividend_calendar
         self._cash = config.initial_capital
         self._positions = {}
         self._pending_orders = []
@@ -124,6 +125,9 @@ class FundBacktester:
 
             # ── 步骤2: 更新持仓市值 (用T-1日净值, 策略只能看到T-1日数据) ──
             self._update_positions_value(prev_date_str, code_nav_map)
+
+            # ── 步骤 2.5: 处理分红事件 ──
+            self._process_dividends(day_str, current_date, code_nav_map)
 
             # ── 步骤3: 记录权益曲线 ──
             total = self._calc_total_value(prev_date_str, code_nav_map)
@@ -228,6 +232,36 @@ class FundBacktester:
                     break
             if nav_data:
                 pos.buy_nav = nav_data.get("nav", pos.buy_nav)
+
+    def _process_dividends(self, day_str: str, current_date: date,
+                           code_nav_map: Dict[str, Dict[str, dict]]):
+        """处理分红事件"""
+        from .dividend import dividend_handler
+        if self._dividend_calendar is None:
+            self._dividend_calendar = {}
+        fund_divs = self._dividend_calendar.get(day_str, {})
+        for fund_code, div_per_share in fund_divs.items():
+            pos = self._positions.get(fund_code)
+            if pos is None:
+                continue
+            nav_data = None
+            for cn, nm in code_nav_map.items():
+                if cn == fund_code:
+                    nav_data = nm.get(day_str)
+                    break
+            if nav_data is None:
+                continue
+            nav = nav_data.get("nav", 0)
+            if nav <= 0:
+                continue
+            result = dividend_handler.process_dividend(
+                nav=nav, dividend_per_share=div_per_share,
+                shares=pos.shares, holding_days=pos.holding_days(current_date),
+            )
+            if self._config.dividend_policy == "reinvest":
+                pos.shares = dividend_handler.reinvest(result, pos.shares)
+            else:  # cash
+                self._cash += dividend_handler.cash_dividend(result)
 
     def _calc_total_value(self, date_str: str,
                            code_nav_map: Dict[str, Dict[str, dict]]) -> float:
