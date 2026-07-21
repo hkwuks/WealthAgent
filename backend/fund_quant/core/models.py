@@ -185,6 +185,7 @@ class BacktestConfig(BaseModel):
     initial_capital: float = 100000.0
     rebalance_freq: str = "monthly"
     cost_model: CostModelConfig = Field(default_factory=CostModelConfig)
+    subscription_discount: float = Field(default=0.10, ge=0.0, le=1.0)
     params: dict = Field(default_factory=dict)
 
 
