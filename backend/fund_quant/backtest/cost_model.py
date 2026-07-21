@@ -12,6 +12,11 @@ class FundCostModel:
 
     def __init__(self, config: Optional[CostModelConfig] = None):
         self.config = config or CostModelConfig()
+        self._discount: float = 0.10  # 默认 1 折
+
+    def set_discount(self, discount: float):
+        """设置申购费折扣系数 (0.0 ~ 1.0)"""
+        self._discount = max(0.0, min(1.0, discount))
 
     # ── 申购费率 ──
 
@@ -22,7 +27,7 @@ class FundCostModel:
                                   self.config.subscription_fee_tiers.get(fund_type, 0.015))
         if self.config.max_subscription_amount and amount > self.config.max_subscription_amount:
             rate = min(rate, 0.001)  # 大额申购折扣
-        return rate * amount
+        return rate * amount * self._discount
 
     # ── 赎回费率（区分A/C类） ──
 

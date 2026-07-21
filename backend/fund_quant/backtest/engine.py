@@ -10,6 +10,7 @@ from ..core.models import (
     FundSignal, CostModelConfig, NavPoint, InformationSet,
 )
 from ..core.enums import Direction, FundType
+from .cost_model import FundCostModel
 
 
 class SimPosition:
@@ -62,6 +63,7 @@ class FundBacktester:
         self._equity_curve: List[dict] = []
         self._config: Optional[BacktestConfig] = None
         self._nav_data: Dict[str, List[dict]] = {}
+        self._cost_model = FundCostModel()
 
     def run(self, config: BacktestConfig,
             nav_data: Optional[Dict[str, List[dict]]] = None) -> BacktestResult:
@@ -73,6 +75,9 @@ class FundBacktester:
         self._trade_log = []
         self._equity_curve = []
         self._nav_data = nav_data or {}
+
+        # 申购费折扣
+        self._cost_model.set_discount(config.subscription_discount)
 
         # 从数据库补全净值
         if not self._nav_data:
