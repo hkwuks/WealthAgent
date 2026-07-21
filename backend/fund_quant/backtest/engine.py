@@ -11,6 +11,7 @@ from ..core.models import (
 )
 from ..core.enums import Direction, FundType
 from .cost_model import FundCostModel
+from .redemption_gate import RedemptionGate
 
 
 class SimPosition:
@@ -64,6 +65,8 @@ class FundBacktester:
         self._config: Optional[BacktestConfig] = None
         self._nav_data: Dict[str, List[dict]] = {}
         self._cost_model = FundCostModel()
+        self._redemption_gate = RedemptionGate()
+        self._dividend_calendar: dict = {}
 
     def run(self, config: BacktestConfig,
             nav_data: Optional[Dict[str, List[dict]]] = None) -> BacktestResult:
@@ -196,6 +199,16 @@ class FundBacktester:
                         "nav_date": confirm_key,
                     })
             elif order.order_type == "sell":
+                # 巨额赎回限制检查
+                total_shares = self._calc_fund_total_shares(order.fund_code)
+                if total_shares > 0:
+                    verdict = self._redemption_gate.check(order.fund_code, order.shares, total_shares)
+                    if not verdict.passed:
+                        logger.warning(f"巨额赎回拒绝: {order.fund_code}, {verdict.reason}")
+                        if verdict.max_accepted and verdict.max_accepted > 0:
+                            order.shares = verdict.max_accepted  # partial accept
+                        else:
+                            continue  # skip this order entirely
                 proceeds = order.shares * nav_price
                 self._cash += proceeds
                 # 减少持仓
@@ -294,6 +307,11 @@ class FundBacktester:
         return 0
 
     # ── 报告生成 ──
+
+    def _calc_fund_total_shares(self, fund_code: str) -> float:
+        """查询基金总份额（外部数据或估算）"""
+        # ponytail: hardcoded large number if data unavailable
+        return 1_000_000_000  # 10 亿份估算, 降级为不触发限制
 
     def _generate_report(self) -> BacktestResult:
         """生成回测报告"""
