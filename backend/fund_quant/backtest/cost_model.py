@@ -1,6 +1,9 @@
 """费率模型 — 基金类型差异化 + C类份额 + FOF穿透 + 优先级"""
 
-from typing import Dict, Optional
+from __future__ import annotations
+
+from datetime import date
+from typing import Dict, Optional, Union, List, Tuple
 from ..core.models import CostModelConfig
 
 
@@ -18,13 +21,30 @@ class FundCostModel:
         """设置申购费折扣系数 (0.0 ~ 1.0)"""
         self._discount = max(0.0, min(1.0, discount))
 
+    # ── 历史费率解析 ──
+
+    def _resolve_rate(self, rates: Union[Dict[str, float], Dict[str, List[Tuple[str, float]]]],
+                       fund_type: str, as_of: date) -> float:
+        """从费率字典中查找指定日期对应的费率"""
+        entry = rates.get(fund_type, 0.0)
+        if isinstance(entry, (int, float)):
+            return float(entry)
+        # entry is List[Tuple[str, float]] — sorted by date, find applicable segment
+        sorted_periods = sorted(entry, key=lambda x: x[0])
+        for period_date_str, fee in reversed(sorted_periods):
+            period_date = date.fromisoformat(period_date_str)
+            if as_of >= period_date:
+                return float(fee)
+        return float(sorted_periods[0][1]) if sorted_periods else 0.0
+
     # ── 申购费率 ──
 
     def get_subscription_fee(self, fund_type: str, amount: float = 100000.0,
-                             fund_code: Optional[str] = None) -> float:
-        """获取申购费率（支持基金级覆盖）"""
+                             fund_code: Optional[str] = None,
+                             as_of: Optional[date] = None) -> float:
+        """获取申购费率（支持基金级覆盖和历史时间段）"""
         rate = self._type_or_meta(fund_type, fund_code, "subscription_fee",
-                                  self.config.subscription_fee_tiers.get(fund_type, 0.015))
+                                  self._resolve_rate(self.config.subscription_fee_tiers, fund_type, as_of or date.today()))
         if self.config.max_subscription_amount and amount > self.config.max_subscription_amount:
             rate = min(rate, 0.001)  # 大额申购折扣
         return rate * amount * self._discount
@@ -52,11 +72,11 @@ class FundCostModel:
 
     # ── 管理费 + 托管费 ──
 
-    def get_management_fee(self, fund_type: str) -> float:
-        return self.config.management_fee_rate.get(fund_type, 0.015)
+    def get_management_fee(self, fund_type: str, as_of: Optional[date] = None) -> float:
+        return self._resolve_rate(self.config.management_fee_rate, fund_type, as_of or date.today())
 
-    def get_custody_fee(self, fund_type: str) -> float:
-        return self.config.custody_fee_rate.get(fund_type, 0.002)
+    def get_custody_fee(self, fund_type: str, as_of: Optional[date] = None) -> float:
+        return self._resolve_rate(self.config.custody_fee_rate, fund_type, as_of or date.today())
 
     # ── 综合交易成本 ──
 

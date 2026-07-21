@@ -1,7 +1,9 @@
 """FundQuant 数据模型"""
 
+from __future__ import annotations
+
 from datetime import datetime, date
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union, Tuple
 from pydantic import BaseModel, Field
 from .enums import SignalType, Direction, FundType, StrategyType
 
@@ -124,7 +126,7 @@ class RiskCheckResult(BaseModel):
 class CostModelConfig(BaseModel):
     """费率模型配置"""
     fund_type: str = "equity"
-    subscription_fee_tiers: Dict[str, float] = Field(
+    subscription_fee_tiers: Union[Dict[str, float], Dict[str, List[Tuple[str, float]]]] = Field(
         default_factory=lambda: {
             "stock": 0.015,
             "hybrid": 0.015,
@@ -144,7 +146,7 @@ class CostModelConfig(BaseModel):
             9999: 0.0,
         }
     )
-    management_fee_rate: Dict[str, float] = Field(
+    management_fee_rate: Union[Dict[str, float], Dict[str, List[Tuple[str, float]]]] = Field(
         default_factory=lambda: {
             "stock": 0.015,
             "hybrid": 0.012,
@@ -163,7 +165,7 @@ class CostModelConfig(BaseModel):
     dividend_tax_holding_over_1y: float = 0.0   # ≥1年分红税
     max_subscription_amount: Optional[float] = None  # 大额申购限制
     max_redemption_amount: Optional[float] = None   # 大额赎回限制
-    custody_fee_rate: Dict[str, float] = Field(
+    custody_fee_rate: Union[Dict[str, float], Dict[str, List[Tuple[str, float]]]] = Field(
         default_factory=lambda: {
             "stock": 0.0025,
             "hybrid": 0.0020,
