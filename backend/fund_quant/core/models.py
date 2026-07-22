@@ -42,6 +42,7 @@ class FundDataPoint(BaseModel):
 class InformationSet(BaseModel):
     """可用信息集（前视偏差防护）"""
     nav_available_up_to: date
+    qdii_nav_available_up_to: Optional[date] = None  # None = 同 nav_available_up_to
     intraday_quotes_available: date
     holdings_disclosed_up_to: date
     holdings_effective_date: date
@@ -192,6 +193,7 @@ class BacktestConfig(BaseModel):
     dividend_calendar: Dict[str, Dict[str, float]] = Field(default_factory=dict)  # {date_str: {fund_code: div_per_share}}
     nav_gap_policy: str = "forward_fill"  # forward_fill / skip / interpolate / raise
     min_nav_records_pct: float = 0.8  # 低于此比例时标记低数据质量
+    qdii_fund_codes: List[str] = Field(default_factory=list)
     params: dict = Field(default_factory=dict)
 
 
