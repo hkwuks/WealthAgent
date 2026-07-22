@@ -170,8 +170,16 @@ class FundBacktester:
             self._equity_curve.append({"date": day_str, "total_value": round(total, 2)})
 
             # ── 步骤4: 策略评估 (严格基于T-1日信息集) ──
+            if self._config.qdii_fund_codes:
+                prev_idx = trading_days.index(prev_date_str)
+                qdii_prev_date_str = trading_days[prev_idx - 1] if prev_idx > 0 else prev_date_str
+                qdii_prev_date = datetime.strptime(qdii_prev_date_str, "%Y-%m-%d").date()
+            else:
+                qdii_prev_date = None
+
             info_set = InformationSet(
                 nav_available_up_to=prev_date,
+                qdii_nav_available_up_to=qdii_prev_date,
                 intraday_quotes_available=prev_date,
                 holdings_disclosed_up_to=prev_date,
                 holdings_effective_date=prev_date,
