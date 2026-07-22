@@ -13,6 +13,7 @@ from ..core.enums import Direction, FundType
 from .cost_model import FundCostModel
 from .redemption_gate import RedemptionGate
 from .liquidation import LiquidationHandler
+from .disclosure import DisclosureCalendar
 
 
 class SimPosition:
@@ -37,13 +38,19 @@ class SimPosition:
 class PendingOrder:
     """待确认申赎订单"""
     def __init__(self, fund_code: str, order_type: str, shares: float,
-                 submit_date: date, confirmation_delay: int = 1):
+                 submit_date: date, confirmation_delay: int = 1,
+                 target_fund_code: str = None,
+                 source_fund_type: str = None,
+                 target_fund_type: str = None):
         self.fund_code = fund_code
-        self.order_type = order_type  # buy / sell
+        self.order_type = order_type  # buy / sell / conversion
         self.shares = shares
         self.submit_date = submit_date
         self.confirmation_date = None
         self.confirmation_delay = confirmation_delay  # T+1 默认, QDII T+2
+        self.target_fund_code = target_fund_code
+        self.source_fund_type = source_fund_type
+        self.target_fund_type = target_fund_type
 
     def is_ready(self, current_date: date) -> bool:
         if self.confirmation_date is None:
@@ -69,6 +76,7 @@ class FundBacktester:
         self._redemption_gate = RedemptionGate()
         self._dividend_calendar: dict = {}
         self._liquidation = LiquidationHandler()
+        self._fund_type_map: Dict[str, str] = {}
 
     def run(self, config: BacktestConfig,
             nav_data: Optional[Dict[str, List[dict]]] = None) -> BacktestResult:
@@ -177,12 +185,16 @@ class FundBacktester:
             else:
                 qdii_prev_date = None
 
+            if not hasattr(self, '_disclosure_calendar'):
+                self._disclosure_calendar = DisclosureCalendar()
+            holdings_date = self._disclosure_calendar.get_available_as_of(current_date)
+
             info_set = InformationSet(
                 nav_available_up_to=prev_date,
                 qdii_nav_available_up_to=qdii_prev_date,
                 intraday_quotes_available=prev_date,
-                holdings_disclosed_up_to=prev_date,
-                holdings_effective_date=prev_date,
+                holdings_disclosed_up_to=holdings_date,
+                holdings_effective_date=holdings_date,
             )
             # 简化的策略评估：demo模式直接跳过实际策略调用
             # 真实使用中由外部传入
@@ -270,6 +282,88 @@ class FundBacktester:
                     "shares": order.shares,
                     "price": nav_price,
                     "proceeds": round(proceeds, 2),
+                    "nav_date": confirm_key,
+                })
+            elif order.order_type == "conversion":
+                # 基金转换 / 超级转换
+                pos = self._positions.get(order.fund_code)
+                if pos is None:
+                    still_pending.append(order)
+                    continue
+                if order.target_fund_code is None:
+                    continue
+
+                source_proceeds = order.shares * nav_price
+                amount = source_proceeds
+
+                cost_info = self._cost_model.calc_conversion_cost(
+                    order.fund_code, order.target_fund_code,
+                    order.source_fund_type or "stock",
+                    order.target_fund_type or "stock",
+                    amount,
+                )
+                conversion_fee = cost_info["conversion_fee"]
+                available = source_proceeds - conversion_fee
+
+                # 查找目标基金净值
+                target_nav_data = None
+                for cn, nm in code_nav_map.items():
+                    if cn == order.target_fund_code:
+                        target_nav_data = nm.get(confirm_key)
+                        break
+
+                if target_nav_data is None or target_nav_data.get("nav", 0) <= 0:
+                    still_pending.append(order)
+                    continue
+
+                target_nav = target_nav_data["nav"]
+                target_shares = available / target_nav if target_nav > 0 else 0
+
+                # 减少源基金持仓
+                remaining = pos.shares - order.shares
+                if remaining <= 0:
+                    del self._positions[order.fund_code]
+                else:
+                    sell_ratio = order.shares / pos.shares
+                    pos.cost *= (1 - sell_ratio)
+                    pos.shares = remaining
+
+                # 增加目标基金持仓
+                existing_target = self._positions.get(order.target_fund_code)
+                if existing_target:
+                    total_shares = existing_target.shares + target_shares
+                    total_cost = existing_target.cost + available
+                    avg_nav = total_cost / total_shares if total_shares > 0 else 0
+                    self._positions[order.target_fund_code] = SimPosition(
+                        order.target_fund_code, total_shares,
+                        existing_target.buy_date, avg_nav,
+                    )
+                else:
+                    self._positions[order.target_fund_code] = SimPosition(
+                        order.target_fund_code, target_shares,
+                        order.submit_date, target_nav,
+                    )
+
+                # 扣除现金（转换费从 proceeds 中已扣除）
+                self._cash += source_proceeds - available
+
+                self._trade_log.append({
+                    "date": current_date.isoformat(),
+                    "fund_code": order.fund_code,
+                    "action": "conversion_sell",
+                    "shares": order.shares,
+                    "price": nav_price,
+                    "proceeds": round(source_proceeds, 2),
+                    "nav_date": confirm_key,
+                })
+                self._trade_log.append({
+                    "date": current_date.isoformat(),
+                    "fund_code": order.target_fund_code,
+                    "action": "conversion_buy",
+                    "shares": round(target_shares, 4),
+                    "price": target_nav,
+                    "cost": round(available, 2),
+                    "conversion_fee": round(conversion_fee, 2),
                     "nav_date": confirm_key,
                 })
 
@@ -367,6 +461,66 @@ class FundBacktester:
         if pos:
             return pos.holding_days(current_date)
         return 0
+
+    # ── 基金转换支持 ──
+
+    def _get_fund_type(self, fund_code: str) -> str:
+        """获取基金类型，优先从meta数据"""
+        cached = self._fund_type_map.get(fund_code)
+        if cached:
+            return cached
+        try:
+            from ..data.storage import get_fund_meta
+            meta = get_fund_meta(fund_code)
+            if meta and meta.get("fund_type"):
+                self._fund_type_map[fund_code] = meta["fund_type"]
+                return meta["fund_type"]
+        except Exception:
+            pass
+        if self._config and fund_code in self._config.fund_codes:
+            fund_type = getattr(self._config, 'fund_type', None)
+            if fund_type:
+                self._fund_type_map[fund_code] = fund_type
+                return fund_type
+        # ponytail: default to stock when unknown
+        self._fund_type_map[fund_code] = "stock"
+        return "stock"
+
+    def _process_conversion(self, source_code: str, target_code: str,
+                            shares: float, current_date: date) -> bool:
+        """尝试使用基金转换路径。True=已使用转换，False=需回退到赎回+申购。"""
+        if source_code == target_code or shares <= 0:
+            return False
+        if source_code not in self._positions:
+            return False
+
+        source_type = self._get_fund_type(source_code)
+        target_type = self._get_fund_type(target_code)
+
+        # 估算转换金额（用持仓成本NAV近似）
+        pos = self._positions[source_code]
+        amount = shares * pos.buy_nav
+
+        cost_info = self._cost_model.calc_conversion_cost(
+            source_code, target_code, source_type, target_type, amount,
+        )
+
+        if cost_info["path"] != "conversion":
+            return False
+
+        # 创建转换订单（T+1确认）
+        order = PendingOrder(
+            fund_code=source_code,
+            order_type="conversion",
+            shares=shares,
+            submit_date=current_date,
+            confirmation_delay=1,
+            target_fund_code=target_code,
+            source_fund_type=source_type,
+            target_fund_type=target_type,
+        )
+        self._pending_orders.append(order)
+        return True
 
     # ── 报告生成 ──
 
