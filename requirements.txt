@@ -1,5 +1,5 @@
 # FastAPI 0.117+ resolves Starlette to versions containing security fixes.
-fastapi>=0.117,<1.0
+fastapi>=0.142.2,<1.0
 torch
 uvicorn[standard]
 pydantic
