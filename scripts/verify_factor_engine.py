@@ -34,7 +34,11 @@ def check_registry() -> int:
 
 
 def check_compute() -> None:
-    """每个因子在合成序列上应返回有限值。"""
+    """每个因子在合成序列上应返回有限值。
+
+    例外：需要 fund_metadata（规模/费率/经理任期/持仓）的因子在纯净值 feed 上
+    必然返回空 —— 这不是 bug，是数据依赖。把它们单列出来报告缺失，不算失败。
+    """
     from datetime import date
 
     # 用带波动的序列，避免单调序列让某些算子退化
@@ -42,15 +46,18 @@ def check_compute() -> None:
     steps = 1 + rng.normal(0, 0.01, 400)
     vals = list(300 * np.cumprod(steps))
 
+    NEEDS_META = {"fund_scale", "fee_rate", "fund_flow",
+                  "holding_concentration", "manager_tenure"}
+
     feed = NavFeed({"T": vals})
-    ok, fail = 0, []
+    ok, fail, skipped = 0, [], []
     for meta in FactorRegistry.list(domain="fund"):
         try:
             r = FactorRegistry.get(meta.name)().compute(
                 ["T"], date.today(), meta.params.get("lookback", 60), feed)
             v = r.get("T")
             if v is None or not np.isfinite(v):
-                fail.append((meta.name, "无值"))
+                (skipped if meta.name in NEEDS_META else fail).append((meta.name, "无值"))
                 continue
             nv = _squash(v, op_of(meta.name))
             if not (0 <= nv <= 1):
@@ -60,7 +67,9 @@ def check_compute() -> None:
         except Exception as e:
             fail.append((meta.name, f"{type(e).__name__}: {e}"))
 
-    print(f"✔ compute 通过 {ok} 个")
+    print(f"✔ compute 通过 {ok} 个" + (f"，{len(skipped)} 个需 metadata 暂缺" if skipped else ""))
+    if skipped:
+        print(f"  ⚠ 依赖 fund_metadata（表为空）: {', '.join(n for n, _ in skipped)}")
     if fail:
         for n, why in fail:
             print(f"  ✘ {n}: {why}")
@@ -69,7 +78,7 @@ def check_compute() -> None:
 
 def check_api() -> None:
     """暴露接口的结构必须匹配前端 FactorExposure.ts 的 FactorExposureData。"""
-    from backend.api.fund_quant import fund_factor_exposure
+    from backend.api.fund_quant import fund_factor_exposure, fund_factor_history
     from backend.fund_quant.data.storage import get_nav_history, get_conn
     import json
 
@@ -94,16 +103,34 @@ def check_api() -> None:
         assert k in d, f"缺少字段 {k}"
     assert len(d["factors"]) > 0, "因子列表为空"
 
+    n_pct = 0
     for name, item in d["factors"].items():
         for k in ("value", "weight", "rank_pct"):
             assert k in item, f"{name} 缺少 {k}"
         assert 0 <= item["value"] <= 1, f"{name} value 越界"
-        assert 0 <= item["rank_pct"] <= 100, f"{name} rank_pct 越界"
+        # rank_pct 允许为 None：同类池不足 8 只时前端整列隐藏，不能再填假数字
+        if item["rank_pct"] is not None:
+            assert 0 <= item["rank_pct"] <= 100, f"{name} rank_pct 越界"
+            n_pct += 1
+        assert 0 <= item["weight"] <= 1, f"{name} weight 越界"
 
     ws = sum(v["weight"] for v in d["factors"].values())
     assert abs(ws - 1.0) < 0.01, f"权重和 {ws:.4f} != 1"
-    print(f"✔ 暴露接口返回 {len(d['factors'])} 个因子，权重和 {ws:.4f}，"
-          f"总分 {d['total_score']}")
+    # 淘汰因子必须在结果里但权重为 0，否则说明研究报告没接入
+    n_dead = sum(1 for v in d["factors"].values() if v["weight"] == 0)
+    assert n_dead > 0, "没有权重为 0 的因子，研究结论未生效"
+    print(f"✔ 暴露接口 {len(d['factors'])} 因子（存活 {len(d['factors']) - n_dead} / "
+          f"淘汰 {n_dead}），有百分位 {n_pct}，权重和 {ws:.4f}，总分 {d['total_score']}")
+
+    # 历史曲线必须是真实回溯：各点值不能全相同
+    hist = asyncio.run(fund_factor_history(code, 12))
+    assert hist.get("success"), f"历史接口失败: {hist}"
+    pts = hist["data"]["points"]
+    assert len(pts) >= 6, f"历史点太少: {len(pts)}"
+    first, last = pts[0]["factors"], pts[-1]["factors"]
+    common = set(first) & set(last)
+    assert common and any(first[k] != last[k] for k in common), "历史因子值全程不变，as_of 未生效"
+    print(f"✔ 历史接口 {len(pts)} 个时点 × {len(hist['data']['series'])} 因子，首尾不同")
 
 
 def check_normalize() -> None:

@@ -1965,6 +1965,32 @@ th.sortable.sorted-desc::after { content: ' ↓'; opacity: 1; color: var(--prima
 .research-panel .research-scroll { max-height: 400px; overflow-y: auto; padding: 6px 10px; }
 .research-panel .research-section { padding: 3px 0; }
 .research-panel .research-section-title { font-size: 18px; font-weight: 600; color: var(--primary-color); margin-bottom: 4px; padding: 2px 0; border-bottom: 1px solid var(--border-light); }
+
+/* ── 因子暴露面板 ── */
+.fx-main-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.fx-radar-chart { height: 240px; }
+.fx-history-chart { height: 200px; }
+.fx-table-wrapper { max-height: 260px; overflow-y: auto; }
+.fx-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.fx-table th, .fx-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border-light);
+  text-align: left;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.fx-table th { color: var(--text-tertiary); font-weight: 600; position: sticky; top: 0;
+  background: var(--bg-secondary); text-transform: uppercase; letter-spacing: .2px; }
+.fx-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.fx-table .muted { color: var(--text-tertiary); }
+.fx-table tr.fx-dead { opacity: .45; }
+.fx-tag { font-size: 10px; padding: 0 3px; border-radius: 2px;
+  background: var(--bg-tertiary); color: var(--text-tertiary); }
+.fx-score-row { margin-top: 6px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.fx-pool-info { font-size: 11px; font-weight: 400; color: var(--text-tertiary); }
+.fx-empty { padding: 40px 12px; text-align: center; color: var(--text-tertiary); font-size: 13px; }
+.fx-empty span { font-size: 11px; }
+@media (max-width: 900px) { .fx-main-row { grid-template-columns: 1fr; } }
 .research-panel .research-divider { height: 1px; background: var(--border-light); margin: 3px 0; }
 .research-panel .param-row:last-child { border-bottom: none !important; }
 

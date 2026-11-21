@@ -1,0 +1,152 @@
+{
+  "factors": [
+    {
+      "op": "rsv",
+      "n": 10,
+      "dir": 1,
+      "w": 0.0525
+    },
+    {
+      "op": "rsv",
+      "n": 20,
+      "dir": 1,
+      "w": 0.0507
+    },
+    {
+      "op": "ma_gap",
+      "n": 10,
+      "dir": 1,
+      "w": 0.0408
+    },
+    {
+      "op": "ma_gap",
+      "n": 20,
+      "dir": 1,
+      "w": 0.0394
+    },
+    {
+      "op": "roc",
+      "n": 20,
+      "dir": 1,
+      "w": 0.0359
+    },
+    {
+      "op": "roc",
+      "n": 10,
+      "dir": 1,
+      "w": 0.0347
+    },
+    {
+      "op": "rsv",
+      "n": 5,
+      "dir": 1,
+      "w": 0.0313
+    },
+    {
+      "op": "roc",
+      "n": 5,
+      "dir": 1,
+      "w": 0.0253
+    },
+    {
+      "op": "max_gap",
+      "n": 20,
+      "dir": 1,
+      "w": 0.0238
+    },
+    {
+      "op": "ma_gap",
+      "n": 5,
+      "dir": 1,
+      "w": 0.0211
+    }
+  ],
+  "params": {
+    "top_n": 3,
+    "rebal_days": 20,
+    "cost": 0.0006
+  },
+  "multifactor": {
+    "label": "多因子 TopN",
+    "days": 2767,
+    "years": 11.34,
+    "cagr": 0.0358,
+    "vol": 0.2988,
+    "max_dd": -0.5659,
+    "sharpe": 0.07,
+    "calmar": 0.063,
+    "total": 0.4905
+  },
+  "single_rsv10": {
+    "label": "单因子 rsv_10",
+    "days": 2767,
+    "years": 11.34,
+    "cagr": 0.0874,
+    "vol": 0.2031,
+    "max_dd": -0.3347,
+    "sharpe": 0.356,
+    "calmar": 0.261,
+    "total": 1.5847
+  },
+  "equal_weight": {
+    "label": "等权持有全池",
+    "days": 2767,
+    "years": 11.34,
+    "cagr": 0.0513,
+    "vol": 0.1625,
+    "max_dd": -0.2417,
+    "sharpe": 0.223,
+    "calmar": 0.212,
+    "total": 0.7633
+  },
+  "split": {
+    "多因子TopN": {
+      "in": {
+        "label": "in",
+        "days": 1585,
+        "years": 6.49,
+        "cagr": 0.037,
+        "vol": 0.235,
+        "max_dd": -0.4618,
+        "sharpe": 0.094,
+        "calmar": 0.08,
+        "total": 0.266
+      },
+      "out": {
+        "label": "out",
+        "days": 1182,
+        "years": 4.84,
+        "cagr": 0.0373,
+        "vol": 0.3676,
+        "max_dd": -0.5659,
+        "sharpe": 0.061,
+        "calmar": 0.066,
+        "total": 0.1938
+      }
+    },
+    "等权全池": {
+      "in": {
+        "label": "in",
+        "days": 1585,
+        "years": 6.49,
+        "cagr": 0.0633,
+        "vol": 0.1615,
+        "max_dd": -0.2384,
+        "sharpe": 0.299,
+        "calmar": 0.266,
+        "total": 0.4897
+      },
+      "out": {
+        "label": "out",
+        "days": 1182,
+        "years": 4.84,
+        "cagr": 0.0369,
+        "vol": 0.164,
+        "max_dd": -0.2207,
+        "sharpe": 0.134,
+        "calmar": 0.167,
+        "total": 0.1917
+      }
+    }
+  }
+}

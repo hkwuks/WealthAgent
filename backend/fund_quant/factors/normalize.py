@@ -38,8 +38,14 @@ def _squash(value: float, op: str | None = None) -> float:
 
 
 def op_of(name: str) -> str | None:
-    """tech_roc_20 -> roc"""
+    """tech_ma_gap_10 -> ma_gap
+
+    算子名本身含下划线（ma_gap / max_gap），不能简单取 parts[1]：
+    split('_') 后 ma_gap 会被截成 'ma'，RANGES 查不到就回退到 (-1,1)，
+    整个窗口的归一化值全错。末尾那一段一定是窗口数字，去掉它才是算子。
+    """
     if not name.startswith("tech_"):
         return None
-    parts = name.split("_")
-    return parts[1] if len(parts) >= 3 else None
+    body = name[len("tech_"):]
+    op, _, win = body.rpartition("_")
+    return op if op and win.isdigit() else None

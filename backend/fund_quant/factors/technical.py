@@ -24,16 +24,21 @@ from backend.core.factor.models import FactorMeta
 WINDOWS = [5, 10, 20, 60]
 
 
-def _arr(data, s: str, as_of, lookback: int) -> np.ndarray | None:
-    """取单标的的净值序列。失败返回 None 而不是抛异常。"""
+def _arr(data, s: str, as_of, lookback: int, n: int = 0) -> np.ndarray | None:
+    """取单标的的净值序列。失败返回 None 而不是抛异常。
+
+    最少点数必须跟着窗口 n 走：n=5 只要 6 个点就能算，硬卡 20 会把
+    短窗口因子全部判为「数据不足」（实测 5/10 日的 7 个算子全灭）。
+    """
+    need = max(n + 2, 6)
     try:
-        navs = data.get_factor_input([s], as_of, lookback)
+        navs = data.get_factor_input([s], as_of, max(lookback, need))
     except Exception:
         return None
-    if not navs or len(navs) < 20:
+    if not navs or len(navs) < need:
         return None
     a = np.array([x for x in navs if isinstance(x, (int, float)) and x > 0], dtype=float)
-    return a if len(a) >= 20 else None
+    return a if len(a) >= need else None
 
 
 # ── 算子定义：名称 -> (中文名, direction, 计算函数, 说明) ───────────────
@@ -93,16 +98,63 @@ def _skew(arr, n):
 
 
 OPS = {
-    "roc":    ("收益率",   +1, _ret,     "n 日累计收益率，动量"),
-    "ma_gap": ("均线偏离", -1, _ma_gap,  "价格/均线-1，过高则回归"),
-    "std":    ("波动率",   -1, _std,     "n 日收益率标准差，低波占优"),
-    "max_gap":("距高点",   -1, _max_gap, "当前价/区间最高-1"),
-    "rsv":    ("RSV",      +1, _rsv,     "区间位置 0~1，突破方向"),
-    "rank":   ("涨幅分位", -1, _rank,    "当日涨跌在历史分位，高分=反转"),
-    "skew":   ("收益偏度", -1, _skew,    "正偏（暴涨）后易回落"),
+    "roc":    ("收益率",   _ret,     "n 日累计收益率，动量"),
+    "ma_gap": ("均线偏离", _ma_gap,  "价格/均线-1，过高则回归"),
+    "std":    ("波动率",   _std,     "n 日收益率标准差，低波占优"),
+    "max_gap":("距高点",   _max_gap, "当前价/区间最高-1"),
+    "rsv":    ("RSV",      _rsv,     "区间位置 0~1，突破方向"),
+    "rank":   ("涨幅分位", _rank,    "当日涨跌在历史分位，高分=反转"),
+    "skew":   ("收益偏度", _skew,    "正偏（暴涨）后易回落"),
 }
 
 CATEGORY = "technical"
+
+# ── 方向与权重：来自研究报告，不是直觉 ─────────────────────────────────
+# 数据: reports/factor_rolling_ic.json（36 月窗口 × 12 月步长 = 9 个窗口，
+#       前瞻 20 日，15 只 ETF，2015-2026）
+# 判定: 存活 = 存活率 ≥ 50% 且近期 IC 仍同号且 |IC| > 0.02
+#
+# 关键结论：存活下来的 10 个因子 direction 全部是 +1 —— ETF 池是动量市场，
+# 不是反转市场（申赎套利压制了过度偏离）。因此下面按数据改写了直觉先验。
+# `weight` 用 |recent_ic|，淘汰因子的 weight = 0，在归一化时自动失权。
+
+RESEARCH = {
+    # name:            (direction, weight, alive_rate)
+    "tech_rsv_10":     (+1, 0.0525, 88.9),
+    "tech_rsv_20":     (+1, 0.0507, 88.9),
+    "tech_ma_gap_10":  (+1, 0.0408, 88.9),
+    "tech_ma_gap_20":  (+1, 0.0394, 88.9),
+    "tech_roc_10":     (+1, 0.0347, 77.8),
+    "tech_rsv_5":      (+1, 0.0313, 77.8),
+    "tech_roc_20":     (+1, 0.0359, 55.6),
+    "tech_max_gap_20": (+1, 0.0238, 66.7),
+    "tech_ma_gap_5":   (+1, 0.0211, 66.7),
+    "tech_roc_5":      (+1, 0.0253, 66.7),
+    # ── 以下淘汰：存活率 < 50% 或近期已失效 → 方向 0，权重 0 ──
+    "tech_max_gap_10": (0, 0.0, 66.7),   # 近期 IC 掉到 0.019 且已不同号
+    "tech_roc_60":     (0, 0.0, 44.4),
+    "tech_std_5":      (0, 0.0, 0.0),
+    "tech_std_10":     (0, 0.0, 0.0),
+    "tech_std_20":     (0, 0.0, 0.0),
+    "tech_std_60":     (0, 0.0, 0.0),
+    "tech_max_gap_5":  (0, 0.0, 0.0),
+    "tech_max_gap_60": (0, 0.0, 0.0),
+    "tech_rank_5":     (0, 0.0, 0.0),
+    "tech_rank_10":    (0, 0.0, 0.0),
+    "tech_rank_20":    (0, 0.0, 0.0),
+    "tech_rank_60":    (0, 0.0, 0.0),
+    "tech_skew_5":     (0, 0.0, 0.0),
+    "tech_skew_10":    (0, 0.0, 0.0),
+    "tech_skew_20":    (0, 0.0, 0.0),
+    "tech_skew_60":    (0, 0.0, 0.0),
+}
+
+
+def research_of(name: str) -> tuple[int, float]:
+    """返回 (direction, weight)。未在研究报告里出现的按淘汰处理。"""
+    d, w, _alive = RESEARCH.get(name, (0, 0.0, 0.0))
+    return d, w
+
 
 
 class _TechnicalFactor(Factor):
@@ -111,11 +163,11 @@ class _TechnicalFactor(Factor):
     _n = 20
 
     def compute(self, symbols, as_of, lookback, data):
-        fn = OPS[self._op][2]
+        fn = OPS[self._op][1]
         need = max(self._n + 5, self.meta.min_history_days, lookback)
         out = {}
         for s in symbols:
-            arr = _arr(data, s, as_of, need)
+            arr = _arr(data, s, as_of, need, self._n)
             if arr is None:
                 continue
             try:
@@ -130,20 +182,26 @@ class _TechnicalFactor(Factor):
 def build_factors() -> list[tuple[type[Factor], FactorMeta]]:
     """生成全部 (算子 × 窗口) 因子类。返回列表供 FactorRegistry 批量注册。"""
     out = []
-    for op, (cn, direction, _fn, desc) in OPS.items():
+    for op, (cn, _fn, desc) in OPS.items():
         for n in WINDOWS:
             name = f"tech_{op}_{n}"
+            direction, weight = research_of(name)
             meta = FactorMeta(
                 name=name,
                 display_name=f"{cn}{n}日",
                 category=CATEGORY,
                 domain="fund",
-                description=f"{desc}（窗口 {n} 日）",
+                description=(
+                    f"{desc}（窗口 {n} 日）" if direction
+                    else f"{desc}（窗口 {n} 日）— 滚动 IC 未通过，已淘汰"
+                ),
                 direction=direction,
-                params={"lookback": n, "op": op, "window": n},
+                # lookback 是「需要多少历史」，不是「窗口多长」。窗口在 window 键里。
+                # 之前误写成 n，导致 5/10 日因子只拿到 5/10 个点，全部算不出。
+                params={"lookback": 60, "op": op, "window": n, "weight": weight},
                 formula=f"{op}(nav, {n})",
                 min_history_days=n + 5,
-                reference="Qlib Alpha158 算子设计",
+                reference="Qlib Alpha158 算子设计; reports/factor_rolling_ic.json",
                 fund_types=["equity", "index", "qdii"],
             )
             cls = type(
