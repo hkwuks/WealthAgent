@@ -65,3 +65,10 @@ backend/gold/tests/
 
 # Frontend ignore file (should not be committed)
 frontend/.gitignore
+
+# 行情缓存（可由 market_db.py 重新拉取，不入库）
+data/ohlcv/
+data/benchmark_nav/
+data/my_portfolio_nav/
+data/投资_无首页.pdf
+data/transactions*.json
