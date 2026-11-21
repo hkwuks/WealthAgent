@@ -72,3 +72,10 @@ data/benchmark_nav/
 data/my_portfolio_nav/
 data/投资_无首页.pdf
 data/transactions*.json
+
+# 同类池行情（可由 scripts/build_peer_pool.py 重建，25MB+ 不入库）
+data/backend/fund_quant/fund_quant.db
+data/backend/funds.json.bak-*
+data/fund_types.json
+frontend/node_modules/
+frontend/dist/

@@ -1,4 +1,5 @@
 """多因子选基策略 — 对接因子分析引擎，动态IC权重"""
+from datetime import date
 from typing import Optional
 
 from loguru import logger
@@ -6,6 +7,7 @@ from loguru import logger
 from ..base import FundStrategyBase, StrategyRegistry
 from ...core.enums import SignalType, Direction, FundType
 from ...core.models import FundSignal, Portfolio, InformationSet
+from ...factors.nav_feed import feed_from_storage
 
 # ── verdict 等级顺序 ──
 _VERDICT_ORDER = {"strong": 0, "usable": 1, "weak": 2, "noise": 3}
@@ -76,34 +78,40 @@ class MultiFactorSelection(FundStrategyBase):
         # 3. 计算每只基金评分
         fund_scores = []
         for code in candidates:
-            meta = get_fund_meta(code)
-            if meta and meta.get("fund_type") != fund_type and fund_type != "all":
+            fund_meta = get_fund_meta(code)
+            if fund_meta and fund_meta.get("fund_type") != fund_type and fund_type != "all":
                 continue
 
             navs = get_nav_history(code)
             if len(navs) < 60:
                 continue
 
-            # 从因子注册中心获取各因子值
+            # 走引擎统一计算：以前这里调 _compute_factor_simple，
+            # 那份实现只认 10 个硬编码因子名，28 个 tech_* 全部返回 0.0。
             total = 0.0
             factor_values = {}
-            for f, _ in active:
+            feed = feed_from_storage(code)
+            if feed is None:
+                continue
+            for f, fmeta in active:
                 try:
-                    # 使用简化计算（基于净值数据）
-                    val = self._compute_factor_simple(f.meta.name, navs, meta)
-                    factor_values[f.meta.name] = val
-                    w = weights.get(f.meta.name, 0)
-                    direction = f.meta.direction
-                    total += w * val * direction
+                    raw = f.compute([code], date.today(),
+                                    fmeta.params.get("lookback", 60), feed)
+                    val = raw.get(code)
+                    if val is None:
+                        continue
+                    factor_values[fmeta.name] = val
+                    w = weights.get(fmeta.name, 0)
+                    total += w * val * fmeta.direction
                 except Exception:
                     continue
 
-            if total != 0 or factor_values:
+            if factor_values:
                 fund_scores.append({
                     "fund_code": code,
                     "total_score": total,
                     "factors": {k: round(v, 4) for k, v in factor_values.items()},
-                    "meta": meta,
+                    "meta": fund_meta,
                 })
 
         if not fund_scores:
@@ -142,124 +150,38 @@ class MultiFactorSelection(FundStrategyBase):
         }
 
     def _load_active_factors(self, symbols: list[str]) -> list[tuple]:
-        """加载经过IC评价的可用因子"""
-        from backend.core.factor import FactorRegistry, EvaluationEngine, EvalConfig
+        """取可用因子。
 
-        from datetime import date, timedelta
-        lookback = self.params.get("lookback_years", 3)
-        start = date.today() - timedelta(days=int(lookback) * 365)
-        end = date.today()
+        以前这里跑一遍 EvaluationEngine，但喂的是 _DummyFeed ——
+        get_forward_returns 对所有标的直接返回 0.01，算出的 IC 是噪声，
+        verdict 也就没有意义。真正的因子有效性已经在离线研究报告里做过
+        （reports/factor_rolling_ic.json，36 月滚动窗口），结论写进了
+        FactorMeta.params["weight"]。直接用那个，不再在线伪造一遍。
 
-        class _DummyFeed:
-            def get_forward_returns(self, symbols, from_date, to_date):
-                return {s: 0.01 for s in symbols[:5]} if symbols else {}
+        返回 [(factor_instance, meta)]。
+        """
+        from backend.core.factor import FactorRegistry
+        from backend.fund_quant.factors import load_all
 
-        feed = _DummyFeed()
-        ee = EvaluationEngine(feed)
-
-        active = []
-        for meta in FactorRegistry.list(domain="fund"):
-            try:
-                f_cls = FactorRegistry.get(meta.name)
-                f = f_cls()
-                report = ee.run(f, symbols[:max(30, len(symbols)//10)],
-                                start, end)
-            except Exception:
-                continue
-            min_ok = self.params.get("min_factor_verdict", "usable")
-            if report.n_periods > 0 and _verdict_ge(report.verdict, min_ok):
-                active.append((f, report))
-
-        return active
+        load_all()
+        return [(FactorRegistry.get(m.name)(), m)
+                for m in FactorRegistry.list(domain="fund")
+                if m.params.get("weight", 0) > 0]
 
     def _compute_weights(self, active_factors: list[tuple],
                          method: str | None = None) -> dict[str, float]:
-        """IC_IR 加权 / 显著等权 / 等权"""
-        method = method or self.params.get("weight_method", "ic_weighted")
-        if method == "ic_weighted":
-            total_ir = sum(abs(r.ic_ir) for _, r in active_factors)
-            if total_ir < 1e-10:
-                return {f.meta.name: 1.0 / len(active_factors)
-                        for f, _ in active_factors}
-            return {f.meta.name: abs(r.ic_ir) / total_ir
-                    for f, r in active_factors}
-        elif method == "significant_only":
-            sig = [(f, r) for f, r in active_factors
-                   if r.fm_beta_p_value < 0.05]
-            if not sig:
-                sig = active_factors
-            return {f.meta.name: 1.0 / len(sig) for f, _ in sig}
-        else:  # equal
-            return {f.meta.name: 1.0 / len(active_factors)
-                    for f, _ in active_factors}
+        """权重 = 离线研究报告的 |recent_ic|（存在 meta.params["weight"]）。
 
-    def _compute_factor_simple(self, factor_name: str,
-                                navs: list[dict],
-                                meta: dict | None) -> float:
-        """简化因子值计算（不依赖 DataFeed，直接从已有数据算）"""
-        import numpy as np
-        nav_values = [r.get("nav", 0) for r in navs if r.get("nav") and r["nav"] > 0]
-        if len(nav_values) < 60:
-            return 0.0
-        arr = np.array(nav_values, dtype=np.float64)
-        returns = np.diff(arr) / arr[:-1]
-
-        if factor_name == "sharpe_ratio":
-            if len(returns) < 20:
-                return 0.0
-            ann_ret = float(np.mean(returns) * 252)
-            ann_vol = float(np.std(returns, ddof=1) * np.sqrt(252))
-            return (ann_ret - 0.02) / max(ann_vol, 1e-6)
-        elif factor_name == "max_drawdown":
-            cum = np.cumprod(1 + returns)
-            peak = np.maximum.accumulate(cum)
-            dd = (cum - peak) / peak
-            return float(abs(np.min(dd)))
-        elif factor_name == "fee_rate":
-            fee = 0.015
-            if meta:
-                fee = (meta.get("management_fee") or 0.015) + \
-                      (meta.get("custody_fee") or 0.002)
-            return fee
-        elif factor_name == "fund_scale":
-            scale = (meta.get("scale") or 10e8) if meta else 10e8
-            return float(np.log10(max(scale, 1e7)) - 7) / 3
-        elif factor_name == "info_ratio":
-            if len(returns) < 20:
-                return 0.0
-            ann_ret = float(np.mean(returns) * 252)
-            ann_vol = float(np.std(returns, ddof=1) * np.sqrt(252))
-            sharpe = (ann_ret - 0.02) / max(ann_vol, 1e-6)
-            return sharpe * 0.8
-        elif factor_name == "fund_flow":
-            if meta and "scale_prev" in meta and "scale_curr" in meta:
-                s_prev = meta["scale_prev"]
-                s_curr = meta["scale_curr"]
-                nav_ret = float(np.mean(returns[-20:])) * 20 if len(returns) >= 20 else 0
-                if s_prev > 0:
-                    return (s_curr - s_prev) / s_prev - nav_ret
-            return 0.0
-        elif factor_name == "manager_tenure":
-            return float(meta.get("manager_tenure", 3)) if meta else 3.0
-        elif factor_name == "holding_concentration":
-            pct = float(meta.get("top10_pct", 50)) if meta else 50
-            return pct / 100.0
-        elif factor_name == "capture_ratio":
-            mid = len(returns) // 2
-            if mid < 10:
-                return 1.0
-            up = returns[returns > 0]
-            down = returns[returns < 0]
-            up_avg = float(np.mean(up)) if len(up) > 0 else 0
-            down_avg = abs(float(np.mean(down))) if len(down) > 0 else 1e-6
-            return up_avg / down_avg if down_avg > 1e-6 else 1.0
-        elif factor_name == "calendar_return":
-            target_month = __import__('datetime').date.today().month
-            chunk = len(returns) // 12
-            if chunk < 1:
-                return 0.0
-            return float(np.mean(returns[(target_month - 1) * chunk:target_month * chunk]))
-        return 0.0
+        以前按 EvaluationEngine 的 ic_ir 分权，但那个 ic_ir 是拿
+        _DummyFeed 恒定 0.01 的假前瞻收益算出来的，没有信息。
+        """
+        if not active_factors:
+            return {}
+        total = sum(meta.params.get("weight", 0.0) for _, meta in active_factors)
+        if total <= 0:
+            return {meta.name: 1.0 / len(active_factors) for _, meta in active_factors}
+        return {meta.name: meta.params.get("weight", 0.0) / total
+                for _, meta in active_factors}
 
     def _fallback_screen(self, fund_type: str, top_n: int) -> dict:
         """回退到默认评分（无因子引擎时）"""

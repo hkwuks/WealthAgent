@@ -166,9 +166,17 @@ export interface StrategyParam {
 export interface FactorExposureData {
   fund_code: string
   fund_name: string
-  factors: Record<string, { value: number; weight: number; rank_pct: number }>
+  fund_type?: string
+  /** rank_pct 为 null 表示该基金所在同类池不足 8 只，前端不显示该列 */
+  factors: Record<string, { value: number; weight: number; rank_pct: number | null }>
   total_score: number
   n_funds_in_category: number
+}
+
+export interface FactorHistoryData {
+  fund_code: string
+  series: { name: string; display_name: string; weight: number }[]
+  points: { date: string; factors: Record<string, number> }[]
 }
 
 export interface FactorExposureResult {
@@ -312,6 +320,9 @@ export const fundQuantApi = {
   // — 新增：因子暴露接口 —
   getFactorExposure: (fund_code: string) =>
     get<FactorExposureResult>(`/factors/exposure/${fund_code}`),
+  getFactorHistory: (fund_code: string, months = 12) =>
+    get<{ success: boolean; data: FactorHistoryData }>(
+      `/factors/history/${fund_code}?months=${months}`),
 
   // — 新增：回测分析 —
   runAnalysis: (backtestId: string, nSimulations = 1000) =>

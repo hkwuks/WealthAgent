@@ -54,9 +54,19 @@ class InfoRatioFactor(Factor):
     )
 
     def compute(self, symbols, as_of, lookback, data):
-        sharpe = SharpeRatioFactor()
-        sharpe.meta.params = self.meta.params
-        return sharpe.compute(symbols, as_of, lookback, data)
+        # FactorMeta 是 frozen，不能给实例的 meta.params 赋值。
+        # 信息比率与夏普的差别只在 risk_free=0，用一个匿名子类承载即可。
+        class _ZeroRfSharpe(SharpeRatioFactor):
+            meta = FactorMeta(
+                name="info_ratio", display_name="信息比率",
+                category="risk_adjusted", domain="fund",
+                description="超额收益 / 跟踪误差",
+                direction=1, params={"lookback": 252, "risk_free": 0.0},
+                formula="超额收益均值 / 超额收益标准差 × sqrt(252)",
+                fund_types=["equity", "qdii"],
+            )
+
+        return _ZeroRfSharpe().compute(symbols, as_of, lookback, data)
 
 
 class CaptureRatioFactor(Factor):
