@@ -854,6 +854,7 @@ async def factor_audit(domain: str = "fund", years: int = 3):
 @router.get("/factors/exposure/{fund_code}")
 async def fund_factor_exposure(fund_code: str, lookback: int = 365):
     """获取单基金因子暴露度 — 计算各注册因子的当前暴露值"""
+    from datetime import date
     import numpy as np
     from ..fund_quant.strategy.base import StrategyRegistry
     from backend.core.factor import FactorRegistry
@@ -873,67 +874,55 @@ async def fund_factor_exposure(fund_code: str, lookback: int = 365):
     fund_meta = await asyncio.to_thread(get_fund_meta, fund_code)
     fund_name = (fund_meta or {}).get("fund_name", fund_code) if fund_meta else fund_code
 
-    # 获取所有注册的基金域因子
-    all_factors = FactorRegistry.list(domain="fund")
-    if not all_factors:
-        all_factors = FactorRegistry.list(domain="generic")
+    # 取注册因子（必须先 load_all，否则 Registry 为空——这是之前的死代码根源）
+    from ..fund_quant.factors import load_all
+    from ..fund_quant.factors.nav_feed import NavFeed
+    from ..fund_quant.factors.normalize import _squash, op_of
+    load_all()
 
-    # 计算因子暴露值
+    all_factors = FactorRegistry.list(domain="fund") or FactorRegistry.list(domain="generic")
+
+    feed = NavFeed({fund_code: nav_values})
     computed: dict[str, float] = {}
+    detail: dict[str, str] = {}
     for meta in all_factors:
-        name = meta.name
-        if name == "sharpe_ratio" or name == "sharpe":
-            if len(returns) >= 20:
-                sr = float(np.mean(returns[-60:]) / (np.std(returns[-60:]) + 1e-10))
-                computed[name] = float(np.clip((sr + 2) / 4, 0, 1))
-        elif name == "max_drawdown":
-            peak = np.maximum.accumulate(nav_arr)
-            dd = (nav_arr - peak) / peak
-            mdd = float(np.min(dd)) if len(dd) > 0 else 0
-            computed[name] = float(np.clip(1 + mdd, 0, 1))
-        elif name == "momentum" or name == "momentum_multi":
-            if len(returns) >= 60:
-                mom = float(np.sum(returns[-60:]))
-                computed[name] = float(np.clip((mom + 0.3) / 0.6, 0, 1))
-        elif name == "volatility" or name == "volatility_regime":
-            if len(returns) >= 20:
-                vol = float(np.std(returns[-60:]))
-                computed[name] = float(np.clip(1 - vol * 5, 0, 1))
-        elif name == "fund_scale":
-            computed[name] = 0.5
-        elif name == "fee_rate":
-            computed[name] = 0.6
-        elif name == "fund_flow":
-            computed[name] = 0.5
-        elif name == "info_ratio":
-            if len(returns) >= 60:
-                ir = float(np.mean(returns[-60:]) / (np.std(returns[-60:]) + 1e-10) * np.sqrt(252))
-                computed[name] = float(np.clip(ir / 2, 0, 1))
-        elif name == "capture_ratio":
-            computed[name] = 0.5
-        elif name == "manager_tenure":
-            computed[name] = 0.5
-        elif name == "holding_concentration":
-            computed[name] = 0.5
-        elif name == "calendar_return":
-            computed[name] = 0.5
-        else:
-            computed[name] = 0.5
+        try:
+            factor_cls = FactorRegistry.get(meta.name)
+            raw = factor_cls().compute([fund_code], date.today(),
+                                       meta.params.get("lookback", 60), feed)
+            v = raw.get(fund_code)
+        except Exception as e:
+            detail[meta.name] = f"计算失败: {type(e).__name__}"
+            continue
+        if v is None:
+            detail[meta.name] = "数据不足"
+            continue
+        # 原始值归一化到 0~1 便于前端雷达图；真实值单独返回
+        computed[meta.name] = float(np.clip(_squash(v, op_of(meta.name)), 0, 1))
+        detail[meta.name] = f"{v:+.6f}"
 
     # 因子权重和百分位
-    n_registered = len(all_factors) if all_factors else 14
-    weights = {
-        "momentum": 0.25, "sharpe_ratio": 0.20, "max_drawdown": 0.15,
-        "fund_flow": 0.12, "fee_rate": 0.10, "fund_scale": 0.08,
-        "info_ratio": 0.05, "capture_ratio": 0.03, "manager_tenure": 0.02,
-        "volatility": 0.0,
+    # 旧表硬编码 10 个具体因子名，新增因子一律 0.05。
+    # 改成按 category 分配：同一类算子（如全部 roc 窗口）共享该类权重。
+    n_registered = len(all_factors) if all_factors else 0
+    cat_weights = {
+        "technical": 0.20,   # 量价技术因子
+        "risk": 0.20,        # 回撤/波动
+        "risk_adjusted": 0.15,
+        "behavioral": 0.10,
+        "flow": 0.10,
+        "manager": 0.05,
+        "structural": 0.05,
+        "concentration": 0.05,
     }
+    cat_of = {m.name: m.category for m in all_factors} if all_factors else {}
+    weights = {k: cat_weights.get(cat_of.get(k, ""), 0.05) for k in computed}
 
-    total_w = sum(weights.get(k, 0.05) for k in computed.keys())
+    total_w = sum(weights.values())
     factors_out = {}
     total_score = 0
     for k, v in computed.items():
-        w = weights.get(k, 0.05) / total_w if total_w > 0 else 0.05
+        w = weights[k] / total_w if total_w > 0 else 0.05
         factors_out[k] = {
             "value": round(v, 4),
             "weight": round(w, 4),
@@ -950,6 +939,7 @@ async def fund_factor_exposure(fund_code: str, lookback: int = 365):
             "factors": factors_out,
             "total_score": total_score,
             "n_funds_in_category": max(50, n_registered * 5),
+            "raw_values": detail,   # 归一化前的真实因子值，供调试
         },
     }
 
