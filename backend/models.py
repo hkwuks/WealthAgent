@@ -43,6 +43,15 @@ class Fund(BaseModel):
     fund_type: str = Field(..., description="基金类型")
     total_shares: float = Field(..., description="总份额")
     nav: Optional[float] = Field(None, description="单位净值")
+    market_type: MarketType = Field(MarketType.UNKNOWN, description="市场类型(场内/场外)")
+    trade_mode: Optional[str] = Field(None, description="交易时序(t0/t1/t2)")
+    subscription_confirm_days: Optional[int] = Field(None, ge=0, description="申购确认所需交易日")
+    redemption_confirm_days: Optional[int] = Field(None, ge=0, description="赎回确认所需交易日")
+    cash_arrival_days: Optional[int] = Field(None, ge=0, description="赎回资金到账所需交易日")
+    purchase_channel: Optional[str] = Field(None, description="购买渠道")
+    trading_profile_source: Optional[str] = Field(None, description="交易属性资料来源")
+    trading_profile_confidence: Optional[float] = Field(None, ge=0, le=1, description="交易属性识别置信度")
+    trading_profile_needs_confirmation: bool = Field(True, description="是否需要人工确认")
     holdings: List[Holding] = Field(default_factory=list, description="持仓列表")
     estimated_nav: Optional[float] = Field(None, description="估算净值")
     last_update: Optional[datetime] = Field(None, description="最后更新时间")
@@ -68,6 +77,20 @@ class ValuationResult(BaseModel):
     confidence_note: Optional[str] = Field(None, description="置信度说明")
     valuation_method: Optional[str] = Field(None, description="估值方法说明")
     timestamp: datetime
+    # 指数估值分位
+    index_code: Optional[str] = Field(None, description="跟踪指数代码")
+    index_name: Optional[str] = Field(None, description="跟踪指数名称")
+    pe_value: Optional[float] = Field(None, description="指数当前市盈率")
+    pe_percentile: Optional[float] = Field(None, description="指数市盈率历史分位(0-100)")
+    pb_value: Optional[float] = Field(None, description="指数当前市净率")
+    pb_percentile: Optional[float] = Field(None, description="指数市净率历史分位(0-100)")
+    # 定投信号
+    valuation_signal: Optional[str] = Field(None, description="定投信号：深度低估/低估/合理/偏高/高估")
+    signal_action: Optional[str] = Field(None, description="建议操作：加倍定投/正常定投/持有/止盈/卖出")
+    signal_source: Optional[str] = Field(None, description="信号数据来源：PE分位/债券收益率/价格分位/黄金价格")
+    # 场内折溢价
+    iopv: Optional[float] = Field(None, description="场内ETF IOPV 实时估值")
+    premium_percent: Optional[float] = Field(None, description="场内ETF折溢价率(%，正=溢价)")
 
 
 class MarketData(BaseModel):

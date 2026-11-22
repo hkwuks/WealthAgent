@@ -1,6 +1,10 @@
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from datetime import datetime
+import re
+import numpy as np
+import pandas as pd
+import yfinance as yf
 from backend.models import (
     Holding,
     ValuationResult,
@@ -12,6 +16,12 @@ from backend.market_data import (
     determine_market_type,
     GLOBAL_INDEX_MAPPING,
     INDEX_MAPPING,
+)
+from backend.ttl_cache import TtlCache
+from backend.valuation_sources import (
+    valuation_signal_service,
+    BOND_INDEX_CODES,
+    OVERSEAS_ETF_MAP,
 )
 from loguru import logger
 
@@ -560,6 +570,9 @@ class FundValuationService:
             ("富时 A50", "a50"),
             ("富时中国", "a50"),
             ("A50", "a50"),
+            # 标普A股红利低波（必须放在"标普"之前，否则会被误匹配为标普500）
+            ("标普红利低波", "sp_china_a_dividend"),
+            ("标普A股", "sp_china_a_dividend"),
             # 海外指数
             ("纳斯达克 100", "nasdaq100"),
             ("纳斯达克精选", "nasdaq"),
@@ -575,6 +588,12 @@ class FundValuationService:
             ("恒生指数", "hsi"),
             ("恒生", "hsi"),
             ("香港", "hsi"),  # 香港优选、香港精选等基金，默认使用恒生指数
+            # 香港互认基金（摩根/惠理系列），近似用恒生指数
+            ("亚洲股息", "hsi"),
+            ("亚洲", "hsi"),
+            ("高息股票", "hsi"),
+            ("高息股", "hsi"),
+            ("价值基金", "hsi"),
             ("日经 225", "nikkei"),
             ("日经", "nikkei"),
             # 黄金相关
@@ -604,6 +623,9 @@ class FundValuationService:
             ("白酒", "399997"),
             ("食品饮料", "399997"),
             ("中证食品", "399997"),
+            ("信息产业", "000934"),
+            ("中证信息", "000934"),
+            ("信息技术", "000934"),
             ("中证新能源", "399808"),
             ("新能源", "399808"),
             ("中证军工", "399967"),
@@ -721,6 +743,8 @@ class FundValuationService:
                 confidence=1.0,
                 confidence_note="场内ETF实时价格，100%准确",
                 timestamp=datetime.now(),
+                iopv=realtime_data.get("iopv"),
+                premium_percent=realtime_data.get("premium_percent"),
             )
         except Exception as e:
             logger.exception(f"ETF 估值计算异常 {fund_code}: {e}")
@@ -1808,6 +1832,37 @@ class FundValuationService:
         result = await self.calculate_fund_valuation(fund_code, prefer_holdings)
         if result and not result.valuation_method:
             result.valuation_method = get_valuation_method_name(result.valuation_type)
+        # 附加跟踪指数的 PE/PB 估值分位 + 定投信号
+        if result and result.pe_percentile is None:
+            fund_data = await market_data_service.get_fund_data(fund_code)
+            fund_name = fund_data.fund_name if fund_data else ""
+            fund_type = fund_data.fund_type if fund_data else ""
+            tracking_index = await self.get_tracking_index(fund_code, fund_name)
+
+            signal_data = valuation_signal_service.get_signal(tracking_index, fund_type)
+            if signal_data:
+                result.index_code = signal_data.get("index_code")
+                result.index_name = signal_data.get("index_name")
+                result.pe_value = signal_data.get("pe_value")
+                result.pe_percentile = signal_data.get("pe_percentile")
+                result.pb_value = signal_data.get("pb_value")
+                result.pb_percentile = signal_data.get("pb_percentile")
+                result.valuation_signal = signal_data.get("signal")
+                result.signal_action = signal_data.get("signal_action")
+                result.signal_source = signal_data.get("source", "")
+
+        # 场内基金统一附加折溢价（包括 QDII ETF 等走 index_based 路径的）
+        if result and result.premium_percent is None:
+            try:
+                mkt = await market_data_service.get_fund_data(fund_code)
+                if mkt and mkt.market_type == MarketType.ON_EXCHANGE:
+                    etf_data = await market_data_service.get_etf_realtime_data(fund_code)
+                    if etf_data:
+                        result.iopv = etf_data.get("iopv")
+                        result.premium_percent = etf_data.get("premium_percent")
+            except Exception:
+                pass
+
         return result
 
 

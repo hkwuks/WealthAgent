@@ -38,7 +38,9 @@ logs/
 *.log
 
 # Data files (contain user portfolio data)
-data/funds.json
+/data/funds.json
+/data/backend/
+/data/
 
 # Environment variables
 .env
@@ -52,7 +54,7 @@ mcp_config.json
 Thumbs.db
 
 # Docs (not committed)
-docs/
+# docs/
 
 # Testing
 .pytest_cache/
@@ -60,11 +62,14 @@ docs/
 htmlcov/
 
 # Test code (not committed)
-tests/
 backend/gold/tests/
+frontend/node_modules/
 
 # Frontend ignore file (should not be committed)
 frontend/.gitignore
+
+.codegraph/
+.claude/
 
 # 行情缓存（可由 market_db.py 重新拉取，不入库）
 data/ohlcv/

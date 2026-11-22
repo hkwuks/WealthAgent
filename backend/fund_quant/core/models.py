@@ -13,6 +13,26 @@ TYPE_COMPAT = {
     "hybrid": "equity",
     "etf": "index",
     "etf_link": "index",
+    # 中文原始类型（funds.json / 采集数据）
+    "ETF 基金": "index",
+    "指数型-股票": "index",
+    "指数型-海外股票": "qdii",
+    "指数型-固收": "bond",
+    "指数型-其他": "index",
+    "债券型-混合一级": "bond",
+    "债券型-混合二级": "bond",
+    "混合型-偏债": "balanced",
+    "混合型-偏股": "equity",
+    "QDII-普通股票": "qdii",
+    "海外混合": "qdii",
+}
+
+# 费率表（CostModelConfig 各 tier 字典）使用旧键 stock/hybrid/bond/index/qdii/money/fof；
+# 新枚举 equity/balanced/commodity 需映射回费率表键
+FEE_TIER_COMPAT = {
+    "equity": "stock",       # 股票型按 stock 费率
+    "balanced": "hybrid",    # 平衡型按 hybrid 费率
+    "commodity": "qdii",     # 商品基金费率接近 QDII（无精确档）
 }
 
 
@@ -209,6 +229,7 @@ class BacktestResult(BaseModel):
     sharpe_ratio: float = 0.0
     calmar_ratio: float = 0.0
     information_ratio: float = 0.0
+    benchmark_return: Optional[float] = None
     win_rate: float = 0.0
     profit_loss_ratio: float = 0.0
     total_trades: int = 0

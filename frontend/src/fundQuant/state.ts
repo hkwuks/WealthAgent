@@ -9,6 +9,15 @@ export interface FundInfo {
   fund_code: string
   fund_name: string
   fund_type: string
+  market_type?: 'on_exchange' | 'off_exchange' | 'unknown'
+  trade_mode?: 't0' | 't1' | 't2'
+  subscription_confirm_days?: number
+  redemption_confirm_days?: number
+  cash_arrival_days?: number
+  purchase_channel?: 'tiantian' | 'ant' | 'broker' | 'bank' | 'other'
+  trading_profile_source?: string
+  trading_profile_confidence?: number
+  trading_profile_needs_confirmation?: boolean
 }
 
 export interface SignalSummary {
@@ -57,14 +66,22 @@ export interface LoadingState {
 
 export interface ResearchState {
   visible: boolean
-  activeTab: 'timing' | 'exposure'
+  activeTab: 'exposure' | 'evaluation'
   fundCode: string | null
   signal?: SignalSummary | null
+}
+
+export interface BlView {
+  fund_long: string
+  fund_short: string
+  excess_return: number
+  confidence: string
 }
 
 export interface GlobalState {
   fundPool: FundInfo[]
   selectedFund: string | null
+  selectedStrategy: string | null  // 当前选中的策略名
   showSignalPopup: boolean
   signals: SignalSummary[]
   portfolio: PortfolioKPI | null
@@ -74,6 +91,8 @@ export interface GlobalState {
   loading: LoadingState
   researchPanel: ResearchState
   customParams: Record<string, Record<string, any>>
+  blViews: BlView[]
+  configCapital: number  // 策略配置基准金额（用于计算买入金额）
 }
 
 type StateKey = keyof GlobalState
@@ -102,6 +121,11 @@ export class EventEmitter {
     this.allListeners.forEach(fn => fn(this.state))
   }
 
+  /** 更新状态但通知监听者（用于静默持久化，不触发面板刷新） */
+  setSilent<K extends StateKey>(key: K, value: GlobalState[K]): void {
+    this.state = { ...this.state, [key]: value }
+  }
+
   on(key: StateKey | '*', fn: Listener): () => void {
     if (key === '*') {
       this.allListeners.add(fn)
@@ -118,19 +142,43 @@ const DEFAULT_LAYOUT: LayoutConfig = {
   name: '默认布局',
   panels: {
     kpi: { visible: true, order: 0 },
-    nav_chart: { visible: true, order: 1, grid_pos: { x: 0, y: 1, w: 2, h: 1 } },
-    signal_list: { visible: true, order: 2, grid_pos: { x: 0, y: 2, w: 1, h: 1 } },
-    allocation: { visible: true, order: 3, grid_pos: { x: 1, y: 2, w: 1, h: 1 } },
-    fund_ranking: { visible: false, order: 4, grid_pos: { x: 1, y: 0, w: 1, h: 1 } },
-    attribution: { visible: false, order: 5, grid_pos: { x: 0, y: 3, w: 1, h: 1 } },
-    monthly_returns: { visible: false, order: 6, grid_pos: { x: 1, y: 3, w: 1, h: 1 } },
+    nav_chart: { visible: true, order: 1, grid_pos: { x: 0, y: 1, w: 3, h: 1 } },
+    signal_list: { visible: true, order: 2, grid_pos: { x: 0, y: 2, w: 3, h: 1 } },
+    // 策略配置与策略详情：与信号列表、基金详情是两组独立功能，各占一行
+    strategy_config: { visible: true, order: 3, grid_pos: { x: 0, y: 3, w: 1, h: 2 } },
+    strategy_detail: { visible: true, order: 4, grid_pos: { x: 1, y: 3, w: 2, h: 2 } },
+    detail: { visible: true, order: 5, grid_pos: { x: 0, y: 5, w: 3, h: 1 } },
+    fund_ranking: { visible: true, order: 6, grid_pos: { x: 0, y: 6, w: 1, h: 1 } },
+    attribution: { visible: true, order: 7, grid_pos: { x: 1, y: 6, w: 1, h: 1 } },
+    monthly_returns: { visible: true, order: 8, grid_pos: { x: 2, y: 6, w: 1, h: 1 } },
+    'paper-trade': { visible: true, order: 9, grid_pos: { x: 0, y: 7, w: 3, h: 1 } },
+    'strategy-backtest': { visible: true, order: 10, grid_pos: { x: 0, y: 8, w: 3, h: 1 } },
   },
+}
+
+const BL_VIEWS_KEY = 'bl_views'
+function loadBlViews(): GlobalState['blViews'] {
+  try {
+    const raw = localStorage.getItem(BL_VIEWS_KEY)
+    if (raw) { const arr = JSON.parse(raw); if (Array.isArray(arr)) return arr }
+  } catch {}
+  return []
+}
+
+const CAPITAL_KEY = 'config_capital'
+function loadConfigCapital(): number {
+  try {
+    const raw = localStorage.getItem(CAPITAL_KEY)
+    if (raw) { const n = parseFloat(raw); if (Number.isFinite(n) && n > 0) return n }
+  } catch {}
+  return 100000
 }
 
 // 单例
 export const state = new EventEmitter({
   fundPool: [],
   selectedFund: null,
+  selectedStrategy: null,
   showSignalPopup: false,
   signals: [],
   portfolio: null,
@@ -138,6 +186,25 @@ export const state = new EventEmitter({
   layout: DEFAULT_LAYOUT,
   settings: {},
   loading: { isRefreshing: false, lastRefreshTime: null, errors: {} },
-  researchPanel: { visible: false, activeTab: 'timing', fundCode: null, signal: null },
+  researchPanel: { visible: false, activeTab: 'exposure', fundCode: null, signal: null },
   customParams: {},
+  blViews: loadBlViews(),
+  configCapital: loadConfigCapital(),
 })
+
+/**
+ * 写入 BL 观点并持久化到 localStorage。
+ * notify=false：静默保存（行增删/编辑时用，不触发任何面板重算）
+ * notify=true ：广播变更（「应用并刷新」时用，左侧列表+详情会带新观点重算）
+ */
+export function persistBlViews(views: BlView[], notify = false): void {
+  try { localStorage.setItem(BL_VIEWS_KEY, JSON.stringify(views)) } catch { /* 存储不可用时忽略 */ }
+  if (notify) state.set('blViews', views)
+  else state.setSilent('blViews', views)
+}
+
+/** 写入配置基准金额并持久化。 */
+export function persistConfigCapital(capital: number): void {
+  try { localStorage.setItem(CAPITAL_KEY, String(capital)) } catch { /* 忽略 */ }
+  state.set('configCapital', capital)
+}

@@ -32,8 +32,13 @@ class RiskParityStrategy(FundStrategyBase):
         return []
 
     def optimize(self, fund_codes: List[str],
-                 params: Optional[dict] = None) -> dict:
-        """组合优化 — 约束风险平价"""
+                 params: Optional[dict] = None,
+                 nav_series: Optional[Dict[str, List[float]]] = None) -> dict:
+        """组合优化 — 约束风险平价
+
+        nav_series: {fund_code: [净值...]} — 引擎回测传入截至当日的净值序列，
+                    避免走 DB 全量历史造成前视偏差。None 时从 DB 拉取。
+        """
         from ...data.storage import get_nav_history
 
         if params:
@@ -43,13 +48,20 @@ class RiskParityStrategy(FundStrategyBase):
             return {"strategy": self.strategy_name, "fund_codes": fund_codes,
                     "weights": {code: 1.0 for code in fund_codes}, "status": "single_fund"}
 
+        # 截断 lookback（避免传入过多历史导致权重趋同）
+        lb = self.params.get("lookback_years", 3) * 252
+
         # 1. 获取各基金收益率序列
         all_returns = {}
         for code in fund_codes:
-            navs = get_nav_history(code)
-            if len(navs) < 60:
-                continue
-            nav_values = [r.get("nav", 0) for r in navs if r.get("nav") and r["nav"] > 0]
+            if nav_series and code in nav_series:
+                nav_values = [float(v) for v in nav_series[code]
+                              if v and v > 0][-lb:]
+            else:
+                navs = get_nav_history(code)
+                if len(navs) < 60:
+                    continue
+                nav_values = [r.get("nav", 0) for r in navs if r.get("nav") and r["nav"] > 0]
             if len(nav_values) > 20:
                 returns = np.diff(np.array(nav_values, dtype=np.float64)) / np.array(nav_values[:-1], dtype=np.float64)
                 all_returns[code] = returns
@@ -75,11 +87,29 @@ class RiskParityStrategy(FundStrategyBase):
         max_w = self.params["max_weight"]
         min_w = self.params["min_weight"]
 
+        # 自适应权重范围：基金数多时放宽约束，否则风险平价无法拉开差距
+        # min_weight*n 必须 <= 1 才存在可行解
+        if min_w * n > 1.0:
+            min_w = 0.9 / n
+        # 基金数多时降低 max_weight 避免不可行（max_weight*n 必须 >= 1）
+        if max_w * n < 1.0:
+            max_w = 1.0 / n
+        # 基金数 >= 10 时放宽上限，否则风险平价退化为近似等权
+        if n >= 10:
+            max_w = max(max_w, 0.6)
+
         bounds = [(min_w, max_w) for _ in range(n)]
         constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
 
-        # 初始解: 等权
-        w0 = np.array([1.0 / n] * n)
+        # 初始解: 逆方差加权（比等权更接近风险平价解，避免 SLSQP 收敛到等权平坦区）
+        diag_var = np.diag(cov)
+        if np.all(diag_var > 0):
+            w0 = (1.0 / diag_var)
+            w0 = w0 / np.sum(w0)
+            w0 = np.clip(w0, min_w, max_w)
+            w0 = w0 / np.sum(w0)
+        else:
+            w0 = np.array([1.0 / n] * n)
 
         try:
             from scipy.optimize import minimize

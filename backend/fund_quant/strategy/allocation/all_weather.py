@@ -63,7 +63,8 @@ class AllWeatherStrategy(FundStrategyBase):
         return []
 
     def optimize(self, fund_codes: Optional[List[str]] = None,
-                 params: Optional[dict] = None) -> dict:
+                 params: Optional[dict] = None,
+                 nav_series: Optional[Dict[str, List[float]]] = None) -> dict:
         """执行全天候组合优化
 
         Args:
@@ -85,7 +86,7 @@ class AllWeatherStrategy(FundStrategyBase):
         mode = self.params["mode"]
 
         if mode == "risk_parity":
-            return self._optimize_risk_parity(asset_codes, asset_info)
+            return self._optimize_risk_parity(asset_codes, asset_info, nav_series)
         else:
             return self._optimize_fixed(asset_codes, asset_info)
 
@@ -169,7 +170,8 @@ class AllWeatherStrategy(FundStrategyBase):
         }
 
     def _optimize_risk_parity(self, codes: List[str],
-                              asset_info: Dict) -> dict:
+                              asset_info: Dict,
+                              nav_series: Optional[Dict[str, List[float]]] = None) -> dict:
         """风险平价模式: Ledoit-Wolf协方差 + SLSQP求解
 
         追求各资产风险贡献相等，波动率更低，夏普更高。
@@ -180,10 +182,13 @@ class AllWeatherStrategy(FundStrategyBase):
         lookback = self.params["lookback_days"]
         all_returns = {}
         for code in codes:
-            navs = get_nav_history(code)
-            if not navs or len(navs) < 60:
-                continue
-            nav_values = [r.get("nav", 0) for r in navs if r.get("nav") and r["nav"] > 0]
+            if nav_series is not None:
+                nav_values = [nav for nav in nav_series.get(code, []) if nav and nav > 0]
+            else:
+                navs = get_nav_history(code)
+                if not navs:
+                    continue
+                nav_values = [r.get("nav", 0) for r in navs if r.get("nav") and r["nav"] > 0]
             if len(nav_values) < 20:
                 continue
             arr = np.array(nav_values[-lookback:], dtype=np.float64)
@@ -210,6 +215,11 @@ class AllWeatherStrategy(FundStrategyBase):
         n = len(valid)
         max_w = self.params["max_weight"]
         min_w = self.params["min_weight"]
+        # 自适应：保证可行域非空（n 小时 max_w 下限、n 大时 min_w 上限）
+        if max_w * n < 1.0:
+            max_w = 1.0 / n
+        if min_w * n > 1.0:
+            min_w = 0.9 / n
         bounds = [(min_w, max_w) for _ in range(n)]
         constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
         w0 = np.array([1.0 / n] * n)

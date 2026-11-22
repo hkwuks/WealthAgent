@@ -181,16 +181,20 @@ class SimExecutionEngine(ExecutionEngine):
 class T1ExecutionEngine(ExecutionEngine):
     """T+1 确认执行引擎（基金）— 持仓成本平均 + 持有天数跟踪 + 交易日志 + 权益追踪"""
 
-    def __init__(self, confirmation_delay: int = 1):
+    def __init__(self, confirmation_delay: int = 1,
+                 confirmation_delays: dict[str, dict[str, int]] | None = None):
         self._delay = confirmation_delay
+        self._confirmation_delays = confirmation_delays or {}
         self._orders: dict[str, Order] = {}
-        self._pending: dict[str, tuple[Signal, int]] = {}  # signal -> bars_waited
+        self._pending: dict[str, tuple[Signal, int, str | None]] = {}  # signal -> matching bars waited + submit date
         self._positions: dict[str, Position] = {}
         self._all_fills: list[Fill] = []
-        self._entry_bars: dict[str, int] = {}  # fund_code -> bar_index opened
+        self._entry_bars: dict[str, int] = {}  # compatibility for trade logs
+        self._entry_dates: dict[str, Any] = {}
         self._trade_log: list[dict] = []
         self._bar_index: int = 0
         self._capital: float = 0.0
+        self._current_date: Any = None
         self._current_prices: dict[str, float] = {}
 
     def set_capital(self, capital: float):
@@ -215,7 +219,7 @@ class T1ExecutionEngine(ExecutionEngine):
                       direction=signal.direction, price=signal.price,
                       volume=signal.volume, status=OrderStatus.ACCEPTED)
         self._orders[oid] = order
-        self._pending[oid] = (signal, 0)
+        self._pending[oid] = (signal, 0, signal.extra.get("submit_date"))
         return order
 
     def cancel(self, order_id: str) -> bool:
@@ -235,47 +239,69 @@ class T1ExecutionEngine(ExecutionEngine):
         return list(self._positions.values())
 
     def get_holding_days(self, fund_code: str) -> int:
-        """返回指定基金当前持仓已持有 bar 数（用于赎回费率计算）"""
-        entry_bar = self._entry_bars.get(fund_code)
-        if entry_bar is None:
+        """返回指定基金当前持仓的自然日持有期，用于赎回费率计算。"""
+        entry_date = self._entry_dates.get(fund_code)
+        if entry_date is None or self._current_date is None:
             return 0
-        return self._bar_index - entry_bar
+        return max((self._current_date - entry_date).days, 0)
 
     def get_trade_log(self) -> list[dict]:
         """返回详细交易日志"""
         return list(self._trade_log)
 
     def on_bar(self, bar: Bar) -> list[Fill]:
-        # 记录当前价格用于 portfolio_value
         sym = getattr(bar, "symbol", getattr(bar, "fund_code", ""))
-        self._current_prices[sym] = getattr(bar, "close", getattr(bar, "nav", 0))
+        price = getattr(bar, "close", getattr(bar, "nav", 0))
+        bar_date = str(getattr(bar, "date", getattr(bar, "datetime", "")))
+        current_date = getattr(bar, "date", None)
+        if current_date is not None:
+            self._current_date = current_date
+        self._current_prices[sym] = price
 
         fills: list[Fill] = []
-        ready: list[tuple[str, Signal]] = []
-        remaining: dict[str, tuple[Signal, int]] = {}
+        remaining: dict[str, tuple[Signal, int, str | None]] = {}
+        for oid, (signal, matched_bars, submit_date) in self._pending.items():
+            if sym != signal.symbol:
+                remaining[oid] = (signal, matched_bars, submit_date)
+                continue
+            if submit_date is None:
+                remaining[oid] = (signal, matched_bars, bar_date)
+                continue
+            if bar_date == submit_date:
+                remaining[oid] = (signal, matched_bars, submit_date)
+                continue
+            delay = self._confirmation_delays.get(signal.symbol, {}).get(
+                "redemption_confirm_days" if signal.direction in (Direction.CLOSE_LONG, Direction.CLOSE_SHORT)
+                else "subscription_confirm_days",
+                self._delay,
+            )
+            if matched_bars + 1 < delay:
+                remaining[oid] = (signal, matched_bars + 1, submit_date)
+                continue
 
-        for oid, (signal, waited) in self._pending.items():
-            if waited >= self._delay:
-                ready.append((oid, signal))
-            else:
-                remaining[oid] = (signal, waited + 1)
-
-        self._pending = remaining
-
-        for oid, signal in ready:
             order = self._orders[oid]
-            price = getattr(bar, "close", getattr(bar, "nav", 0))
-            fill = Fill(order_id=oid, price=price, volume=signal.volume)
-            order.filled_volume = signal.volume
+            if signal.direction in (Direction.CLOSE_LONG, Direction.CLOSE_SHORT):
+                signal.extra["holding_days"] = self.get_holding_days(signal.symbol)
+            fill_volume = signal.volume
+            if signal.direction in (Direction.LONG, Direction.SHORT) and price > 0:
+                fill_volume = min(fill_volume, self._capital / price)
+            if fill_volume <= 1e-9:
+                order.status = OrderStatus.REJECTED
+                continue
+            fill = Fill(order_id=oid, price=price, volume=fill_volume)
+            if not self._apply_fill(signal, fill, price):
+                order.status = OrderStatus.REJECTED
+                continue
+            order.filled_volume = fill_volume
             order.status = OrderStatus.FILLED
             fills.append(fill)
             self._all_fills.append(fill)
-            self._apply_fill(signal, fill, price)
 
+        self._pending = remaining
         self._bar_index += 1
         return fills
 
-    def _apply_fill(self, signal: Signal, fill: Fill, price: float | None = None):
+    def _apply_fill(self, signal: Signal, fill: Fill, price: float | None = None) -> bool:
         fill_price = price or fill.price
         pos = self._positions.get(signal.symbol)
 
@@ -284,47 +310,53 @@ class T1ExecutionEngine(ExecutionEngine):
             close_dir = Direction.LONG if signal.direction == Direction.CLOSE_LONG else Direction.SHORT
             if pos and pos.direction == close_dir and pos.volume > 0:
                 # 卖出 → 增加可用资金
-                proceeds = fill_price * signal.volume
+                proceeds = fill_price * fill.volume
                 self._capital += proceeds
-                realized = proceeds - pos.avg_price * signal.volume
+                realized = proceeds - pos.avg_price * fill.volume
                 pos.realized_pnl += realized if signal.direction == Direction.CLOSE_LONG else -realized
-                pos.volume -= signal.volume
+                pos.volume -= fill.volume
                 self._trade_log.append({
                     "action": "sell", "symbol": signal.symbol,
                     "bar": self._bar_index, "price": fill_price,
-                    "volume": signal.volume, "holding_bars": self.get_holding_days(signal.symbol),
+                    "volume": fill.volume, "holding_bars": self.get_holding_days(signal.symbol),
                 })
                 if pos.volume <= 0:
                     self._positions.pop(signal.symbol, None)
                     self._entry_bars.pop(signal.symbol, None)
-            return
+                    self._entry_dates.pop(signal.symbol, None)
+            return True
 
         # 开仓方向
         if signal.direction in (Direction.LONG, Direction.SHORT):
             # 买入 → 减少可用资金
-            investment = fill_price * signal.volume
+            investment = fill_price * fill.volume
+            if investment > self._capital + 1e-9:
+                return False
             self._capital -= investment
             if pos is None:
                 self._positions[signal.symbol] = Position(
                     symbol=signal.symbol, direction=signal.direction,
-                    volume=signal.volume, avg_price=fill_price,
+                    volume=fill.volume, avg_price=fill_price,
                 )
                 self._entry_bars[signal.symbol] = self._bar_index
+                self._entry_dates[signal.symbol] = self._current_date
                 self._trade_log.append({
                     "action": "buy", "symbol": signal.symbol,
                     "bar": self._bar_index, "price": fill_price,
-                    "volume": signal.volume,
+                    "volume": fill.volume,
                 })
             else:
                 # 成本平均法（多次买入合并）
-                total = pos.avg_price * pos.volume + fill_price * signal.volume
-                pos.volume += signal.volume
+                total = pos.avg_price * pos.volume + fill_price * fill.volume
+                pos.volume += fill.volume
                 pos.avg_price = total / pos.volume
                 self._trade_log.append({
                     "action": "add", "symbol": signal.symbol,
                     "bar": self._bar_index, "price": fill_price,
-                    "volume": signal.volume,
+                    "volume": fill.volume,
                 })
+
+        return True
 
 
 class FuturesExecutionEngine(ExecutionEngine):
@@ -432,8 +464,8 @@ class FuturesExecutionEngine(ExecutionEngine):
         remaining: list[dict] = []
 
         for entry in self._pending:
-            entry["remaining"] -= 1
             if entry["remaining"] > 0:
+                entry["remaining"] -= 1
                 remaining.append(entry)
                 continue
 
@@ -607,12 +639,16 @@ class BacktestEngine:
             execution.set_capital(self.config.initial_capital)
 
         ctx = StrategyContext(bus)
+        # 策略可通过 ctx.execution 访问持仓等信息（配置策略调仓需要）
+        ctx.execution = execution
         strategy.on_init(ctx)
 
         _signals_published: list[Signal] = []
+        _all_signals: list[Signal] = []  # ponytail: accumulate all signals across bars
 
         def _capture(event: Event):
             _signals_published.append(event.payload)
+            _all_signals.append(event.payload)  # also accumulate globally
 
         # ponytail: subscribe by value string to avoid circular import on EventType
         bus._subscribers["signal.generated"].append(_capture)
@@ -625,15 +661,37 @@ class BacktestEngine:
         report = BacktestReport()
         report.equity_curve.append({"bar": 0, "equity": equity})
 
+        def _bar_date(value: Any) -> str:
+            return str(getattr(value, "date", getattr(value, "datetime", "")))
+
         for i, bar in enumerate(bars):
+            is_day_end = i == len(bars) - 1 or _bar_date(bars[i + 1]) != _bar_date(bar)
+            if i == 0 or _bar_date(bars[i - 1]) != _bar_date(bar):
+                risk_ctx.daily_signal_count = 0
             # 设置 ATR（期货引擎动态滑点用）
             if hasattr(execution, 'set_atr') and atr_values:
                 execution.set_atr(atr_values[i] if i < len(atr_values) else 0.0)
+
+            # 更新策略可读的组合总权益（配置策略用于目标金额计算）
+            if hasattr(execution, 'portfolio_value'):
+                ctx.portfolio_value = execution.portfolio_value
 
             # 发布 BAR_RECEIVED
             bus.publish(Event(EventType.BAR_RECEIVED, bar, source="engine"))
 
             # 组合级风控（每日一次）
+            risk_ctx.extra["as_of_date"] = getattr(bar, "date", getattr(bar, "datetime", None))
+            if hasattr(execution, "portfolio_value"):
+                positions = {
+                    p.symbol: p.volume * p.avg_price
+                    for p in (execution.positions() if execution else [])
+                    if p.volume > 0
+                }
+                risk_ctx.extra["portfolio"] = {
+                    "total_value": execution.portfolio_value,
+                    "cash": getattr(execution, "_capital", 0.0),
+                    "positions": positions,
+                }
             if risk_pipeline:
                 # 使用期货引擎的总权益（如有）
                 if hasattr(execution, 'portfolio_value'):
@@ -644,11 +702,13 @@ class BacktestEngine:
                 portfolio_results = risk_pipeline.run_portfolio(risk_ctx)
                 reject = any(r.level == RiskLevel.REJECT for r in portfolio_results)
                 if reject:
-                    report.equity_curve.append({
-                        "bar": i + 1, "equity": equity,
-                        "close": getattr(bar, "close", getattr(bar, "nav", 0)),
-                        "risk_blocked": True,
-                    })
+                    blocked_equity = execution.portfolio_value if hasattr(execution, "portfolio_value") else equity
+                    if is_day_end:
+                        report.equity_curve.append({
+                            "bar": i + 1, "equity": round(blocked_equity, 2),
+                            "close": getattr(bar, "close", getattr(bar, "nav", 0)),
+                            "date": _bar_date(bar), "risk_blocked": True,
+                        })
                     continue
 
             # Strategy 处理数据
@@ -671,6 +731,10 @@ class BacktestEngine:
 
             # 提交信号到执行引擎（积累到跨 bar 映射）
             for signal in allowed_signals:
+                signal.extra.setdefault("submit_date", _bar_date(bar))
+                # 注入持有天数，供成本模型按档位计赎回费
+                if hasattr(execution, 'get_holding_days'):
+                    signal.extra["holding_days"] = execution.get_holding_days(signal.symbol)
                 order = execution.submit(signal) if execution else None
                 if order:
                     _pending_signal_map[order.id] = signal
@@ -682,6 +746,8 @@ class BacktestEngine:
                     # 从跨 bar 映射中找对应的 signal
                     orig_signal = _pending_signal_map.get(fill.order_id)
                     if orig_signal:
+                        if hasattr(execution, 'get_holding_days'):
+                            orig_signal.extra["holding_days"] = execution.get_holding_days(orig_signal.symbol)
                         cost = cost_model.calc(orig_signal, fill)
                         fill.commission = cost
                         # 通知执行引擎扣除交易成本（有 deduct_cost 的引擎才扣）
@@ -706,14 +772,16 @@ class BacktestEngine:
                             pos.unrealized_pnl = round(mk_val - cost_val, 4)
                             equity_ts += pos.unrealized_pnl
 
-            report.equity_curve.append({
-                "bar": i + 1, "equity": round(equity_ts, 2),
-                "close": getattr(bar, "close", getattr(bar, "nav", 0)),
-            })
+            if is_day_end:
+                report.equity_curve.append({
+                    "bar": i + 1, "equity": round(equity_ts, 2),
+                    "close": getattr(bar, "close", getattr(bar, "nav", 0)),
+                    "date": _bar_date(bar),
+                })
 
         report.final_equity = report.equity_curve[-1]["equity"]
         report.total_return = (report.final_equity / self.config.initial_capital) - 1
-        self._captured_signals = _signals_published
+        self._captured_signals = _all_signals
         bus.publish(Event(EventType.ENGINE_STOP, {"reason": "completed"}, source="engine"))
         return report
 

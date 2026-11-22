@@ -4,7 +4,15 @@
     "fund_name": "摩根标普500指数(QDII)人民币C",
     "fund_type": "指数型-海外股票",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "off_exchange",
+    "trade_mode": "t2",
+    "subscription_confirm_days": 2,
+    "redemption_confirm_days": 2,
+    "cash_arrival_days": 7,
+    "trading_profile_source": "东方财富基金资料/F10",
+    "trading_profile_confidence": 0.7,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "000218",
@@ -33,7 +41,15 @@
     "fund_name": "博时恒乐债券A",
     "fund_type": "债券型-混合二级",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "off_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 1,
+    "redemption_confirm_days": 1,
+    "cash_arrival_days": 3,
+    "trading_profile_source": "东方财富基金资料/F10",
+    "trading_profile_confidence": 0.7,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "017436",
@@ -47,7 +63,15 @@
     "fund_name": "东兴鑫享6个月滚动持有债券发起A",
     "fund_type": "债券型-混合一级",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "off_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 1,
+    "redemption_confirm_days": 1,
+    "cash_arrival_days": 3,
+    "trading_profile_source": "东方财富基金资料/F10",
+    "trading_profile_confidence": 0.7,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "005159",
@@ -75,7 +99,15 @@
     "fund_name": "华安德国(DAX)联接(QDII)A",
     "fund_type": "指数型-海外股票",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "off_exchange",
+    "trade_mode": "t2",
+    "subscription_confirm_days": 2,
+    "redemption_confirm_days": 2,
+    "cash_arrival_days": 7,
+    "trading_profile_source": "东方财富基金资料/F10",
+    "trading_profile_confidence": 0.7,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "009308",
@@ -195,5 +227,7 @@
     "fund_type": "ETF 基金",
     "total_shares": 1,
     "holdings": []
+  }
+] []
   }
 ]

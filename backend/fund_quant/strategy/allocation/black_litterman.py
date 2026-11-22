@@ -20,6 +20,7 @@ class BlackLittermanStrategy(FundStrategyBase):
         "max_weight": 0.4,
         "min_weight": 0.05,
         "lookback_days": 756,
+        "views": [],  # 用户观点: [{fund_long, fund_short, excess_return, confidence}]
     }
     applicable_fund_types = []
     min_history_days = 365
@@ -27,7 +28,8 @@ class BlackLittermanStrategy(FundStrategyBase):
     # ── 主入口 ────────────────────────────────────────────────
 
     def optimize(self, fund_codes: List[str],
-                 params: Optional[dict] = None) -> dict:
+                 params: Optional[dict] = None,
+                 nav_series: Optional[Dict[str, List[float]]] = None) -> dict:
         """Black-Litterman组合优化
 
         1. 均衡收益Π = δ * Σ * w_mkt
@@ -37,6 +39,8 @@ class BlackLittermanStrategy(FundStrategyBase):
         Args:
             fund_codes: 基金代码列表
             params: 覆盖默认参数
+            nav_series: {fund_code: [净值...]} — 引擎回测传入截至当日的净值序列，
+                        避免走 DB 全量历史造成前视偏差。None 时从 DB 拉取。
 
         Returns:
             dict: 含 weights, 状态信息的优化结果
@@ -51,7 +55,7 @@ class BlackLittermanStrategy(FundStrategyBase):
                     "weights": {c: 1.0 for c in fund_codes}, "status": "single_fund"}
 
         # 1. 获取收益率序列
-        all_returns, codes = self._fetch_returns(fund_codes)
+        all_returns, codes = self._fetch_returns(fund_codes, nav_series)
         if len(codes) < 2:
             return {"strategy": self.strategy_name, "fund_codes": fund_codes,
                     "weights": {c: 1.0 / len(fund_codes) for c in fund_codes},
@@ -60,26 +64,29 @@ class BlackLittermanStrategy(FundStrategyBase):
         # 2. Ledoit-Wolf 协方差
         cov = self._ledoit_wolf_covariance(all_returns)
 
-        # 3. 均衡收益 Π = δ * Σ * w_mkt
-        w_mkt = self._market_weights(codes)
+        # 3. 均衡收益 Π = δ * Σ * w_mkt。历史回测没有时点规模数据，不能读取当前规模。
+        w_mkt = self._market_weights(codes, use_current_metadata=nav_series is None)
         delta = self.params["risk_aversion"]
         pi = delta * cov @ w_mkt
 
         # 4. 从 _state 提取信号视图
+        self._state["_cov_matrix"] = cov  # 供 _build_views 复用
         views, has_views = self._build_views(codes)
 
         # 5. 后验预期收益
         if has_views and views["P"].shape[0] > 0:
             mu = self._posterior_return(cov, pi, views)
-            method = "black_litterman"
         else:
-            # 无观点 → 降级: 直接用均衡收益
-            mu = pi
-            method = "mean_variance"
+            # 无观点 → 等权（学术上优于无约束均值-方差，见 DeMiguel et al. 2009）
+            codes_out = codes
+            w = np.ones(len(codes_out)) / len(codes_out)
+            return {"strategy": self.strategy_name, "fund_codes": codes,
+                    "weights": {c: round(float(x), 4) for c, x in zip(codes_out, w)},
+                    "method": "equal_weight", "status": "success"}
 
         # 6. 均值-方差优化
         result = self._mean_variance_optimize(cov, mu, codes)
-        result["method"] = method
+        result["method"] = "black_litterman"
         result["strategy"] = self.strategy_name
         result["fund_codes"] = codes
 
@@ -94,16 +101,30 @@ class BlackLittermanStrategy(FundStrategyBase):
 
     # ── 收益率获取 ────────────────────────────────────────────
 
-    def _fetch_returns(self, fund_codes: List[str]) -> Tuple[np.ndarray, List[str]]:
-        """获取对齐后的收益率矩阵"""
+    def _fetch_returns(self, fund_codes: List[str],
+                       nav_series: Optional[Dict[str, List[float]]] = None
+                       ) -> Tuple[np.ndarray, List[str]]:
+        """获取对齐后的收益率矩阵
+
+        nav_series: 提供时用其计算收益率（引擎回测传入截至当日的数据，无前视），
+                    否则从 DB 拉取全量历史。
+        """
         from ...data.storage import get_nav_history
+
+        # 截断 lookback（避免过多历史导致均衡权重退化为等权）
+        lb = self.params.get("lookback_days", 756)
 
         all_returns = {}
         for code in fund_codes:
-            navs = get_nav_history(code)
-            if len(navs) < 60:
-                continue
-            nav_values = [r.get("nav", 0) for r in navs if r.get("nav") and r["nav"] > 0]
+            if nav_series and code in nav_series:
+                nav_values = [float(v) for v in nav_series[code]
+                              if v and v > 0][-lb:]
+            else:
+                navs = get_nav_history(code)
+                if len(navs) < 60:
+                    continue
+                nav_values = [r.get("nav", 0) for r in navs
+                              if r.get("nav") and r["nav"] > 0]
             if len(nav_values) > 20:
                 arr = np.array(nav_values, dtype=np.float64)
                 rets = np.diff(arr) / arr[:-1]
@@ -140,8 +161,12 @@ class BlackLittermanStrategy(FundStrategyBase):
 
     # ── 市场权重 ──────────────────────────────────────────────
 
-    def _market_weights(self, codes: List[str]) -> np.ndarray:
-        """市场权重: 基于规模(scale)的加权; 无数据时等权"""
+    def _market_weights(self, codes: List[str],
+                        use_current_metadata: bool = True) -> np.ndarray:
+        """市场权重: 基于规模的加权；历史回测无时点规模时使用等权。"""
+        if not use_current_metadata:
+            return np.ones(len(codes)) / len(codes)
+
         from ...data.storage import get_fund_meta
 
         n = len(codes)
@@ -163,14 +188,74 @@ class BlackLittermanStrategy(FundStrategyBase):
         return weights
 
     # ── 观点生成 ──────────────────────────────────────────────
+    # 置信度三档映射
+    _CONF_MAP = {"high": 0.9, "mid": 0.6, "low": 0.3, "高": 0.9, "中": 0.6, "低": 0.3}
+
+    def _parse_confidence(self, v) -> float:
+        if isinstance(v, str):
+            return self._CONF_MAP.get(v, 0.6)
+        try:
+            f = float(v)
+            return max(0.05, min(0.95, f if f <= 1 else f / 100))
+        except Exception:
+            return 0.6
 
     def _build_views(self, codes: List[str]) -> Tuple[dict, bool]:
-        """从策略信号构建 Black-Litterman 观点
+        """构建 Black-Litterman 观点 — 优先使用 params.views（用户相对观点），否则回退信号驱动
+
+        views: List[{fund_long, fund_short, excess_return, confidence}]
+          fund_long/fund_short: 基金代码（必须在 codes 内）
+          excess_return: 年化超额收益（小数，如 0.03 表示 3%；>1 时按百分比处理）
+          confidence: high/mid/low 或 0~1 数值
 
         Returns:
             (views_dict, has_views)
             views_dict = {"P": ndarray, "Q": ndarray, "k": int, "omegas": ndarray}
         """
+        user_views: list = self.params.get("views") or []
+        if user_views:
+            code_to_idx = {c: i for i, c in enumerate(codes)}
+            n = len(codes)
+            rows, qs, confs = [], [], []
+            for v in user_views:
+                fl = (v.get("fund_long") or v.get("long") or "").strip()
+                fs = (v.get("fund_short") or v.get("short") or "").strip()
+                if not fl or not fs or fl not in code_to_idx or fs not in code_to_idx or fl == fs:
+                    continue
+                try:
+                    er = float(v.get("excess_return", v.get("excess", 0)))
+                except Exception:
+                    continue
+                # >1 视为百分比输入
+                if abs(er) > 1:
+                    er = er / 100
+                if abs(er) < 1e-6:
+                    continue
+                q = er / 252  # 年化 -> 日度
+                row = np.zeros(n)
+                row[code_to_idx[fl]] = 1.0
+                row[code_to_idx[fs]] = -1.0
+                rows.append(row)
+                qs.append(q)
+                confs.append(self._parse_confidence(v.get("confidence", "mid")))
+            if rows:
+                P = np.vstack(rows)
+                Q = np.array(qs)
+                confidences = np.array(confs)
+                tau = self.params["tau"]
+                cov = self._state.get("_cov_matrix")
+                if cov is not None:
+                    diag = np.array([float(p @ cov @ p) for p in P])
+                    # Idzorek 校准：Ω = diag((1/c -1) * τ * PΣP')
+                    diag = np.maximum(diag, 1e-12)
+                    omegas = np.diag((1.0 / np.maximum(confidences, 0.05) - 1.0) * tau * diag)
+                else:
+                    omegas = self._idzorek_omega(P, Q, confidences, tau)
+                return {"P": P, "Q": Q, "omegas": omegas, "k": len(rows)}, True
+            # 有 views 但全部无效 -> 视为无观点，降级
+            return {}, False
+
+        # 回退：从策略信号构建
         signals: List[FundSignal] = self._state.get("active_signals", [])
         if not signals:
             return {}, False
