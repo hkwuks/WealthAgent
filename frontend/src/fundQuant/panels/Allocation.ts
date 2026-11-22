@@ -8,7 +8,7 @@ export class Allocation extends PanelBase {
   private chartType: 'pie' | 'treemap' = 'pie'
 
   constructor() {
-    super({ id: 'allocation', title: '组合配置', defaultGridPos: { x: 1, y: 2, w: 1, h: 1 } })
+    super({ id: 'allocation', title: '组合配置', defaultGridPos: { x: 1, y: 2, w: 2, h: 1 } })
   }
 
   render(): HTMLElement {

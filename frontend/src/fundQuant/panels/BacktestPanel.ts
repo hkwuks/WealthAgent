@@ -10,6 +10,7 @@ export class BacktestPanel extends PanelBase {
   private backtestId: string = ''
 
   constructor() {
+    // w=2 + 参数扫描 w=1 刚好凑满 3 列，两个面板并排
     super({ id: 'backtest', title: '回测', defaultGridPos: { x: 0, y: 5, w: 2, h: 1 } })
   }
 

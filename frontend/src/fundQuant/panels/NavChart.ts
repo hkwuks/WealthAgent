@@ -23,7 +23,7 @@ export class NavChart extends PanelBase {
   private activeDays: number = 90
 
   constructor() {
-    super({ id: 'nav_chart', title: '净值走势', defaultGridPos: { x: 0, y: 1, w: 2, h: 1 } })
+    super({ id: 'nav_chart', title: '净值走势', defaultGridPos: { x: 0, y: 1, w: 3, h: 1 } })
   }
 
   render(): HTMLElement {
