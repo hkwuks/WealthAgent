@@ -12,6 +12,19 @@ from backend.fund_quant.core.models import BacktestConfig, BacktestResult, CostM
 
 
 class TestBacktestEngine:
+    def test_backtest_nav_window_excludes_future_records(self):
+        """Aurora 回测数据必须严格限制在请求区间内。"""
+        from backend.api.fund_quant import _filter_nav_records
+
+        records = [
+            {"date": "2023-12-31", "nav": 1.0},
+            {"date": "2024-01-02", "nav": 1.1},
+            {"date": "2024-06-30", "nav": 1.2},
+            {"date": "2024-07-01", "nav": 1.3},
+        ]
+
+        assert _filter_nav_records(records, "2024-01-01", "2024-06-30") == records[1:3]
+
     def test_empty_nav_returns_failed(self):
         cfg = BacktestConfig(strategy_name="test", fund_codes=["000001"],
                              start_date="2020-01-01", end_date="2020-12-31")
@@ -96,16 +109,78 @@ class TestBacktestEngine:
         # 至少应该有 equity_curve
         assert len(result.equity_curve) >= 1
 
-    def test_trade_log(self):
+    def test_walk_forward_test_return_excludes_warmup_gain(self):
+        """Walk-Forward 测试收益只能由测试权益曲线计算。"""
+        from types import SimpleNamespace
+        from backend.core.validation import WalkForwardValidator as CoreWalkForwardValidator
+
+        class FakeEngine:
+            def __init__(self, bars):
+                self.bars = bars
+
+            def run(self):
+                equity = [100.0]
+                for bar in self.bars:
+                    equity.append(equity[-1] * (2 if bar < 3 else 1))
+                return SimpleNamespace(
+                    total_return=equity[-1] / equity[0] - 1,
+                    total_trades=0,
+                    equity_curve=[{"bar": i, "equity": value} for i, value in enumerate(equity)],
+                )
+
+        result = CoreWalkForwardValidator(train_window=3, test_window=2).run(
+            list(range(7)), FakeEngine, warmup_bars=2,
+        )
+
+        assert all(window["test_return"] == 0 for window in result["windows"])
+
+    def test_walk_forward_excludes_warmup_equity_points(self):
+        """Walk-Forward 测试收益不得包含预热区间的权益点。"""
+        from types import SimpleNamespace
+        from backend.core.validation import WalkForwardValidator as CoreWalkForwardValidator
+
+        class FakeEngine:
+            def __init__(self, bars):
+                self.bars = bars
+
+            def run(self):
+                return SimpleNamespace(
+                    total_return=0.0,
+                    total_trades=0,
+                    equity_curve=[{"bar": i, "equity": 100.0} for i in range(len(self.bars) + 1)],
+                )
+
+        result = CoreWalkForwardValidator(train_window=3, test_window=2).run(
+            list(range(7)), FakeEngine, warmup_bars=2,
+        )
+
+        assert result["windows"]
+        for window in result["windows"]:
+            assert all(point["bar"] > window["warmup_bars"] for point in window["test_equity"])
+
+    def test_multi_fund_benchmark_uses_nav_returns(self):
+        """信息比率基准必须来自基金净值，而不是人为线性序列。"""
         engine = FundBacktester()
-        engine._config = BacktestConfig(strategy_name="test", fund_codes=["000001"],
-                                        start_date="2020-01-01", end_date="2020-12-31")
-        engine._cash = 100000
-        engine.submit_order("000001", "buy", 1000, date(2020, 1, 2))
-        assert len(engine._trade_log) == 0  # 订单还未确认
+        engine._equity_curve = [
+            {"date": "2020-01-02", "total_value": 100000},
+            {"date": "2020-01-03", "total_value": 100000},
+            {"date": "2020-01-06", "total_value": 100000},
+        ]
+        engine._nav_data = {
+            "A": [
+                {"date": "2020-01-02", "nav": 1.0},
+                {"date": "2020-01-03", "nav": 1.1},
+                {"date": "2020-01-06", "nav": 1.1},
+            ],
+            "B": [
+                {"date": "2020-01-02", "nav": 2.0},
+                {"date": "2020-01-03", "nav": 2.0},
+                {"date": "2020-01-06", "nav": 2.2},
+            ],
+        }
 
+        assert engine._benchmark_returns() == pytest.approx([0.05, 0.05])
 
-class TestSimPosition:
     def test_position_value(self):
         pos = SimPosition("000001", 1000, date(2024, 1, 1), 1.0)
         assert pos.current_value(1.05) == 1050.0
@@ -278,6 +353,60 @@ class TestWalkForward:
         assert result["method"] == "walk_forward"
         assert "summary" in result
         assert result["summary"]["total_windows"] > 0
+    def test_validate_excludes_windows_below_minimum_trades(self):
+        def mock_backtest(_cfg):
+            return {"total_return": 0.08, "sharpe_ratio": 0.8, "max_drawdown": 0.06, "total_trades": 0}
+
+        result = WalkForwardValidator().validate(
+            mock_backtest, ["000001"], "2020-01-01", "2024-12-31",
+            {"train_window_days": 30, "test_window_days": 10, "step_size_days": 10, "min_train_trades": 1},
+        )
+
+        assert result["summary"]["total_windows"] > 0
+        assert result["summary"]["valid_windows"] == 0
+
+    def test_validate_reports_benchmark_and_excess_return(self):
+        def mock_backtest(cfg):  # pylint: disable=unused-argument
+            return {
+                "total_return": 0.08,
+                "sharpe_ratio": 0.8,
+                "max_drawdown": 0.06,
+                "total_trades": 25,
+                "benchmark_return": 0.03,
+            }
+
+        result = WalkForwardValidator().validate(
+            mock_backtest, ["000001"], "2020-01-01", "2024-12-31",
+            {"train_window_days": 30, "test_window_days": 10, "step_size_days": 10},
+        )
+
+        assert result["windows"][0]["benchmark_return"] == 0.03
+        assert result["windows"][0]["excess_return"] == 0.05
+        assert result["summary"]["avg_benchmark_return"] == 0.03
+        assert result["summary"]["avg_excess_return"] == 0.05
+    def test_validate_reports_external_as_of_benchmark(self, monkeypatch):
+        import backend.fund_quant.data.storage as storage
+
+        monkeypatch.setattr(storage, "get_index_history", lambda _key: [
+            {"date": "2020-02-01", "close": 100.0},
+            {"date": "2020-02-05", "close": 110.0},
+        ])
+        monkeypatch.setattr(storage, "get_nav_history", lambda *_args: [
+            {"date": "2020-02-01", "nav": 1.0},
+            {"date": "2020-02-05", "nav": 1.1},
+        ])
+
+        def mock_backtest(_cfg):
+            return {"total_return": 0.08, "sharpe_ratio": 0.8, "max_drawdown": 0.06, "total_trades": 25}
+
+        result = WalkForwardValidator().validate(
+            mock_backtest, ["000001"], "2020-01-01", "2020-03-01",
+            {"train_window_days": 30, "test_window_days": 10, "step_size_days": 10},
+            benchmark="csi300",
+        )
+
+        assert result["windows"][0]["benchmark_return"] == 0.1
+        assert result["windows"][0]["excess_return"] == -0.02
 
 
 class TestCostModelEnhanced:

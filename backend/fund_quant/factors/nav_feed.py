@@ -49,11 +49,15 @@ class NavFeed:
         return {}
 
 
-def feed_from_storage(fund_code: str, min_points: int = 40) -> NavFeed | None:
-    """从 SQLite 读出净值序列，构造带日期轴的 feed。"""
-    from backend.fund_quant.data.storage import get_nav_history
+def feed_from_storage(fund_code: str, min_points: int = 40,
+                      rows: list | None = None) -> NavFeed | None:
+    """从 SQLite 读出净值序列，构造带日期轴的 feed。
 
-    rows = get_nav_history(fund_code)
+    rows: 调用方已取好的净值记录，可跳过重复查询（注入路径用）。
+    """
+    if rows is None:
+        from backend.fund_quant.data.storage import get_nav_history
+        rows = get_nav_history(fund_code)
     if not rows:
         return None
     vals, dates = [], []

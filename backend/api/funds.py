@@ -1,9 +1,10 @@
 import asyncio
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Query
 from typing import List, Dict, Any
 import json
 import os
 from backend.market_data import market_data_service
+from backend.fund_quant.core.trading import infer_trading_profile
 from loguru import logger
 
 # 基金数据文件路径
@@ -111,6 +112,20 @@ async def add_fund(fund: Dict[str, Any] = Body(...)):
                     "success": False,
                     "message": f"基金已存在: {fund.get('fund_code')}"
                 }
+
+        # 交易属性优先使用可靠资料自动识别；无法确认时保留待人工确认状态。
+        fund.setdefault("market_type", fund.get("market_type", "unknown"))
+        if not fund.get("trade_mode") or fund.get("trading_profile_needs_confirmation", True):
+            quote = None
+            if "ETF" in f"{fund.get('fund_name', '')}{fund.get('fund_type', '')}".upper():
+                try:
+                    quote = await market_data_service.get_etf_realtime_data(fund["fund_code"])
+                except Exception:
+                    quote = None
+            fund.update(infer_trading_profile(
+                fund["fund_code"], fund.get("fund_name", ""), fund.get("fund_type", ""), quote,
+                fund.get("purchase_channel"),
+            ))
 
         # 添加新基金
         funds.append(fund)
@@ -289,6 +304,31 @@ async def query_fund_data(fund_code: str):
 
 
 @router.get(
+    "/profile/{fund_code}",
+    summary="自动识别基金交易属性",
+    description="使用基金资料与ETF行情接口识别场内/场外及交易时序，无法确认时标记待人工确认",
+)
+async def get_trading_profile(fund_code: str, purchase_channel: str | None = Query(None)):
+    if purchase_channel not in {None, "tiantian", "ant", "broker", "bank", "other"}:
+        return {"success": False, "message": "不支持的购买渠道"}
+    fund_data = await market_data_service.get_fund_data(fund_code)
+    if not fund_data:
+        return {"success": False, "message": f"未找到基金信息: {fund_code}"}
+    quote = None
+    if fund_data.market_type.value == "on_exchange":
+        try:
+            quote = await market_data_service.get_etf_realtime_data(fund_code)
+        except Exception:
+            quote = None
+    profile = infer_trading_profile(
+        fund_code, fund_data.fund_name, fund_data.fund_type, quote, purchase_channel,
+    )
+    return {"success": True, "data": {
+        **fund_data.model_dump(), **profile,
+    }}
+
+
+@router.get(
     "/{fund_code}",
     summary="获取单个基金信息",
     description="根据基金代码获取基金详细信息"
@@ -357,3 +397,43 @@ async def clear_funds():
             "success": False,
             "message": f"清空基金列表失败: {str(e)}"
         }
+
+
+@router.get(
+    "/{fund_code}/nav-history",
+    summary="获取基金净值历史",
+    description="获取指定基金的净值历史数据（用于净值走势图）"
+)
+async def get_fund_nav_history(fund_code: str, limit: int = 250):
+    """
+    获取基金净值历史
+
+    - **fund_code**: 基金代码
+    - **limit**: 返回最近多少条记录（默认 250）
+    """
+    try:
+        from ..fund_quant.data.storage import get_nav_history
+        nav_data = await asyncio.to_thread(get_nav_history, fund_code)
+        if not nav_data:
+            # 尝试采集
+            try:
+                from ..fund_quant.data.collector import fund_data_collector
+                from ..fund_quant.data.storage import save_nav_points
+                points = await fund_data_collector.fetch_nav_history(
+                    fund_code=fund_code,
+                    start_date=(datetime.now() - timedelta(days=365 * 5)).strftime("%Y%m%d"),
+                )
+                if points:
+                    await asyncio.to_thread(save_nav_points, points)
+                    nav_data = await asyncio.to_thread(get_nav_history, fund_code)
+            except Exception as e:
+                logger.warning(f"自动采集净值失败 {fund_code}: {e}")
+
+        if not nav_data:
+            return {"success": False, "message": f"基金 {fund_code} 无净值数据", "data": []}
+
+        recent = nav_data[-limit:] if len(nav_data) > limit else nav_data
+        return {"success": True, "data": recent}
+    except Exception as e:
+        logger.error(f"获取净值历史失败: {fund_code}, {e}")
+        return {"success": False, "message": f"获取净值历史失败: {str(e)}", "data": []}

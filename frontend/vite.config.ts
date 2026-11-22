@@ -13,5 +13,17 @@ export default defineConfig({
         changeOrigin: true
       }
     }
-  }
+  },
+  build: {
+    chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      output: {
+        manualChunks: (id) => {
+          if (id.includes('/node_modules/echarts/')) return 'echarts'
+          if (id.includes('/node_modules/lightweight-charts/')) return 'charts'
+          return undefined
+        },
+      },
+    },
+  },
 })

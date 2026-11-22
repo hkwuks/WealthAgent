@@ -7,7 +7,8 @@ export class DetailPanel extends PanelBase {
   private unsub: (() => void) | null = null
 
   constructor() {
-    super({ id: 'detail', title: '基金详情', defaultGridPos: { x: 0, y: 4, w: 3, h: 1 } })
+    // 基金详情：独立功能，与策略详情分开
+    super({ id: 'detail', title: '基金详情', defaultGridPos: { x: 0, y: 5, w: 3, h: 1 } })
   }
 
   render(): HTMLElement {

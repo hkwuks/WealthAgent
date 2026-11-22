@@ -29,31 +29,11 @@ export interface NavPoint {
   adjusted_nav?: number
 }
 
-export interface TimingSignal {
-  direction: string
-  confidence: number
-  strategy_name: string
-  timestamp: string
-}
-
-export interface TimingResult {
-  signals: TimingSignal[]
-  fusion_signal?: any
-}
-
 export interface FundRanking {
   fund_code: string
   fund_name: string
   total_score: number
   factors: Record<string, number>
-}
-
-export interface AllocationResult {
-  weights: Record<string, number>
-  expected_return: number
-  portfolio_volatility: number
-  sharpe_ratio: number
-  method: string
 }
 
 export interface BacktestResult {
@@ -71,6 +51,39 @@ export interface BacktestResult {
   }
 }
 
+export interface AuroraBacktestResult {
+  total_return: number
+  annual_return: number
+  sharpe_ratio: number
+  max_drawdown: number
+  volatility: number
+  n_trading_days: number
+  n_trades: number
+  funds: string[]
+  strategy: string
+  mode?: string
+}
+
+export interface StrategyAllocationSignal {
+  strategy: string
+  direction: 'buy' | 'hold' | 'sell'
+  weights: Record<string, number>
+  confidence: number
+  confidence_note?: string
+  reason: string
+  mode?: string
+  capital?: number
+  buy_amounts: Record<string, number>
+  top_holdings: { fund_code: string; weight: number; score?: number; fund_name?: string }[]
+  momentum_rank?: { fund_code: string; score: number; rank: number }[]
+  asset_allocation?: Record<string, number>
+}
+
+export interface StrategyAllocationResult {
+  strategies: StrategyAllocationSignal[]
+  fund_codes: string[]
+}
+
 export interface SignalRecord {
   fund_code: string
   fund_name?: string
@@ -78,6 +91,7 @@ export interface SignalRecord {
   confidence: number
   strategy_name: string
   created_at: string
+  reason?: string
 }
 
 export interface PortfolioStatus {
@@ -134,14 +148,6 @@ export interface MonthlyReturnResult {
   }
 }
 
-export interface SignalExplain {
-  strategy_name: string
-  strategy_display_name: string
-  formula_description: string
-  verdict: string
-  key_values: Record<string, { value: number; label: string; format?: string; highlight?: string }>
-}
-
 export interface StrategyInfo {
   name: string
   display_name: string
@@ -149,6 +155,15 @@ export interface StrategyInfo {
   description: string
   applicable_fund_types: string[]
   param_ranges?: StrategyParam[]
+}
+
+export interface StrategyParams {
+  name: string
+  type: string
+  description: string
+  default_params: Record<string, unknown>
+  param_ranges: Record<string, { min?: number; max?: number }>
+  param_choices?: Record<string, string[]>
 }
 
 export interface StrategyParam {
@@ -182,6 +197,49 @@ export interface FactorHistoryData {
 export interface FactorExposureResult {
   success: boolean
   data: FactorExposureData
+}
+
+export interface FactorMeta {
+  name: string
+  display_name: string
+  category: string
+  domain: string
+  description: string
+  direction: number
+  params: Record<string, any>
+  formula: string
+  min_history_days: number
+  reference: string
+  fund_types: string[]
+}
+
+export interface FactorEvaluateRequest {
+  factor_name: string
+  fund_codes: string[]
+  start_date: string
+  end_date: string
+}
+
+export interface FactorEvaluationReport {
+  factor_name: string
+  category: string
+  evaluation_period: string[]
+  n_periods: number
+  avg_n_stocks: number
+  rank_ic_mean: number
+  ic_ir: number
+  ic_positive_ratio: number
+  group_mean_returns: number[]
+  long_short_spread: number
+  long_short_t_stat: number
+  monotonicity_score: number
+  ic_decay: number[]
+  decay_half_life: number
+  fm_beta_mean: number
+  fm_beta_t_stat: number
+  factor_turnover: number
+  top_quarter_turnover: number
+  verdict: string
 }
 
 // ── 回测分析 ──
@@ -272,10 +330,6 @@ export const fundQuantApi = {
   collectNavData: (fundCodes: string[], years = 5) =>
     post<{ success: boolean; data: { fund_code: string; status: string; count: number }[] }>('/data/collect', { fund_codes: fundCodes, years }),
 
-  // Timing
-  evaluateTiming: (fund_code: string, params?: any, strategy_name?: string) =>
-    post<{ success: boolean; data: TimingResult }>('/timing/evaluate', { fund_code, strategy_name: strategy_name || '', params: params || {} }),
-
   // Signals
   getSignals: (fund_code?: string, limit = 20) => {
     const params = new URLSearchParams({ limit: String(limit) })
@@ -290,13 +344,9 @@ export const fundQuantApi = {
     return get<{ success: boolean; data: SignalRecord[] }>(`/signal/latest?${params}`)
   },
 
-  // Allocation
-  optimizeAllocation: (fund_codes: string[], params?: any) =>
-    post<{ success: boolean; data: AllocationResult }>('/allocation/optimize', { fund_codes, params: params || {} }),
-
   // Selection
-  screenFunds: (fund_type: string, top_n = 10) =>
-    post<{ success: boolean; data: { rankings: FundRanking[] } }>('/selection/screen', { fund_type, top_n }),
+  screenFunds: (fund_type: string, top_n = 10, strategy = 'multi_factor') =>
+    post<{ success: boolean; data: { rankings: FundRanking[] } }>('/selection/screen', { fund_type, top_n, strategy }),
 
   // Backtest
   runBacktest: (req: any) => post<{ success: boolean; data: { backtest_id: string; status: string } }>('/backtest/run', req),
@@ -306,6 +356,50 @@ export const fundQuantApi = {
     if (strategy_name) params.set('strategy_name', strategy_name)
     return get<{ success: boolean; data: BacktestResult[]; total: number }>(`/backtest/list?${params}`)
   },
+  // — AuroraCore 引擎回测（etf_rotation / all_weather） —
+  runAuroraBacktest: (req: {
+    fund_codes: string[]; start_date: string; end_date: string;
+    initial_capital?: number; strategy_name?: string; params?: Record<string, any>;
+  }) => post<{ success: boolean; data: AuroraBacktestResult }>('/backtest/aurora-run', req),
+  // — 等权买入持有基准 —
+  runEqualWeightBacktest: (req: {
+    fund_codes: string[]; start_date: string; end_date: string; initial_capital?: number;
+  }) => post<{ success: boolean; data: AuroraBacktestResult }>('/backtest/run-vectorized', req),
+  runWalkForward: (req: {
+    strategy_name: string; fund_codes: string[]; start_date: string; end_date: string;
+    initial_capital?: number; params?: Record<string, any>; validation?: Record<string, any>;
+  }) => post<{ success: boolean; data: any }>('/backtest/walk-forward', req),
+
+  // — 因子研究 —
+  getFactorList: () => get<{ success: boolean; data: FactorMeta[] }>('/factor/list'),
+  evaluateFactor: (req: FactorEvaluateRequest) =>
+    post<{ success: boolean; data: FactorEvaluationReport }>('/factor/evaluate', req),
+
+  // — 策略资产配置信号（以策略为中心） —
+  getStrategyAllocation: (() => {
+    const cache = new Map<string, { exp: number; data: StrategyAllocationResult }>()
+    const inflight = new Map<string, Promise<{ success: boolean; data: StrategyAllocationResult }>>()
+    const TTL = 8000
+    return (fund_codes: string[], capital?: number, params?: Record<string, any>) => {
+      const key = JSON.stringify({ c: [...fund_codes].sort(), p: params || {}, cap: capital || 100000 })
+      const hit = cache.get(key)
+      if (hit && hit.exp > Date.now()) return Promise.resolve({ success: true, data: hit.data })
+      const ex = inflight.get(key)
+      if (ex) return ex
+      const p = post<{ success: boolean; data: StrategyAllocationResult }>(
+        '/strategy/allocation/current', { fund_codes, capital: capital || 100000, params: params || {} },
+      ).then(res => {
+        if (res.success) {
+          cache.set(key, { exp: Date.now() + TTL, data: res.data })
+          if (cache.size > 64) cache.delete(cache.keys().next().value as string)
+        }
+        inflight.delete(key)
+        return res
+      }).catch(e => { inflight.delete(key); throw e })
+      inflight.set(key, p)
+      return p
+    }
+  })(),
 
   // — 新增接口 —
   getAttribution: (fund_codes: string[], start: string, end: string, method = 'brinson') =>
@@ -314,16 +408,14 @@ export const fundQuantApi = {
     ),
 
   getMonthlyReturns: (fund_code: string) =>
-    get<{ success: boolean; data: MonthlyReturnResult }>(`/portfolio/monthly-returns?code=${fund_code}`),
-
-  // — 新增：择时研究接口 —
-  explainTiming: (fund_code: string, strategy_name: string, params?: any) =>
-    post<{ success: boolean; data: SignalExplain }>('/timing/explain', { fund_code, strategy_name, params: params || {} }),
+    get<{ success: boolean; data: MonthlyReturnResult }>(`/portfolio/monthly-returns?fund_code=${fund_code}`),
 
   getStrategyList: () =>
     get<{ success: boolean; data: StrategyInfo[] }>('/strategy/list'),
+  getStrategyParams: (name: string) =>
+    get<{ success: boolean; data: StrategyParams }>(`/strategy/params/${name}`),
 
-  // — 新增：因子暴露接口 —
+  // — 新增：策略暴露接口 —
   getFactorExposure: (fund_code: string) =>
     get<FactorExposureResult>(`/factors/exposure/${fund_code}`),
   getFactorHistory: (fund_code: string, months = 12) =>

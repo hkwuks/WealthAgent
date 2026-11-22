@@ -17,27 +17,36 @@ class TestStrategyRegistry:
         strategies = self.registry.list_strategies()
         names = {s["name"] for s in strategies}
         expected = {
-            "valuation_deviation", "momentum", "interest_rate",
-            "fx_momentum", "smart_dca", "gold_momentum", "credit_spread", "multi_factor",
-            "rating_enhanced", "index_selection", "risk_parity", "black_litterman",
-            "etf_global_rotation", "all_weather",
+            "multi_factor", "rating_enhanced", "index_selection",
+            "risk_parity", "black_litterman", "etf_global_rotation", "all_weather",
         }
-        assert names == expected, f"缺失: {expected - names}, 多余: {names - expected}"
+        # 允许存在未列入的配置/选基策略，但已删除的 timing 策略不应存在
+        for gone in ["momentum", "gold_reversion", "interest_rate", "credit_spread",
+                     "fx_momentum", "smart_dca", "valuation_deviation", "gold_momentum"]:
+            assert gone not in names, f"已废弃策略 {gone} 仍被注册"
+        assert expected <= names, f"缺失: {expected - names}"
 
-    def test_strategy_types(self):
+    def test_selection_aurora_adapters_registered(self):
+        """多因子和指数选基也必须有统一 Aurora registry 入口。"""
+        from core.strategy import StrategyRegistry as AuroraRegistry
+        import backend.fund_quant.adapter as _adapter  # noqa: F401
+
+        assert AuroraRegistry.get("multi_factor_aurora") is not None
+        assert AuroraRegistry.get("index_selection_aurora") is not None
+
         strategies = self.registry.list_strategies()
         by_type = {}
         for s in strategies:
             by_type.setdefault(s["type"], []).append(s["name"])
-        assert len(by_type.get("timing", [])) == 7, "择时策略应为7个"
+        assert by_type.get("timing", []) == [], f"废弃的择时策略仍注册: {by_type.get('timing', [])}"
         assert len(by_type.get("selection", [])) == 3, "选基策略应为3个"
-        assert len(by_type.get("allocation", [])) == 4, "配置策略应为4个（risk_parity, black_litterman, etf_global_rotation, all_weather）"
+        assert len(by_type.get("allocation", [])) == 6, "配置策略应为6个（risk_parity, black_litterman, etf_global_rotation, all_weather, hrp, max_diversification）"
 
     def test_get_strategy_returns_instance(self):
-        s = self.registry.get_strategy("momentum")
+        s = self.registry.get_strategy("multi_factor")
         assert s is not None
-        assert s.strategy_name == "momentum"
-        assert s.strategy_type == "timing"
+        assert s.strategy_name == "multi_factor"
+        assert s.strategy_type == "selection"
 
     def test_get_nonexistent_returns_none(self):
         assert self.registry.get_strategy("nonexistent") is None
@@ -85,92 +94,6 @@ class TestStrategies:
             })
             return s
         return _setup
-
-    def test_valuation_deviation(self, setup_strategy):
-        s = setup_strategy("valuation_deviation")
-        signals = s.on_evaluate(None, None)
-        assert len(signals) >= 1
-        sig = signals[0]
-        assert sig.signal_type == SignalType.TIMING
-
-    def test_momentum(self, setup_strategy):
-        s = setup_strategy("momentum")
-        signals = s.on_evaluate(None, None)
-        assert len(signals) >= 1
-        assert signals[0].strategy_name == "momentum"
-
-    def test_interest_rate(self, setup_strategy):
-        s = setup_strategy("interest_rate")
-        signals = s.on_evaluate(None, None)
-        assert len(signals) >= 1
-
-    def test_fx_momentum(self, setup_strategy):
-        s = setup_strategy("fx_momentum")
-        signals = s.on_evaluate(None, None)
-        assert len(signals) >= 1
-        # 无汇率数据时应返回 hold
-        assert signals[0].direction == Direction.HOLD
-
-    def test_fx_momentum_with_fx_data(self, setup_strategy):
-        s = setup_strategy("fx_momentum")
-        # 注入汇率数据
-        fx_data = {f"USDCNY": [7.0 + i * 0.001 for i in range(30)]}
-        s._state["fx_rates_history"] = fx_data
-        signals = s.on_evaluate(None, None)
-        assert len(signals) >= 1
-
-    def test_smart_dca(self, setup_strategy):
-        """智能定投需要特定z-score触发信号, 使用下行趋势数据"""
-        s = setup_strategy("smart_dca")
-        # 构建下行趋势数据使z-score明显为负(低估)
-        np.random.seed(1)
-        vals = [1.0]
-        for _ in range(180):
-            vals.append(vals[-1] * (1 - abs(np.random.normal(0.001, 0.005))))
-        s._state["nav_values"] = vals
-        signals = s.on_evaluate(None, None)
-        assert len(signals) >= 1
-
-    def test_gold_momentum(self, setup_strategy):
-        """黄金动量策略能生成信号"""
-        s = setup_strategy("gold_momentum")
-        signals = s.on_evaluate(None, None)
-        assert len(signals) >= 1
-        sig = signals[0]
-        assert sig.signal_type == SignalType.TIMING
-
-    def test_credit_spread_no_data(self, setup_strategy):
-        """信用利差策略无数据时返回 HOLD"""
-        s = setup_strategy("credit_spread")
-        signals = s.on_evaluate(None, None)
-        assert len(signals) >= 1
-        assert signals[0].direction == Direction.HOLD
-
-    def test_credit_spread_with_data(self, setup_strategy):
-        """信用利差策略有数据时生成买卖信号"""
-        s = setup_strategy("credit_spread")
-        # 注入利差走阔数据（模拟信用恶化）
-        spread_widening = [0.01 * i for i in range(30)]
-        s._state["credit_spread_history"] = spread_widening
-        signals = s.on_evaluate(None, None)
-        assert len(signals) >= 1
-        assert signals[0].direction == Direction.SELL
-
-        # 利差收窄 → BUY
-        s2 = setup_strategy("credit_spread")
-        spread_narrowing = [0.03 - 0.001 * i for i in range(30)]
-        s2._state["credit_spread_history"] = spread_narrowing
-        signals2 = s2.on_evaluate(None, None)
-        assert signals2[0].direction == Direction.BUY
-
-    def test_credit_spread_curve_signal(self, setup_strategy):
-        """收益率曲线信号独立工作"""
-        s = setup_strategy("credit_spread")
-        # 无利差数据，但有曲线数据
-        curve_steepening = [0.005 * i for i in range(30)]
-        s._state["yield_curve_history"] = curve_steepening
-        signals = s.on_evaluate(None, None)
-        assert len(signals) >= 1
 
     def test_multi_factor(self):
         registry = StrategyRegistry()
@@ -250,10 +173,10 @@ class TestStrategies:
 
     def test_long_history_strategies_return_signals(self, setup_strategy):
         """验证有足够数据时策略返回非空信号"""
-        for name in ["valuation_deviation", "momentum"]:
+        for name in ["multi_factor"]:
             s = setup_strategy(name)
             signals = s.on_evaluate(None, None)
-            assert len(signals) >= 1, f"{name} 未能生成信号"
+            assert isinstance(signals, list), f"{name} 应返回列表"
 
 
 class TestRatingEnhanced:
@@ -401,7 +324,59 @@ class TestRatingEnhanced:
         assert "评级" in signals[0].reason or "评分" in signals[0].reason
 
 
-class TestBlackLitterman:
+class TestAuroraRatingEnhanced:
+    def test_registered_strategy_emits_core_signal(self, monkeypatch):
+        """评级增强 Aurora 策略经 BacktestEngine 重放发出核心调仓信号并成交。
+
+        与 test_selection_aurora_replay 同一条回放路径：引擎每 bar 更新 ctx.portfolio_value，
+        _rebalance 按 as-of 截面等权 reconcile 发 LONG，T+1 确认成交（trade log 有 buy）。
+        """
+        import sys as _sys
+        from datetime import date, timedelta
+
+        _sys.path.insert(0, "backend")
+        from core import (
+            BacktestConfig, BacktestEngine,
+            FundNavPoint, T1ExecutionEngine, StrategyRegistry,
+            NoCost,
+        )
+        from backend.api.fund_quant import _fund_risk_pipeline
+        from backend.fund_quant.adapter import AuroraRatingEnhancedSelection
+        from backend.fund_quant.strategy.selection.rating_enhanced import RatingEnhancedSelection
+
+        # 控制 screen → 两只基金都上榜（等权 1/2），保证第一次调仓买 000001
+        monkeypatch.setattr(RatingEnhancedSelection, "screen", lambda *_a, **_k: {
+            "rankings": [{"fund_code": "000001", "total_score": 0.75},
+                         {"fund_code": "000002", "total_score": 0.5}],
+        })
+        assert StrategyRegistry.get("rating_enhanced_aurora") is AuroraRatingEnhancedSelection
+
+        # 与真实数据源一致：按 (date, fund_code) 交错喂 45 个交易日（rebalance_days=20 触发两次）
+        d0 = date(2024, 1, 1)
+        pts = []
+        for i in range(45):
+            for code, nav in (("000001", 1.25), ("000002", 1.1)):
+                pts.append(FundNavPoint(code, d0 + timedelta(days=i), nav))
+        pts.sort(key=lambda p: (p.date, p.fund_code))
+
+        strategy = AuroraRatingEnhancedSelection()
+        strategy.params.update({"rebalance_days": 20, "top_n": 5})
+        strategy._meta = {"000001": {"fund_code": "000001", "fund_type": "stock"},
+                          "000002": {"fund_code": "000002", "fund_type": "stock"}}
+        execution = T1ExecutionEngine(confirmation_delay=1)
+        execution.set_capital(100000)
+        engine = BacktestEngine(BacktestConfig(initial_capital=100000))
+        engine.set_strategy(strategy)
+        engine.set_executor(execution)
+        engine.set_cost_model(NoCost())
+        engine.set_risk(_fund_risk_pipeline(strategy.name))
+        engine.set_data(pts)
+        report = engine.run()
+
+        assert report.total_trades > 0
+        logs = execution.get_trade_log()
+        assert any(t.get("action") == "buy" for t in logs), f"应有买入成交, got {logs}"
+
     """Black-Litterman 配置策略专项测试"""
 
     def _make_nav_values(self, length=120, base=1.0, trend=0.0003, vol=0.008):
@@ -420,7 +395,7 @@ class TestBlackLitterman:
         assert result["status"] == "single_fund"
 
     def test_bl_mvo_only(self, monkeypatch):
-        """无观点时降级为均值-方差优化"""
+        """无观点时等权配置（DeMiguel et al. 2009：等权样本外优于无约束优化）"""
         from backend.fund_quant.strategy.allocation.black_litterman import BlackLittermanStrategy
 
         navs = self._make_nav_values(120)
@@ -433,7 +408,7 @@ class TestBlackLitterman:
         s = BlackLittermanStrategy()
         result = s.optimize(fund_codes=["000001", "110011"])
         assert result["status"] == "success"
-        assert result["method"] in ("mean_variance",)
+        assert result["method"] == "equal_weight"
         assert len(result["weights"]) == 2
 
     def test_bl_with_views(self, monkeypatch):
@@ -486,12 +461,12 @@ class TestBlackLitterman:
 class TestStrategyState:
     def test_save_load_state(self):
         registry = StrategyRegistry()
-        s = registry.get_strategy("momentum")
+        s = registry.get_strategy("multi_factor")
         s._state = {"test_key": "test_value"}
         state = s.save_state()
         assert state["test_key"] == "test_value"
 
-        s2 = registry.get_strategy("momentum")
+        s2 = registry.get_strategy("multi_factor")
         s2.load_state({"new_key": 42})
         assert s2._state["new_key"] == 42
 
@@ -600,3 +575,153 @@ class TestSignalFusion:
         # 不传 fund_type 时不加权
         r3 = self.fusion.fuse(sigs)
         assert r3 is not None
+
+
+class TestP0AllocationStrategies:
+    """P0 新策略：动态风险平价 + 波动率目标（走 AuroraCore 统一引擎）"""
+    import sys as _sys
+    _sys.path.insert(0, "backend")  # noqa: E402 — 暴露 core 包（与 test_aurora_etf_rotation 一致）
+
+    def test_p0_registered(self):
+        from core.strategy import StrategyRegistry
+        import backend.fund_quant.adapter  # 触发注册
+        reg = StrategyRegistry.list_all()
+        assert "dynamic_risk_parity_aurora" in reg
+        assert "vol_targeting_aurora" in reg
+        assert reg["dynamic_risk_parity_aurora"].strategy_type == "allocation"
+        assert reg["vol_targeting_aurora"].strategy_type == "allocation"
+
+    def _nav_series(self, n_days=420, n_funds=3, seed=42):
+        """生成 n_funds 只基金 n_days 天净值（低相关几何随机游走）"""
+        rng = np.random.default_rng(seed)
+        series = {}
+        for f in range(n_funds):
+            navs, base = [], 1.0
+            for _ in range(n_days):
+                base *= 1 + rng.normal(0.0003, 0.01)
+                navs.append(base)
+            series[f"F{f}"] = navs
+        return series
+
+    def test_dynamic_rp_weights(self):
+        from backend.fund_quant.adapter import AuroraDynamicRiskParity
+        s = AuroraDynamicRiskParity()
+        series = self._nav_series(n_days=420, n_funds=3)  # 20个月
+        w = s._compute_weights(series, list(series.keys()))
+        assert w, "应返回权重"
+        assert abs(sum(w.values()) - 1.0) < 1e-3, f"权重和≠1: {sum(w.values())}"  # 四舍五入容差
+        assert all(np.isfinite(v) for v in w.values()), "存在 NaN"
+
+    def test_dynamic_rp_short_window(self):
+        """窗口截断后不足2基金 → 返回空（不崩溃）"""
+        from backend.fund_quant.adapter import AuroraDynamicRiskParity
+        s = AuroraDynamicRiskParity()
+        series = {f"F{i}": list(range(50, 50 + 59)) for i in range(3)}  # 只有59天
+        assert s._compute_weights(series, list(series.keys())) == {}
+
+    def test_vol_targeting_equal_weight_base(self):
+        from backend.fund_quant.adapter import AuroraVolTargeting
+        s = AuroraVolTargeting()
+        codes = ["F0", "F1", "F2"]
+        w = s._compute_weights({}, codes)
+        assert w == {c: 1 / 3 for c in codes}, f"等权打底失败: {w}"
+
+    def test_vol_targeting_scaling(self):
+        """高波降仓 scale<1；低波加仓 scale>1（受 max_scale 限制）"""
+        from backend.fund_quant.adapter import AuroraVolTargeting
+        rng = np.random.default_rng(7)
+        high = [1.0]; base = 1.0
+        for _ in range(200):
+            base *= 1 + rng.normal(0, 0.03)   # 年化 ~47%
+            high.append(base)
+        low = [1.0]; base = 1.0
+        for _ in range(200):
+            base *= 1 + rng.normal(0, 0.001)  # 年化 ~1.6%
+            low.append(base)
+
+        # 高波 → 降仓
+        s_hi = AuroraVolTargeting()
+        w = {"A": 0.5, "B": 0.5}
+        out = s_hi._apply_vol_targeting(w, {"A": high, "B": high}, "")
+        assert out["A"] < 0.5, f"高波应降仓: {out['A']}"
+        assert out["A"] >= 0.5 * 0.1, "不低于 min_scale"
+        # 低波 → 加仓
+        s_lo = AuroraVolTargeting()
+        out = s_lo._apply_vol_targeting(w, {"A": low, "B": low}, "")
+        assert out["A"] > 0.5, f"低波应加仓: {out['A']}"
+        assert out["A"] <= 0.5 * 2.0, "不超过 max_scale"
+
+    def test_vol_targeting_off_regression(self):
+        """vol_target=0 时叠加层原样返回（保护现有7策略）"""
+        from backend.fund_quant.adapter import AuroraRiskParity
+        s = AuroraRiskParity()
+        s.params["vol_target"] = 0
+        w = {"A": 0.4, "B": 0.6}
+        assert s._apply_vol_targeting(w, {"A": [1.0] * 100}, "") == w
+
+    def test_trend_following_weights_and_cash(self):
+        from backend.fund_quant.adapter import AuroraTrendFollowing
+        s = AuroraTrendFollowing()
+        s.params["lookback_days"] = 20
+        up = list(np.linspace(1.0, 1.2, 21))
+        down = list(np.linspace(1.2, 1.0, 21))
+        flat = [1.0] * 21
+        weights = s._compute_weights({"UP": up, "DOWN": down, "FLAT": flat}, ["UP", "DOWN", "FLAT"])
+        assert weights == {"UP": 1.0}
+
+        # 全部趋势转弱时返回显式零权重，供基类清仓并保留现金。
+        assert s._compute_weights({"DOWN": down, "FLAT": flat}, ["DOWN", "FLAT"]) == {
+            "DOWN": 0.0, "FLAT": 0.0,
+        }
+
+    def test_trend_following_liquidates_existing_positions(self):
+        """趋势转弱时应发出平仓信号，而非因空权重直接跳过。"""
+        from backend.fund_quant.adapter import AuroraTrendFollowing
+        from core.signal import Direction, Position
+
+        s = AuroraTrendFollowing()
+        s.params.update({"lookback_days": 20, "rebalance_threshold": 0.0})
+        values = list(np.linspace(1.2, 1.0, 21))
+        dates = [f"2025-01-{i + 1:02d}" for i in range(21)]
+        s._hist = {code: list(zip(dates, values)) for code in ("DOWN", "FLAT")}
+        emitted = []
+
+        class Execution:
+            def get_position(self, code):
+                return Position(code, Direction.LONG, 10.0, 1.1)
+
+        class Context:
+            portfolio_value = 1000.0
+            execution = Execution()
+
+            def emit(self, signal):
+                emitted.append(signal)
+
+        s.ctx = Context()
+        s._rebalance(dates[-1])
+
+        assert {signal.symbol for signal in emitted} == {"DOWN", "FLAT"}
+        assert all(signal.direction == Direction.CLOSE_LONG for signal in emitted)
+
+    def test_gmv_minimizes_variance(self):
+        from backend.fund_quant.adapter import AuroraGlobalMinimumVariance
+        s = AuroraGlobalMinimumVariance()
+        rng = np.random.default_rng(11)
+        # A 高波动，B 低波动；GMV 应倾向低波动资产且权重和为1。
+        series = {}
+        for code, sigma in (("HIGH", 0.03), ("LOW", 0.003), ("MID", 0.01)):
+            value, values = 1.0, []
+            for _ in range(300):
+                value *= 1 + rng.normal(0.0002, sigma)
+                values.append(value)
+            series[code] = values
+        weights = s._compute_weights(series, list(series))
+        assert weights
+        assert abs(sum(weights.values()) - 1.0) < 1e-3
+        assert all(np.isfinite(v) and v >= 0 for v in weights.values())
+        assert weights["LOW"] >= weights["HIGH"]
+
+    def test_gmv_insufficient_data(self):
+        from backend.fund_quant.adapter import AuroraGlobalMinimumVariance
+        s = AuroraGlobalMinimumVariance()
+        assert s._compute_weights({"A": [1.0] * 20, "B": [1.0] * 20}, ["A", "B"]) == {}

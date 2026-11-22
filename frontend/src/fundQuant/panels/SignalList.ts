@@ -71,7 +71,8 @@ export class SignalList extends PanelBase {
         } as any
         const fundName = state.get('fundPool').find(f => f.fund_code === code)?.fund_name || ''
         signal.fund_name = fundName
-        state.set('researchPanel', { visible: true, activeTab: 'timing', fundCode: code, signal })
+        // 研究区现在是「策略暴露 / 因子评价」两个 tab，点信号看因子暴露
+        state.set('researchPanel', { visible: true, activeTab: 'exposure', fundCode: code, signal })
         return
       }
       const row = (e.target as HTMLElement).closest<HTMLElement>('[data-code]')
@@ -120,6 +121,12 @@ export class SignalList extends PanelBase {
       // 只显示 fundPool 中存在的基金信号。白名单传给后端，
       // 由后端先过滤再截断——库里 148 条 000001 历史测试残留会挤掉真实信号。
       const poolCodes = state.get('fundPool').map(f => f.fund_code)
+      if (!poolCodes.length) {
+        // 基金池还没加载完。此时不传白名单会拿到测试残留数据，宁可不显示。
+        const tb = this.el.querySelector('.sig-tbody')
+        if (tb) tb.innerHTML = `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--text-tertiary);font-size:13px;">等待基金池加载…</td></tr>`
+        return
+      }
       const res = await fundQuantApi.getLatestSignals(poolCodes, 30)
       let signals = res.data || []
 

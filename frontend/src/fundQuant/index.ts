@@ -10,15 +10,16 @@ import { fundQuantApi } from './api'
 import { KPIBar } from './panels/KPIBar'
 import { NavChart } from './panels/NavChart'
 import { SignalList } from './panels/SignalList'
-import { Allocation } from './panels/Allocation'
+import { StrategyConfig } from './panels/StrategyConfig'
+import { StrategyDetail } from './panels/StrategyDetail'
 import { FundRanking } from './panels/FundRanking'
 import { MonthlyReturns } from './panels/MonthlyReturns'
 import { Attribution } from './panels/Attribution'
 import { DetailPanel } from './panels/DetailPanel'
-import { BacktestPanel } from './panels/BacktestPanel'
-import { ParamScanPanel } from './panels/ParamScanPanel'
 import { PaperTradePanel } from './panels/PaperTradePanel'
+import { StrategyBacktest } from './panels/StrategyBacktest'
 import { ResearchPanel } from './research-panel'
+import { fundManager } from '../fundManager'
 
 export class FundQuantDashboard {
   private layout: LayoutManager | null = null
@@ -35,15 +36,17 @@ export class FundQuantDashboard {
     // 注册面板
     this.layout.register(new KPIBar())
     this.layout.register(new NavChart())
+    // 信号列表与策略配置是两个独立功能：前者逐条展示引擎信号，
+    // 后者让用户选策略并配置基准资金，点选后由「策略详情」展开。
     this.layout.register(new SignalList())
-    this.layout.register(new Allocation())
     this.layout.register(new FundRanking())
     this.layout.register(new MonthlyReturns())
     this.layout.register(new Attribution())
     this.layout.register(new DetailPanel())
-    this.layout.register(new BacktestPanel())
-    this.layout.register(new ParamScanPanel())
     this.layout.register(new PaperTradePanel())
+    this.layout.register(new StrategyConfig())
+    this.layout.register(new StrategyDetail())
+    this.layout.register(new StrategyBacktest())
 
     // L3 研究区容器（在 grid 下方）
     const researchContainer = document.createElement('div')
@@ -89,7 +92,6 @@ export class FundQuantDashboard {
 
   private async loadFundPool(): Promise<void> {
     try {
-      const { fundManager } = await import('../fundManager')
       // 等待基金数据加载完成（重试直到有数据或超时）
       let funds: any[] = []
       for (let retry = 0; retry < 10; retry++) {
@@ -102,6 +104,15 @@ export class FundQuantDashboard {
         fund_code: f.fund_code,
         fund_name: f.fund_name || '',
         fund_type: f.fund_type || '',
+        market_type: f.market_type || 'unknown',
+        trade_mode: f.trade_mode,
+        subscription_confirm_days: f.subscription_confirm_days,
+        redemption_confirm_days: f.redemption_confirm_days,
+        cash_arrival_days: f.cash_arrival_days,
+        purchase_channel: f.purchase_channel,
+        trading_profile_source: f.trading_profile_source,
+        trading_profile_confidence: f.trading_profile_confidence,
+        trading_profile_needs_confirmation: f.trading_profile_needs_confirmation,
       })))
       if (funds.length > 0 && !state.get('selectedFund')) {
         state.set('selectedFund', funds[0].fund_code)

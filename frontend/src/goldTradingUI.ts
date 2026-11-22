@@ -12,6 +12,7 @@ const STRATEGY_LABELS: Record<string, { name: string; icon: string }> = {
   trend_following: { name: '趋势跟踪', icon: '📈' },
   mean_reversion: { name: '均值回归', icon: '🔄' },
   ml_predictor: { name: 'ML预测', icon: '🤖' },
+  rl_ppo: { name: 'RL强化学习', icon: '🧠' },
 }
 
 const DIR_LABEL: Record<string, string> = {
@@ -32,17 +33,6 @@ const PERIODS = [
   { value: '1', label: '1分钟' },
 ]
 
-// ===== 颜色常量 =====
-const COLORS = {
-  green: '#10b981',
-  red: '#ef4444',
-  orange: '#f59e0b',
-  blue: '#3b82f6',
-  purple: '#8b5cf6',
-  bg: { light: '#ffffff', dark: '#1e293b' },
-  grid: { light: '#e2e8f0', dark: '#334155' },
-  text: { light: '#0f172a', dark: '#e2e8f0' },
-}
 
 function isDark(): boolean {
   return document.body.classList.contains('dark-mode') ||
@@ -74,20 +64,16 @@ export class GoldTradingUI {
   private chart: IChartApi | null = null
   private candlestickSeries: ISeriesApi<'Candlestick'> | null = null
   private volumeSeries: ISeriesApi<'Histogram'> | null = null
-  private ma5Series: ISeriesApi<'Line'> | null = null
-  private ma10Series: ISeriesApi<'Line'> | null = null
-  private ma20Series: ISeriesApi<'Line'> | null = null
-  private ma60Series: ISeriesApi<'Line'> | null = null
+  private maSeries: Record<string, ISeriesApi<'Line'> | null> = {}
   private marketTimer: ReturnType<typeof setInterval> | null = null
   private chartTimer: ReturnType<typeof setInterval> | null = null
   private currentPeriod = 'd'
   private currentBars: any[] = []
   private strategies: any[] = []
   private isWorking = false
-  private chartReady = false
-  private dark = false
   private signalTimer: ReturnType<typeof setInterval> | null = null
   private ctpTimer: ReturnType<typeof setInterval> | null = null
+  private riskTimer: ReturnType<typeof setInterval> | null = null
 
   init(container: HTMLDivElement) {
     this.container = container
@@ -100,11 +86,15 @@ export class GoldTradingUI {
     // 加载最近信号
     this.loadSignals()
 
+    // 加载风险监控
+    this.loadRiskOverview()
+
     // 市场数据 + K线 轮询刷新
     this.marketTimer = setInterval(() => this.loadMarketData(), 30000)
     this.chartTimer = setInterval(() => {
       if (this.chart) this.loadKlineData()
     }, 60000)
+    this.riskTimer = setInterval(() => this.loadRiskOverview(), 120000)
     new MutationObserver(() => this.onThemeChange()).observe(document.body, { attributes: true, attributeFilter: ['class'] })
     window.addEventListener('resize', () => this.onResize())
 
@@ -146,10 +136,7 @@ export class GoldTradingUI {
     this.chart = null
     this.candlestickSeries = null
     this.volumeSeries = null
-    this.ma5Series = null
-    this.ma10Series = null
-    this.ma20Series = null
-    this.ma60Series = null
+    this.maSeries = {}
   }
 
   destroy() {
@@ -157,6 +144,7 @@ export class GoldTradingUI {
     if (this.chartTimer) clearInterval(this.chartTimer)
     if (this.signalTimer) clearInterval(this.signalTimer)
     if (this.ctpTimer) clearInterval(this.ctpTimer)
+    if (this.riskTimer) clearInterval(this.riskTimer)
     this.destroyChart()
   }
 
@@ -295,6 +283,7 @@ export class GoldTradingUI {
                   <option value="trend_following">趋势跟踪</option>
                   <option value="mean_reversion">均值回归</option>
                   <option value="ml_predictor">ML预测</option>
+                  <option value="rl_ppo">RL强化学习</option>
                 </select>
                 <button class="btn btn-primary btn-sm" id="sig-generate-btn">生成信号</button>
                 <select id="sig-auto-select" style="width:90px">
@@ -335,6 +324,7 @@ export class GoldTradingUI {
                   <option value="trend_following">趋势跟踪</option>
                   <option value="mean_reversion">均值回归</option>
                   <option value="ml_predictor">ML预测</option>
+                  <option value="rl_ppo">RL强化学习</option>
                 </select>
                 <input type="date" id="bt-start-date" value="2025-01-01" style="width:120px" />
                 <input type="date" id="bt-end-date" value="2026-06-26" style="width:120px" />
@@ -384,6 +374,68 @@ export class GoldTradingUI {
                 <button class="btn btn-secondary btn-sm" id="val-run-btn">运行</button>
               </div>
               <div id="val-result" class="panel-result"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RL强化学习面板 -->
+        <div class="quant-section">
+          <div class="section-title-bar">
+            <h3>🧠 RL强化学习 — PPO交易Agent</h3>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="rl-status" id="rl-status">⚪ 未训练</span>
+              <button class="btn btn-primary btn-sm" id="rl-train-btn">训练模型</button>
+              <button class="btn btn-secondary btn-sm" id="rl-signal-btn">生成信号</button>
+              <button class="btn btn-ghost btn-xs" id="rl-refresh-btn" title="刷新状态">🔄</button>
+            </div>
+          </div>
+          <div class="rl-panel" id="rl-panel">
+            <div class="rl-config">
+              <div class="rl-config-row">
+                <label>迭代次数</label>
+                <input type="number" id="rl-iterations" value="50" min="10" max="500" style="width:70px" />
+                <label>每轮步数</label>
+                <input type="number" id="rl-steps" value="1024" min="256" max="4096" style="width:80px" />
+                <span class="rl-progress" id="rl-progress"></span>
+              </div>
+            </div>
+            <div class="rl-grid" id="rl-grid">
+              <div class="rl-card" id="rl-card-metrics">
+                <div class="rl-card-title">📊 绩效指标</div>
+                <div class="rl-card-body"><div class="empty-text">请先训练模型</div></div>
+              </div>
+              <div class="rl-card" id="rl-card-signal">
+                <div class="rl-card-title">💡 当前信号</div>
+                <div class="rl-card-body"><div class="empty-text">暂无信号</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 风险监控面板 -->
+        <div class="quant-section">
+          <div class="section-title-bar">
+            <h3>🛡️ 风险监控面板</h3>
+            <div style="display:flex;align-items:center;gap:8px">
+              <button class="btn btn-ghost btn-xs" id="risk-overview-btn" title="刷新风险概览">🔄</button>
+            </div>
+          </div>
+          <div class="risk-monitor-grid" id="risk-monitor-grid">
+            <div class="rm-card" id="rm-overview">
+              <div class="rm-card-title">📊 风控概览</div>
+              <div class="rm-card-body"><div class="empty-text">加载中...</div></div>
+            </div>
+            <div class="rm-card" id="rm-regime">
+              <div class="rm-card-title">🌤 市场状态</div>
+              <div class="rm-card-body"><div class="empty-text">加载中...</div></div>
+            </div>
+            <div class="rm-card" id="rm-overfitting">
+              <div class="rm-card-title">⚡ 过拟合检测</div>
+              <div class="rm-card-body"><div class="empty-text">加载中...</div></div>
+            </div>
+            <div class="rm-card" id="rm-decay">
+              <div class="rm-card-title">📉 策略退化</div>
+              <div class="rm-card-body"><div class="empty-text">加载中...</div></div>
             </div>
           </div>
         </div>
@@ -472,6 +524,18 @@ export class GoldTradingUI {
 
     // 交易模式切换
     document.getElementById('trading-mode-switch')?.addEventListener('click', () => this.switchTradingMode())
+
+    // 风险监控刷新
+    document.getElementById('risk-overview-btn')?.addEventListener('click', () => this.loadRiskOverview())
+
+    // RL 强化学习
+    document.getElementById('rl-train-btn')?.addEventListener('click', () => this.runRLTraining())
+    document.getElementById('rl-signal-btn')?.addEventListener('click', () => {
+      const sel = document.getElementById('sig-strategy-select') as HTMLSelectElement
+      if (sel) sel.value = 'rl_ppo'
+      this.generateSignal()
+    })
+    document.getElementById('rl-refresh-btn')?.addEventListener('click', () => this.loadRLStatus())
   }
 
   // ===== K线图 =====
@@ -541,7 +605,7 @@ export class GoldTradingUI {
       ma5: '#f59e0b', ma10: '#3b82f6', ma20: '#8b5cf6', ma60: '#ec4899',
     }
     ;['ma5', 'ma10', 'ma20', 'ma60'].forEach(key => {
-      (this as any)[`${key}Series`] = this.chart!.addSeries(LineSeries, {
+      this.maSeries[key] = this.chart!.addSeries(LineSeries, {
         color: maColors[key], lineWidth: 1, priceLineVisible: false,
         lastValueVisible: false, crosshairMarkerVisible: false,
       } as any)
@@ -759,7 +823,6 @@ export class GoldTradingUI {
 
   private updateKlineChart(data: any) {
     if (!this.candlestickSeries) {
-      this.dark = isDark()
       this.initChart()
     }
     if (!this.candlestickSeries || !this.chart) return
@@ -795,7 +858,7 @@ export class GoldTradingUI {
 
     // MA指标
     ;['ma5', 'ma10', 'ma20', 'ma60'].forEach(key => {
-      const series = (this as any)[`${key}Series`] as ISeriesApi<'Line'>
+      const series = this.maSeries[key]
       if (!series || !indicators[key]) return
       const lineData: LineData[] = []
       for (let i = 0; i < bars.length; i++) {
@@ -892,7 +955,6 @@ export class GoldTradingUI {
 
     set('ticker-price', formatPrice(price))
     const changeEl = document.getElementById('ticker-change')
-    const pctEl = document.getElementById('ticker-change')
     if (changeEl) {
       const isUp = changePct >= 0
       changeEl.textContent = `${isUp ? '+' : ''}${data.change?.toFixed(2) ?? '--'} (${formatPct(changePct)})`
@@ -1002,6 +1064,12 @@ export class GoldTradingUI {
           <span class="scc-strategy">${STRATEGY_LABELS[data.strategy]?.icon || ''} ${STRATEGY_LABELS[data.strategy]?.name || data.strategy}</span>
         </div>
         ${data.reason ? `<div class="scc-reason">${data.reason}</div>` : ''}
+        ${data.long_prob != null ? `
+        <div class="scc-row" style="margin-top:4px;gap:6px;font-size:11px;color:var(--text-tertiary)">
+          <span>做多 ${(data.long_prob*100).toFixed(0)}%</span>
+          <span>做空 ${(data.short_prob*100).toFixed(0)}%</span>
+          <span>观望 ${(data.hold_prob*100).toFixed(0)}%</span>
+        </div>` : ''}
         <div class="scc-row" style="margin-top:6px;gap:8px">
           ${executed
             ? `<span class="scc-item" style="color:#10b981">✅ 已执行 ref=${exec.ctp_ref}</span>
@@ -1028,13 +1096,27 @@ export class GoldTradingUI {
       if (resp.success && resp.data.executed) {
         toast.success('已执行到 SimNow')
         this.loadCtpData()
-        this.generateSignal() // 刷新信号
+        // 更新当前信号卡片显示执行结果，不重新生成信号
+        this._updateSignalCardWithExecution(resp.data)
       } else {
         toast.error('执行失败: ' + (resp.data.reason || '未知'))
-        this.generateSignal()
       }
     } catch (e) {
       toast.error('执行出错')
+    }
+  }
+
+  private _updateSignalCardWithExecution(exec: any) {
+    const container = document.getElementById('sig-result')
+    if (!container) return
+    const card = container.querySelector('.signal-card-compact')
+    if (!card) return
+    const row = card.querySelector('.scc-row:last-child')
+    if (row) {
+      row.innerHTML = exec.sim_trade
+        ? `<span class="scc-item" style="color:#10b981">✅ 已执行 ref=${exec.ctp_ref}</span>
+           <span class="scc-item">模拟成交 @¥${formatPrice(exec.sim_trade.price)}</span>`
+        : `<span class="scc-item" style="color:#10b981">✅ 已执行 ref=${exec.ctp_ref}</span>`
     }
   }
 
@@ -1079,7 +1161,6 @@ export class GoldTradingUI {
     const risk = data.report?.risk || {}
     const trades = data.report?.trades || {}
     const cost = data.report?.cost || {}
-    const meta = data.report?.meta || {}
     const ret = perf.total_return ?? 0
     const retClass = ret >= 0 ? 'positive' : 'negative'
 
@@ -1258,7 +1339,7 @@ export class GoldTradingUI {
 
     const scenarios = scv.results || []
     if (scenarios.length > 0) {
-      html += `<div class="val-row"><strong>场景验证:</strong> ${scenarios.map(s => `${s.scenario}: ${s.status === '通过' ? '✅' : '❌'} (Sharpe=${s.report?.sharpe ?? '--'})`).join(' | ')}</div>`
+      html += `<div class="val-row"><strong>场景验证:</strong> ${scenarios.map((s: any) => `${s.scenario}: ${s.status === '通过' ? '✅' : '❌'} (Sharpe=${s.report?.sharpe ?? '--'})`).join(' | ')}</div>`
     }
 
     container.innerHTML = html || '<div class="empty-text">无数据</div>'
@@ -1423,6 +1504,92 @@ export class GoldTradingUI {
     } catch (_) { /* 静默 */ }
   }
 
+  // ===== 风险监控面板 =====
+
+  private async loadRiskOverview() {
+    try {
+      const resp = await api.get('/gold/trading/risk/overview')
+      if (resp.success && resp.data) {
+        this.renderRiskOverview(resp.data)
+      }
+    } catch (_) { /* 静默 */ }
+  }
+
+  private renderRiskOverview(d: any) {
+    // 风控概览
+    const overviewEl = document.getElementById('rm-overview')
+    if (overviewEl) {
+      const rs = d.risk_status || {}
+      overviewEl.innerHTML = `
+        <div class="rm-card-title">📊 风控概览</div>
+        <div class="rm-card-body">
+          <div class="rm-metrics">
+            <div class="rm-metric"><span class="rm-label">日内信号</span><span class="rm-value">${rs.today_signal_count ?? 0} 次</span></div>
+            <div class="rm-metric"><span class="rm-label">日内盈亏</span><span class="rm-value ${(rs.daily_pnl||0)>=0?'positive':'negative'}">¥${(rs.daily_pnl||0)>=0?'+':''}${(rs.daily_pnl||0).toLocaleString()}</span></div>
+            <div class="rm-metric"><span class="rm-label">连续亏损</span><span class="rm-value ${(rs.consecutive_losses||0)>=3?'negative':''}">${rs.consecutive_losses ?? 0} 次</span></div>
+            <div class="rm-metric"><span class="rm-label">回撤限</span><span class="rm-value">${(rs.max_drawdown_pct ?? 0) * 100}%</span></div>
+            <div class="rm-metric"><span class="rm-label">持仓上限</span><span class="rm-value">${rs.max_position_lots ?? 0} 手</span></div>
+          </div>
+        </div>`
+    }
+
+    // 市场状态
+    const regimeEl = document.getElementById('rm-regime')
+    if (regimeEl) {
+      const mr = d.market_regime || {}
+      const regime = mr.regime || 'unknown'
+      const stats = mr.stats || {}
+      regimeEl.innerHTML = `
+        <div class="rm-card-title">🌤 市场状态</div>
+        <div class="rm-card-body">
+          <div class="rm-regime-badge ${regime}">${regime === 'trending' ? '📈 趋势' : regime === 'volatile' ? '🌊 高波动' : '📊 震荡'}</div>
+          <div class="rm-metrics" style="margin-top:6px">
+            ${['trending', 'ranging', 'volatile'].map(r => {
+              const s = stats[r] || {}
+              return `<div class="rm-metric"><span class="rm-label">${r}</span><span class="rm-value">${s.n ?? 0}天 Sharpe=${s.sharpe ?? 0}</span></div>`
+            }).join('')}
+          </div>
+        </div>`
+    }
+
+    // 过拟合检测
+    const ofEl = document.getElementById('rm-overfitting')
+    if (ofEl) {
+      const of = d.overfitting || {}
+      const isOverfit = of.overfitting_detected
+      ofEl.innerHTML = `
+        <div class="rm-card-title">⚡ 过拟合检测</div>
+        <div class="rm-card-body">
+          <div class="rm-verdict ${isOverfit ? 'negative' : 'positive'}">${isOverfit ? '⚠ 高风险' : '✅ 正常'}</div>
+          <div class="rm-metrics" style="margin-top:6px">
+            <div class="rm-metric"><span class="rm-label">DSR</span><span class="rm-value">${of.dsr != null ? of.dsr.toFixed(4) : '--'}</span></div>
+            <div class="rm-metric"><span class="rm-label">Sharpe衰减</span><span class="rm-value">${of.sharpe_drop != null ? (of.sharpe_drop*100).toFixed(1) + '%' : '--'}</span></div>
+            <div class="rm-metric"><span class="rm-label">IS Sharpe</span><span class="rm-value">${of.avg_is_sharpe != null ? of.avg_is_sharpe.toFixed(3) : '--'}</span></div>
+            <div class="rm-metric"><span class="rm-label">OOS Sharpe</span><span class="rm-value">${of.avg_oos_sharpe != null ? of.avg_oos_sharpe.toFixed(3) : '--'}</span></div>
+          </div>
+        </div>`
+    }
+
+    // 策略退化
+    const decayEl = document.getElementById('rm-decay')
+    if (decayEl) {
+      const dc = d.decay || {}
+      const verdict = dc.verdict || '--'
+      const isDecay = dc.decay_detected
+      decayEl.innerHTML = `
+        <div class="rm-card-title">📉 策略退化</div>
+        <div class="rm-card-body">
+          <div class="rm-verdict ${isDecay ? 'negative' : 'positive'}">${verdict}</div>
+          <div class="rm-metrics" style="margin-top:6px">
+            <div class="rm-metric"><span class="rm-label">收益衰减</span><span class="rm-value ${dc.return_decay?.decay_detected ? 'negative' : ''}">${dc.return_decay?.decay_detected ? '⚠ 是' : '✅ 否'}</span></div>
+            <div class="rm-metric"><span class="rm-label">近期均值</span><span class="rm-value">${dc.return_decay?.recent_mean != null ? (dc.return_decay.recent_mean * 100).toFixed(3) + '%' : '--'}</span></div>
+            <div class="rm-metric"><span class="rm-label">历史均值</span><span class="rm-value">${dc.return_decay?.historical_mean != null ? (dc.return_decay.historical_mean * 100).toFixed(3) + '%' : '--'}</span></div>
+            <div class="rm-metric"><span class="rm-label">波动率</span><span class="rm-value">${dc.context?.recent_volatility != null ? (dc.context.recent_volatility * 100).toFixed(2) + '%' : '--'}</span></div>
+          </div>
+        </div>`
+    }
+  }
+
   // ===== 辅助方法 =====
   private async loadStrategies() {
     try {
@@ -1450,6 +1617,88 @@ export class GoldTradingUI {
     } catch (e) {
       toast.error('切换失败')
     }
+  }
+
+  // ===== RL 强化学习 =====
+
+  private async loadRLStatus() {
+    try {
+      const resp = await api.get('/gold/trading/rl/status')
+      if (resp.success) {
+        const d = resp.data
+        const statusEl = document.getElementById('rl-status')
+        if (statusEl) {
+          if (d.ready && d.model_count > 0) {
+            statusEl.textContent = `🟢 就绪 (${d.model_count}个模型)`
+          } else if (d.model_count > 0) {
+            statusEl.textContent = `🟡 ${d.model_count}个模型 (未加载)`
+          } else {
+            statusEl.textContent = '⚪ 未训练'
+          }
+        }
+        // 显示模型列表
+        const models = d.latest_model ? [d.latest_model] : []
+        if (models.length > 0) {
+          const m = models[0]
+          this.displayRLMetrics({
+            model_file: m.filename,
+            size: `${(m.size_bytes / 1024).toFixed(1)}KB`,
+            device: d.device || 'N/A',
+            modified: m.modified || '',
+          })
+        }
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  private async runRLTraining() {
+    if (this.isWorking) return
+    const iterations = parseInt((document.getElementById('rl-iterations') as HTMLInputElement)?.value || '50', 10)
+    const steps = parseInt((document.getElementById('rl-steps') as HTMLInputElement)?.value || '1024', 10)
+    this.isWorking = true
+
+    const btn = document.getElementById('rl-train-btn') as HTMLButtonElement
+    const progress = document.getElementById('rl-progress')
+    if (btn) { btn.disabled = true; btn.textContent = '训练中...' }
+    if (progress) progress.textContent = '⏳ 开始训练...'
+
+    try {
+      const resp = await api.post('/gold/trading/rl/train', {
+        n_iterations: iterations,
+        n_steps: steps,
+      }, 600000) // 10分钟超时
+      if (resp.success && resp.data) {
+        const iterData = resp.data.iterations || []
+        const last = iterData[iterData.length - 1] || {}
+        toast.success(`RL训练完成! return=${last.avg_return_pct ?? '?'}%`)
+        this.displayRLMetrics(last)
+        if (progress) progress.textContent = `✅ 完成: ${last.avg_return_pct ?? 0}%`
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '未知错误'
+      toast.error(`RL训练失败: ${msg}`)
+      if (progress) progress.textContent = `❌ 训练失败 (${msg})`
+    } finally {
+      this.isWorking = false
+      if (btn) { btn.disabled = false; btn.textContent = '训练模型' }
+      this.loadRLStatus()
+    }
+  }
+
+  private displayRLMetrics(data: any) {
+    const container = document.getElementById('rl-card-metrics')
+    if (!container) return
+    const body = container.querySelector('.rl-card-body') || container
+    body.innerHTML = `
+      <table class="rl-table">
+        <tr><td>总收益率</td><td class="${(data.avg_return_pct||0) >= 0 ? 'positive' : 'negative'}">${data.avg_return_pct != null ? data.avg_return_pct.toFixed(2) + '%' : '--'}</td></tr>
+        <tr><td>Sharpe</td><td>${data.sharpe != null ? data.sharpe.toFixed(3) : '--'}</td></tr>
+        <tr><td>胜率</td><td>${data.win_rate != null ? data.win_rate.toFixed(1) + '%' : '--'}</td></tr>
+        <tr><td>最大回撤</td><td class="negative">${data.max_dd != null ? data.max_dd.toFixed(2) + '%' : '--'}</td></tr>
+        <tr><td>模型文件</td><td style="font-size:11px;color:var(--text-tertiary)">${data.model_file || data.model_file || '--'}</td></tr>
+        <tr><td>设备</td><td>${data.device || data.device || '--'}</td></tr>
+      </table>
+    `
   }
 
   private renderParams(strategyName: string) {
