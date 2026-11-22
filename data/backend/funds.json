@@ -318,7 +318,15 @@
     "fund_name": "黄金ETF华安",
     "fund_type": "ETF 基金",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "on_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 0,
+    "redemption_confirm_days": 0,
+    "cash_arrival_days": 0,
+    "trading_profile_source": "东方财富基金资料 + ETF行情",
+    "trading_profile_confidence": 0.95,
+    "trading_profile_needs_confirmation": false
   },
   {
     "fund_code": "510300",

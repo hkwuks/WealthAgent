@@ -1862,6 +1862,20 @@ tr:hover { background: var(--bg-tertiary); }
   height: 560px;
 }
 .panel-detail .detail-body { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 10px 12px; min-height: 160px; overflow-y: auto; }
+
+/* 基金信息：标签固定宽、值左对齐并允许换行。
+   原来用 space-between 把值推到最右边，面板一宽就贴边被截断。 */
+.detail-info-list { padding: 4px 0; font-size: 12px; }
+.detail-info-row { display: flex; gap: 8px; padding: 4px 0; align-items: baseline; }
+.detail-info-key {
+  flex: 0 0 36px; color: var(--text-secondary);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .3px;
+}
+.detail-info-val {
+  flex: 1 1 auto; min-width: 0;
+  color: var(--text-primary); font-weight: 600;
+  overflow-wrap: anywhere;
+}
 .panel-detail .detail-section h4 { font-size: 12px; font-weight: 600; margin-bottom: 4px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .3px; }
 .panel-detail .detail-section table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .panel-detail .detail-section th { padding: 3px 4px; text-align: left; color: var(--text-tertiary); font-size: 11px; text-transform: uppercase; }
