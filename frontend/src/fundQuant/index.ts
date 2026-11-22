@@ -10,6 +10,8 @@ import { fundQuantApi } from './api'
 import { KPIBar } from './panels/KPIBar'
 import { NavChart } from './panels/NavChart'
 import { SignalList } from './panels/SignalList'
+import { StrategyConfig } from './panels/StrategyConfig'
+import { StrategyDetail } from './panels/StrategyDetail'
 import { FundRanking } from './panels/FundRanking'
 import { MonthlyReturns } from './panels/MonthlyReturns'
 import { Attribution } from './panels/Attribution'
@@ -34,12 +36,16 @@ export class FundQuantDashboard {
     // 注册面板
     this.layout.register(new KPIBar())
     this.layout.register(new NavChart())
+    // 信号列表与策略配置是两个独立功能：前者逐条展示引擎信号，
+    // 后者让用户选策略并配置基准资金，点选后由「策略详情」展开。
     this.layout.register(new SignalList())
     this.layout.register(new FundRanking())
     this.layout.register(new MonthlyReturns())
     this.layout.register(new Attribution())
     this.layout.register(new DetailPanel())
     this.layout.register(new PaperTradePanel())
+    this.layout.register(new StrategyConfig())
+    this.layout.register(new StrategyDetail())
     this.layout.register(new StrategyBacktest())
 
     // L3 研究区容器（在 grid 下方）

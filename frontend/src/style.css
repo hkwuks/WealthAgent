@@ -1780,8 +1780,13 @@ tr:hover { background: var(--bg-tertiary); }
   border: 1px solid var(--border-color);
   box-shadow: 0 2px 8px rgba(0,0,0,.25);
   min-height: 0;
-  overflow: hidden;
+  /* 不要用 overflow:hidden —— 它会把子元素的 sticky 表头和阴影一起裁掉，
+     滚动时表现为「表头/标题被切掉一半」。需要裁剪的场景各自加。 */
 }
+
+/* KPI 顶部琥珀色强调线。必须比 .fq-dashboard-grid > * 的 shorthand 更具体，
+   否则被 border:1px solid var(--border-color) 覆盖成普通灰边。 */
+.fq-dashboard-grid > .kpi-bar { border-top: 2px solid var(--primary-color); }
 
 .fq-dashboard-grid .panel-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -1857,6 +1862,20 @@ tr:hover { background: var(--bg-tertiary); }
   height: 560px;
 }
 .panel-detail .detail-body { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 10px 12px; min-height: 160px; overflow-y: auto; }
+
+/* 基金信息：标签固定宽、值左对齐并允许换行。
+   原来用 space-between 把值推到最右边，面板一宽就贴边被截断。 */
+.detail-info-list { padding: 4px 0; font-size: 12px; }
+.detail-info-row { display: flex; gap: 8px; padding: 4px 0; align-items: baseline; }
+.detail-info-key {
+  flex: 0 0 36px; color: var(--text-secondary);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .3px;
+}
+.detail-info-val {
+  flex: 1 1 auto; min-width: 0;
+  color: var(--text-primary); font-weight: 600;
+  overflow-wrap: anywhere;
+}
 .panel-detail .detail-section h4 { font-size: 12px; font-weight: 600; margin-bottom: 4px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .3px; }
 .panel-detail .detail-section table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .panel-detail .detail-section th { padding: 3px 4px; text-align: left; color: var(--text-tertiary); font-size: 11px; text-transform: uppercase; }
@@ -1949,6 +1968,39 @@ tr:hover { background: var(--bg-tertiary); }
 .sig-table-wrapper table { margin: 0; width: 100%; }
 
 .sig-table { width: 100%; border-collapse: collapse; font-size: 18px; }
+.sig-table th { padding: 4px 6px; text-align: left; color: var(--text-tertiary); font-weight: 600; font-size: 18px; border-bottom: 1px solid var(--border-bright); text-transform: uppercase; letter-spacing: .3px; }
+.sig-table td { padding: 4px 6px; border-bottom: 1px solid var(--border-light); }
+/* 窄面板里 5 列会互相挤压。名称拿走剩余宽度（max-width:0 是 flex/grid 里
+   让 ellipsis 生效的惯用技巧），其余列按内容宽度不换行。 */
+.sig-table td, .sig-table th { white-space: nowrap; }
+/* 满宽后不再需要把剩余宽度全给名称：给其它列足够空间，名称用剩余部分 */
+.sig-name { overflow: hidden; }
+.sig-table th:nth-child(2), .sig-table td:nth-child(2) { width: 72px; }
+.sig-table th:nth-child(3), .sig-table td:nth-child(3) { width: 130px; }
+.sig-table th:nth-child(4), .sig-table td:nth-child(4) { width: 160px; }
+/* 名称与代码在同一单元格内用 flex：名称弹性收缩并显示省略号，
+   代码固定不缩。用 calc(100%-48px) 在 table 单元格里算不准，实测只剩「国…」。 */
+.sig-name-cell { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+.sig-name-text { font-weight: 600; color: var(--text-primary);
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; }
+.sig-code { font-size: 11px; color: var(--text-tertiary);
+  flex: 0 0 auto; font-family: var(--font-mono); }
+.sig-dir > span { font-weight: 600; }
+.sig-conf { text-align: right; }
+.sig-conf-num { color: var(--text-primary); font-weight: 600;
+  font-variant-numeric: tabular-nums; }
+.sig-conf-bar { display: inline-block; width: 34px; height: 5px; margin-left: 5px;
+  background: var(--bg-tertiary); border-radius: 3px; overflow: hidden;
+  vertical-align: middle; }
+.sig-conf-bar > i { display: block; height: 100%; border-radius: 3px;
+  transition: width .3s; }
+.sig-strat { color: var(--text-secondary); font-size: 12px;
+  max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.sig-act { text-align: center; }
+.sig-act .btn { font-size: 11px; padding: 1px 4px; }
+
+/* 策略配置面板的卡片列表样式（origin/fund-quant） */
 .sig-table th { padding: 2px 6px; text-align: left; color: var(--text-tertiary); font-weight: 600; font-size: 11px; border-bottom: 1px solid var(--border-bright); text-transform: uppercase; letter-spacing: .5px; }
 .sig-table td { padding: 2px 6px; border-bottom: 1px solid var(--border-light); color: var(--text-primary); font-size: 18px; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 .sig-table td .tag-buy, .sig-table td .tag-sell, .sig-table td .tag-hold {
@@ -1996,7 +2048,7 @@ tr[data-code]:hover { background: var(--bg-tertiary); }
 
 .panel-navchart .period-btn:hover { border-color: var(--primary-color); color: var(--primary-color); }
 .panel-navchart .period-btn.active { background: var(--primary-color); color: var(--text-inverse); border-color: transparent; }
-.panel-navchart .panel-chart { height: 300px; width: 100%; }
+.panel-navchart .panel-chart { height: 380px; width: 100%; }
 
 /* 组合配置面板 */
 .panel-allocation {
@@ -2007,11 +2059,29 @@ tr[data-code]:hover { background: var(--bg-tertiary); }
   box-shadow: 0 2px 8px rgba(0,0,0,.25);
 }
 
-.panel-allocation .panel-header { padding: 8px 12px; }
-.alloc-body { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px 12px; }
-.alloc-chart { height: 240px; }
-.alloc-table-wrapper { overflow-y: auto; max-height: 240px; }
-.alloc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+/* 策略配置 / 策略详情：信号列表与基金详情是另外两个面板，
+   类名必须分开，否则两套 flex 与滚动规则会互相覆盖。 */
+.panel-strategy-config,
+.panel-strategy-detail {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  display: flex; flex-direction: column;
+  min-height: 0;
+}
+
+.panel-allocation .panel-header { padding: 6px 10px; }
+.alloc-body {
+  display: grid; grid-template-columns: minmax(180px, 0.8fr) minmax(220px, 1.2fr);
+  gap: 8px; align-items: stretch;
+}
+/* 图表要足够高才能看清饼图/矩形树图的分区 */
+.alloc-chart { height: 360px; }
+/* 表格与图表同高；23 只基金约 815px，超出的部分滚动 */
+.alloc-table-wrapper { overflow-y: auto; max-height: 360px; }
+.alloc-table { width: 100%; border-collapse: collapse; font-size: 18px; }
+.alloc-table th { padding: 3px 4px; text-align: left; color: var(--text-tertiary); font-size: 18px; text-transform: uppercase; }
+.alloc-table td { padding: 3px 4px; }
 .alloc-table th { padding: 5px 8px; text-align: left; color: var(--text-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border-light); }
 .alloc-table td { padding: 5px 8px; border-bottom: 1px solid var(--border-light); color: var(--text-primary); }
 .alloc-table tbody tr:hover { background: var(--bg-tertiary); }
@@ -2083,8 +2153,127 @@ th.sortable.sorted-desc::after { content: ' ↓'; opacity: 1; color: var(--prima
 .research-panel .research-tab-content { display: none; }
 .research-panel .research-tab-content.active { display: block; }
 .research-panel .research-scroll { max-height: 400px; overflow-y: auto; padding: 6px 10px; }
+/* 因子面板有摘要条 + 双栏 + 历史三块，400px 会截断；给它自己的滚动空间 */
+.research-panel .research-scroll.fx-root { max-height: 620px; padding: 8px 10px; }
 .research-panel .research-section { padding: 3px 0; }
 .research-panel .research-section-title { font-size: 18px; font-weight: 600; color: var(--primary-color); margin-bottom: 4px; padding: 2px 0; border-bottom: 1px solid var(--border-light); }
+
+/* ── 因子暴露面板 ── */
+.fx-root { display: flex; flex-direction: column; gap: 10px; }
+
+/* 摘要条：总分给足视觉重量 */
+.fx-summary {
+  display: flex; align-items: center; gap: 20px;
+  padding: 10px 14px;
+  background: linear-gradient(90deg, rgba(232,168,56,.10), rgba(232,168,56,.02) 60%, transparent);
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--primary-color);
+  border-radius: var(--radius);
+}
+.fx-score { display: flex; flex-direction: column; min-width: 110px; }
+.fx-score-label {
+  font-size: 11px; color: var(--text-tertiary);
+  text-transform: uppercase; letter-spacing: .5px;
+  font-family: var(--font-mono);
+}
+.fx-total-score {
+  font-size: 30px; font-weight: 700; line-height: 1.1;
+  color: var(--primary-color);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+.fx-summary-facts { display: flex; gap: 22px; }
+.fx-fact { display: flex; flex-direction: column; align-items: flex-start; }
+.fx-fact-num {
+  font-size: 18px; font-weight: 600; color: var(--text-primary);
+  font-variant-numeric: tabular-nums; font-family: var(--font-mono);
+}
+.fx-fact-label {
+  font-size: 11px; color: var(--text-tertiary);
+  text-transform: uppercase; letter-spacing: .4px;
+}
+
+.fx-main-row { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.15fr); gap: 10px; }
+
+.fx-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: 8px 10px 6px;
+  min-width: 0;
+}
+.fx-card .research-section-title {
+  font-size: 13px; font-weight: 600; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: .4px;
+  margin-bottom: 4px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-light);
+}
+.fx-sub {
+  font-size: 10px; font-weight: 400; letter-spacing: 0;
+  text-transform: none; color: var(--text-tertiary); margin-left: 6px;
+}
+
+.fx-radar-chart { height: 252px; }
+.fx-history-chart { height: 260px; }
+
+.fx-table-wrapper { max-height: 232px; overflow-y: auto; overflow-x: hidden; }
+.fx-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.fx-table th, .fx-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border-light);
+  text-align: left;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.fx-table th {
+  color: var(--text-tertiary); font-weight: 600;
+  font-size: 10px; text-transform: uppercase; letter-spacing: .3px;
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+}
+.fx-table tbody tr:hover { background: var(--bg-tertiary); }
+.fx-table .num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+.fx-table .muted { color: var(--text-tertiary); }
+.fx-name { font-weight: 500; }
+.fx-table tr.fx-dead { opacity: .4; }
+.fx-table tr.fx-dead:hover { opacity: .6; }
+.fx-tag {
+  font-size: 9px; padding: 0 3px; margin-left: 2px;
+  border-radius: 2px; letter-spacing: .3px;
+  background: var(--bg-elevated); color: var(--text-tertiary);
+  border: 1px solid var(--border-light);
+}
+
+/* 同类百分位：迷你条 + 数字，可横向比较 */
+.pct-col { width: 96px; }
+.fx-pct { display: flex; align-items: center; gap: 5px; }
+.fx-pct-bar {
+  flex: 1; height: 4px; min-width: 32px;
+  background: var(--bg-tertiary);
+  border-radius: 2px; overflow: hidden;
+}
+.fx-pct-bar > i { display: block; height: 100%; border-radius: 2px; }
+.fx-pct-bar > i.hi  { background: var(--danger-color); }
+.fx-pct-bar > i.up  { background: var(--primary-color); }
+.fx-pct-bar > i.mid { background: var(--text-tertiary); }
+.fx-pct-bar > i.lo  { background: var(--success-color); }
+.fx-pct-num {
+  font-size: 11px; font-weight: 600; min-width: 22px; text-align: right;
+  font-variant-numeric: tabular-nums; font-family: var(--font-mono);
+}
+.fx-pct-num.hi  { color: var(--danger-color); }
+.fx-pct-num.up  { color: var(--primary-color); }
+.fx-pct-num.mid { color: var(--text-secondary); }
+.fx-pct-num.lo  { color: var(--success-color); }
+
+.fx-empty { padding: 44px 12px; text-align: center; color: var(--text-tertiary); font-size: 13px; }
+.fx-empty span { font-size: 11px; }
+
+@media (max-width: 1100px) {
+  .fx-main-row { grid-template-columns: 1fr; }
+  .fx-summary { flex-wrap: wrap; gap: 12px; }
+}
 .research-panel .research-divider { height: 1px; background: var(--border-light); margin: 3px 0; }
 .research-panel .param-row:last-child { border-bottom: none !important; }
 .research-panel .factor-evaluation-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border-light); }
@@ -2123,7 +2312,7 @@ th.sortable.sorted-desc::after { content: ' ↓'; opacity: 1; color: var(--prima
 /* 参数扫描 */
 .panel-param-scan { display: flex; flex-direction: column; }
 .ps-form input, .ps-form select, .ps-form textarea { box-sizing: border-box; }
-.ps-table-wrapper { overflow-x: auto; max-height: 120px; }
+.ps-table-wrapper { overflow-x: auto; max-height: 200px; }
 .ps-table-wrapper table { width: 100%; font-size: 18px; border-collapse: collapse; }
 .ps-table-wrapper th { padding: 2px 3px; text-align: right; background: var(--bg-tertiary); cursor: pointer; white-space: nowrap; font-size: 18px; text-transform: uppercase; }
 .ps-table-wrapper th:first-child { text-align: left; }
