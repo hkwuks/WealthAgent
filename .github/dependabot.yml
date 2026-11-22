@@ -4,9 +4,11 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    # 0 = 暂停版本更新 PR（GitHub 官方开关），配置保留以便随时恢复：
+    # 改回 5 即重新开启。安全更新不受此项限制。
+    open-pull-requests-limit: 0
   - package-ecosystem: npm
     directory: "/frontend"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
