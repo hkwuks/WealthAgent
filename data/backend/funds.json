@@ -19,7 +19,15 @@
     "fund_name": "国泰黄金ETF联接A",
     "fund_type": "指数型-其他",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "on_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 0,
+    "redemption_confirm_days": 0,
+    "cash_arrival_days": 0,
+    "trading_profile_source": "东方财富基金资料 + ETF行情",
+    "trading_profile_confidence": 0.95,
+    "trading_profile_needs_confirmation": false
   },
   {
     "fund_code": "001235",
@@ -56,7 +64,15 @@
     "fund_name": "华宝纳斯达克精选股票发起式(QDII)A",
     "fund_type": "QDII-普通股票",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "off_exchange",
+    "trade_mode": "t2",
+    "subscription_confirm_days": 2,
+    "redemption_confirm_days": 2,
+    "cash_arrival_days": 7,
+    "trading_profile_source": "东方财富基金资料/F10",
+    "trading_profile_confidence": 0.7,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "013428",
@@ -78,21 +94,45 @@
     "fund_name": "华泰保兴尊合债券A",
     "fund_type": "债券型-混合一级",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "off_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 1,
+    "redemption_confirm_days": 1,
+    "cash_arrival_days": 3,
+    "trading_profile_source": "东方财富基金资料/F10",
+    "trading_profile_confidence": 0.7,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "006962",
     "fund_name": "南方中债7",
     "fund_type": "指数型-固收",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "off_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 1,
+    "redemption_confirm_days": 1,
+    "cash_arrival_days": 3,
+    "trading_profile_source": "东方财富基金资料/F10",
+    "trading_profile_confidence": 0.7,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "163806",
     "fund_name": "中银增利债券A",
     "fund_type": "债券型-混合一级",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "on_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 0,
+    "redemption_confirm_days": 0,
+    "cash_arrival_days": 0,
+    "trading_profile_source": "东方财富基金资料 + ETF行情",
+    "trading_profile_confidence": 0.95,
+    "trading_profile_needs_confirmation": false
   },
   {
     "fund_code": "000614",
@@ -114,84 +154,164 @@
     "fund_name": "天弘安康颐养混合C",
     "fund_type": "混合型-偏债",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "off_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 1,
+    "redemption_confirm_days": 1,
+    "cash_arrival_days": 3,
+    "trading_profile_source": "东方财富基金资料/F10",
+    "trading_profile_confidence": 0.7,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "008163",
     "fund_name": "南方标普红利低波50ETF联接A",
     "fund_type": "指数型-股票",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "on_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 0,
+    "redemption_confirm_days": 0,
+    "cash_arrival_days": 0,
+    "trading_profile_source": "东方财富基金资料 + ETF行情",
+    "trading_profile_confidence": 0.95,
+    "trading_profile_needs_confirmation": false
   },
   {
     "fund_code": "007751",
     "fund_name": "景顺长城沪港深红利成长低波指数A",
     "fund_type": "指数型-股票",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "off_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 1,
+    "redemption_confirm_days": 1,
+    "cash_arrival_days": 3,
+    "trading_profile_source": "东方财富基金资料/F10",
+    "trading_profile_confidence": 0.7,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "019018",
     "fund_name": "易方达信息产业混合C",
     "fund_type": "混合型-偏股",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "off_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 1,
+    "redemption_confirm_days": 1,
+    "cash_arrival_days": 3,
+    "trading_profile_source": "东方财富基金资料/F10",
+    "trading_profile_confidence": 0.7,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "012323",
     "fund_name": "华宝医疗ETF联接C",
     "fund_type": "指数型-股票",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "on_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 0,
+    "redemption_confirm_days": 0,
+    "cash_arrival_days": 0,
+    "trading_profile_source": "东方财富基金资料 + ETF行情",
+    "trading_profile_confidence": 0.95,
+    "trading_profile_needs_confirmation": false
   },
   {
     "fund_code": "023920",
     "fund_name": "国泰富时现金流ETF联接C",
     "fund_type": "指数型-股票",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "on_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 0,
+    "redemption_confirm_days": 0,
+    "cash_arrival_days": 0,
+    "trading_profile_source": "东方财富基金资料 + ETF行情",
+    "trading_profile_confidence": 0.95,
+    "trading_profile_needs_confirmation": false
   },
   {
     "fund_code": "021674",
     "fund_name": "国泰黄金股ETF联接C",
     "fund_type": "指数型-股票",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "on_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 0,
+    "redemption_confirm_days": 0,
+    "cash_arrival_days": 0,
+    "trading_profile_source": "东方财富基金资料 + ETF行情",
+    "trading_profile_confidence": 0.95,
+    "trading_profile_needs_confirmation": false
   },
   {
     "fund_code": "968048",
     "fund_name": "摩根亚洲股息人民币",
     "fund_type": "海外混合",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "unknown",
+    "trading_profile_source": "未识别",
+    "trading_profile_confidence": 0,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "968067",
     "fund_name": "惠理高息股票基金P累积人民币对冲类别",
     "fund_type": "海外混合",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "unknown",
+    "trading_profile_source": "未识别",
+    "trading_profile_confidence": 0,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "968041",
     "fund_name": "惠理价值基金P人民币对冲",
     "fund_type": "海外混合",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "unknown",
+    "trading_profile_source": "未识别",
+    "trading_profile_confidence": 0,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "968040",
     "fund_name": "惠理价值基金P人民币非对冲",
     "fund_type": "海外混合",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "unknown",
+    "trading_profile_source": "未识别",
+    "trading_profile_confidence": 0,
+    "trading_profile_needs_confirmation": true
   },
   {
     "fund_code": "513500",
     "fund_name": "标普500ETF博时",
     "fund_type": "ETF 基金",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "on_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 0,
+    "redemption_confirm_days": 0,
+    "cash_arrival_days": 0,
+    "trading_profile_source": "东方财富基金资料 + ETF行情",
+    "trading_profile_confidence": 0.95,
+    "trading_profile_needs_confirmation": false
   },
   {
     "fund_code": "518880",
@@ -205,29 +325,59 @@
     "fund_name": "沪深300ETF华泰柏瑞",
     "fund_type": "ETF 基金",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "on_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 0,
+    "redemption_confirm_days": 0,
+    "cash_arrival_days": 0,
+    "trading_profile_source": "东方财富基金资料 + ETF行情",
+    "trading_profile_confidence": 0.95,
+    "trading_profile_needs_confirmation": false
   },
   {
     "fund_code": "510500",
     "fund_name": "中证500ETF南方",
     "fund_type": "ETF 基金",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "on_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 0,
+    "redemption_confirm_days": 0,
+    "cash_arrival_days": 0,
+    "trading_profile_source": "东方财富基金资料 + ETF行情",
+    "trading_profile_confidence": 0.95,
+    "trading_profile_needs_confirmation": false
   },
   {
     "fund_code": "513100",
     "fund_name": "纳指ETF国泰",
     "fund_type": "ETF 基金",
     "total_shares": 1,
-    "holdings": []
+    "holdings": [],
+    "market_type": "on_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 0,
+    "redemption_confirm_days": 0,
+    "cash_arrival_days": 0,
+    "trading_profile_source": "东方财富基金资料 + ETF行情",
+    "trading_profile_confidence": 0.95,
+    "trading_profile_needs_confirmation": false
   },
   {
     "fund_code": "511010",
     "fund_name": "国债ETF国泰",
     "fund_type": "ETF 基金",
     "total_shares": 1,
-    "holdings": []
-  }
-] []
+    "holdings": [],
+    "market_type": "on_exchange",
+    "trade_mode": "t1",
+    "subscription_confirm_days": 0,
+    "redemption_confirm_days": 0,
+    "cash_arrival_days": 0,
+    "trading_profile_source": "东方财富基金资料 + ETF行情",
+    "trading_profile_confidence": 0.95,
+    "trading_profile_needs_confirmation": false
   }
 ]
