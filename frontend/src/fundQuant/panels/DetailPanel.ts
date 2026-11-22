@@ -20,7 +20,7 @@ export class DetailPanel extends PanelBase {
         <h3>基金详情</h3>
         <button class="detail-close" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--text-secondary);padding:0 4px;" title="关闭">&#x2715;</button>
       </div>
-      <div class="detail-body" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:12px 16px;">
+      <div class="detail-body">
         <div class="detail-section detail-section-signals">
           <h4 style="font-size:13px;font-weight:600;color:var(--text-primary);margin:0 0 8px;">信号历史</h4>
           <div class="detail-signals-body" style="max-height:240px;overflow-y:auto;"></div>
@@ -179,10 +179,10 @@ export class DetailPanel extends PanelBase {
       return
     }
     container.innerHTML = `
-      <div style="padding:4px 0;font-size:12px;">
-        <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--text-secondary);">代码</span><span style="color:var(--text-primary);font-weight:600;">${fund.fund_code}</span></div>
-        <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--text-secondary);">名称</span><span style="color:var(--text-primary);font-weight:600;">${fund.fund_name || '-'}</span></div>
-        <div style="display:flex;justify-content:space-between;padding:4px 0;"><span style="color:var(--text-secondary);">类型</span><span style="color:var(--text-primary);font-weight:600;">${fund.fund_type || '-'}</span></div>
+      <div class="detail-info-list">
+        <div class="detail-info-row"><span class="detail-info-key">代码</span><span class="detail-info-val">${fund.fund_code}</span></div>
+        <div class="detail-info-row"><span class="detail-info-key">名称</span><span class="detail-info-val">${fund.fund_name || '-'}</span></div>
+        <div class="detail-info-row"><span class="detail-info-key">类型</span><span class="detail-info-val">${fund.fund_type || '-'}</span></div>
       </div>`
   }
 
