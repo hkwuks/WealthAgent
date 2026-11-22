@@ -84,3 +84,13 @@ data/backend/funds.json.bak-*
 data/fund_types.json
 frontend/node_modules/
 frontend/dist/
+
+# 运行时数据库与本地持仓（本机产生，不入库）
+data/backend/gold/gold.db
+data/backend/cache/*.db
+data/backend/history/*.db
+data/backend/price_history.json
+data/my_portfolio.json
+data/transactions*.json
+data/etf_pool*.json
+reports/
