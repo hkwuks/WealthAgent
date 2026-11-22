@@ -181,9 +181,17 @@ export interface StrategyParam {
 export interface FactorExposureData {
   fund_code: string
   fund_name: string
-  factors: Record<string, { value: number; weight: number; rank_pct: number }>
+  fund_type?: string
+  /** rank_pct 为 null 表示该基金所在同类池不足 8 只，前端不显示该列 */
+  factors: Record<string, { value: number; weight: number; rank_pct: number | null }>
   total_score: number
   n_funds_in_category: number
+}
+
+export interface FactorHistoryData {
+  fund_code: string
+  series: { name: string; display_name: string; weight: number }[]
+  points: { date: string; factors: Record<string, number> }[]
 }
 
 export interface FactorExposureResult {
@@ -328,7 +336,13 @@ export const fundQuantApi = {
     if (fund_code) params.set('fund_code', fund_code)
     return get<{ success: boolean; data: SignalRecord[] }>(`/signal/history?${params}`)
   },
-  getLatestSignals: () => get<{ success: boolean; data: SignalRecord[] }>('/signal/latest'),
+  getLatestSignals: (fundCodes?: string[], limit = 20) => {
+    const params = new URLSearchParams({ limit: String(limit) })
+    // 传白名单让后端先过滤再截断：库里混着大量历史测试信号，
+    // 不传的话前 20 条可能全被测试数据占满。
+    if (fundCodes?.length) params.set('fund_codes', fundCodes.join(','))
+    return get<{ success: boolean; data: SignalRecord[] }>(`/signal/latest?${params}`)
+  },
 
   // Selection
   screenFunds: (fund_type: string, top_n = 10, strategy = 'multi_factor') =>
@@ -404,6 +418,9 @@ export const fundQuantApi = {
   // — 新增：策略暴露接口 —
   getFactorExposure: (fund_code: string) =>
     get<FactorExposureResult>(`/factors/exposure/${fund_code}`),
+  getFactorHistory: (fund_code: string, months = 12) =>
+    get<{ success: boolean; data: FactorHistoryData }>(
+      `/factors/history/${fund_code}?months=${months}`),
 
   // — 新增：回测分析 —
   runAnalysis: (backtestId: string, nSimulations = 1000) =>

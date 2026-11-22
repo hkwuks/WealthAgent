@@ -1219,9 +1219,25 @@ async def export_backtest(backtest_id: str, fmt: str = "json"):
 
 @router.get("/signal/latest")
 async def get_latest_signals(fund_code: Optional[str] = None,
-                              signal_type: Optional[str] = None):
-    """获取最新信号（返回足够多，前端按基金去重保留最佳信号）"""
-    signals = await asyncio.to_thread(partial(get_signals, fund_code=fund_code, signal_type=signal_type, limit=200))
+                              signal_type: Optional[str] = None,
+                              fund_codes: Optional[str] = None,
+                              limit: int = 200):
+    """获取最新信号（默认返回足够多，前端按基金去重保留最佳信号）
+
+    fund_codes: 逗号分隔的基金代码白名单。库里有 362 条信号，其中 148 条是
+    000001 的历史测试残留；只按时间倒序截断会被它占满，真实持仓信号进不来。
+    传白名单让后端先过滤再截断。
+    """
+    if fund_codes:
+        wanted = {c.strip() for c in fund_codes.split(",") if c.strip()}
+        raw = await asyncio.to_thread(
+            partial(get_signals, fund_code=fund_code, signal_type=signal_type,
+                    limit=max(limit * 30, 2000)))
+        signals = [s for s in raw if s.get("fund_code") in wanted][:limit]
+    else:
+        signals = await asyncio.to_thread(
+            partial(get_signals, fund_code=fund_code, signal_type=signal_type,
+                    limit=limit))
     return {"success": True, "data": signals}
 
 
@@ -1298,9 +1314,18 @@ async def portfolio_status():
     except Exception:
         pass
 
-    # 信号计数保持单次查询
+    # 获取信号计数 —— 只统计用户基金池内的，否则 000001 等历史测试残留
+    # 会让 KPI 显示「↑216 ↓39」而信号列表面板却是空的一类矛盾。
     try:
-        signals = await asyncio.to_thread(partial(get_signals, limit=1000))
+        from pathlib import Path
+        funds_file = Path(__file__).resolve().parents[2] / "data" / "backend" / "funds.json"
+        pool: set[str] = set()
+        if funds_file.exists():
+            import json as _json
+            pool = {f.get("fund_code") for f in _json.loads(funds_file.read_text(encoding="utf-8"))}
+        signals = await asyncio.to_thread(partial(get_signals, limit=5000))
+        if pool:
+            signals = [s for s in signals if s.get("fund_code") in pool]
         buy = sum(1 for s in signals if s.get("direction") == "buy")
         sell = sum(1 for s in signals if s.get("direction") == "sell")
         status["signal_count"] = {"buy": buy, "sell": sell, "hold": 0}
@@ -1394,6 +1419,10 @@ async def data_status():
 async def factor_list(domain: str = "fund"):
     """列出已注册因子"""
     from backend.core.factor import FactorRegistry
+    # 之前这里没有 load_all()，Registry 是空的，接口恒返回 []，
+    # 量化引擎 Tab 的「已注册因子」显示 0。
+    from ..fund_quant.factors import load_all
+    load_all()
     metas = FactorRegistry.list(domain=domain)
     return {"success": True, "data": [
         {"name": m.name, "display_name": m.display_name,
@@ -1431,6 +1460,7 @@ async def factor_audit(domain: str = "fund", years: int = 3):
 @router.get("/factors/exposure/{fund_code}")
 async def fund_factor_exposure(fund_code: str, lookback: int = 365):
     """获取单基金因子暴露度 — 计算各注册因子的当前暴露值"""
+    from datetime import date
     import numpy as np
     from backend.core.factor import FactorRegistry
     from ..fund_quant.data.storage import get_nav_history, get_fund_meta
@@ -1449,71 +1479,63 @@ async def fund_factor_exposure(fund_code: str, lookback: int = 365):
     fund_meta = await asyncio.to_thread(get_fund_meta, fund_code)
     fund_name = (fund_meta or {}).get("fund_name", fund_code) if fund_meta else fund_code
 
-    # 获取所有注册的基金域因子
-    all_factors = FactorRegistry.list(domain="fund")
-    if not all_factors:
-        all_factors = FactorRegistry.list(domain="generic")
+    # 取注册因子（必须先 load_all，否则 Registry 为空——这是之前的死代码根源）
+    from ..fund_quant.factors import load_all
+    from ..fund_quant.factors.nav_feed import feed_from_storage
+    from ..fund_quant.factors.normalize import _squash, op_of
+    from ..fund_quant.factors import peer
+    load_all()
 
-    # 计算因子暴露值
+    all_factors = FactorRegistry.list(domain="fund") or FactorRegistry.list(domain="generic")
+
+    feed = feed_from_storage(fund_code)
+    if feed is None:
+        feed = NavFeed({fund_code: [r.get("nav") for r in nav_data if r.get("nav")]})
+
     computed: dict[str, float] = {}
+    detail: dict[str, str] = {}
     for meta in all_factors:
-        name = meta.name
-        if name == "sharpe_ratio" or name == "sharpe":
-            if len(returns) >= 20:
-                sr = float(np.mean(returns[-60:]) / (np.std(returns[-60:]) + 1e-10))
-                computed[name] = float(np.clip((sr + 2) / 4, 0, 1))
-        elif name == "max_drawdown":
-            peak = np.maximum.accumulate(nav_arr)
-            dd = (nav_arr - peak) / peak
-            mdd = float(np.min(dd)) if len(dd) > 0 else 0
-            computed[name] = float(np.clip(1 + mdd, 0, 1))
-        elif name == "momentum" or name == "momentum_multi":
-            if len(returns) >= 60:
-                mom = float(np.sum(returns[-60:]))
-                computed[name] = float(np.clip((mom + 0.3) / 0.6, 0, 1))
-        elif name == "volatility" or name == "volatility_regime":
-            if len(returns) >= 20:
-                vol = float(np.std(returns[-60:]))
-                computed[name] = float(np.clip(1 - vol * 5, 0, 1))
-        elif name == "fund_scale":
-            computed[name] = 0.5
-        elif name == "fee_rate":
-            computed[name] = 0.6
-        elif name == "fund_flow":
-            computed[name] = 0.5
-        elif name == "info_ratio":
-            if len(returns) >= 60:
-                ir = float(np.mean(returns[-60:]) / (np.std(returns[-60:]) + 1e-10) * np.sqrt(252))
-                computed[name] = float(np.clip(ir / 2, 0, 1))
-        elif name == "capture_ratio":
-            computed[name] = 0.5
-        elif name == "manager_tenure":
-            computed[name] = 0.5
-        elif name == "holding_concentration":
-            computed[name] = 0.5
-        elif name == "calendar_return":
-            computed[name] = 0.5
-        else:
-            computed[name] = 0.5
+        try:
+            factor_cls = FactorRegistry.get(meta.name)
+            raw = factor_cls().compute([fund_code], date.today(),
+                                       meta.params.get("lookback", 60), feed)
+            v = raw.get(fund_code)
+        except Exception as e:
+            detail[meta.name] = f"计算失败: {type(e).__name__}"
+            continue
+        if v is None:
+            detail[meta.name] = "数据不足"
+            continue
+        # 原始值归一化到 0~1 便于前端雷达图；真实值单独返回
+        computed[meta.name] = float(np.clip(_squash(v, op_of(meta.name)), 0, 1))
+        detail[meta.name] = f"{v:+.6f}"
 
-    # 因子权重和百分位
-    n_registered = len(all_factors) if all_factors else 14
-    weights = {
-        "momentum": 0.25, "sharpe_ratio": 0.20, "max_drawdown": 0.15,
-        "fund_flow": 0.12, "fee_rate": 0.10, "fund_scale": 0.08,
-        "info_ratio": 0.05, "capture_ratio": 0.03, "manager_tenure": 0.02,
-        "volatility": 0.0,
-    }
+    # ── 同类百分位：只对真实有分母的因子算，算不出返回 null ──
+    ftype = peer.fund_type_of(fund_code)
+    tech_names = tuple(n for n in computed if n.startswith("tech_"))
+    xs = peer.cross_section(ftype, tech_names, date.today()) if tech_names else {}
+    pct_of = {name: peer.percentile(xs[name], fund_code) for name in xs}
 
-    total_w = sum(weights.get(k, 0.05) for k in computed.keys())
+    # ── 权重：研究结论（|recent_ic|），淘汰因子 0 权重；退化为等权 ──
+    # 量价因子用滚动 IC 权重；基本面因子报告里没有 IC，按 0 处理（不计入总分）。
+    raw_w = {}
+    for k in computed:
+        w = all_factors and next(
+            (m.params.get("weight", 0.0) for m in all_factors if m.name == k), 0.0)
+        raw_w[k] = float(w or 0.0)
+    total_w = sum(raw_w.values())
+    weights = ({k: v / total_w for k, v in raw_w.items()} if total_w > 0
+               else {k: 1 / len(computed) for k in computed})
+
     factors_out = {}
-    total_score = 0
+    total_score = 0.0
     for k, v in computed.items():
-        w = weights.get(k, 0.05) / total_w if total_w > 0 else 0.05
+        w = weights.get(k, 0.0)
         factors_out[k] = {
             "value": round(v, 4),
             "weight": round(w, 4),
-            "rank_pct": int(min(max(v * 100, 5), 95)),
+            # null = 该基金所在同类池不足 MIN_POOL 只，前端不显示这一列
+            "rank_pct": pct_of.get(k),
         }
         total_score += v * w
     total_score = round(total_score, 4)
@@ -1523,9 +1545,70 @@ async def fund_factor_exposure(fund_code: str, lookback: int = 365):
         "data": {
             "fund_code": fund_code,
             "fund_name": fund_name,
+            "fund_type": ftype,
             "factors": factors_out,
             "total_score": total_score,
-            "n_funds_in_category": max(50, n_registered * 5),
+            "n_funds_in_category": len(xs.get(tech_names[0], {})) if xs and tech_names else 0,
+            "raw_values": detail,   # 归一化前的真实因子值，供调试
+        },
+    }
+
+
+@router.get("/factors/history/{fund_code}")
+async def fund_factor_history(fund_code: str, months: int = 12):
+    """因子暴露历史 —— 每个月末回溯一次，用真实 as_of 截断，不是拿当前值画柱。
+
+    前端的「历史因子暴露变化」折线图用这个接口。
+    """
+    from datetime import date, timedelta
+
+    from ..fund_quant.data.storage import get_nav_history
+    from ..fund_quant.factors import load_all
+    from ..fund_quant.factors.nav_feed import feed_from_storage
+    from ..fund_quant.factors.normalize import _squash, op_of
+    from backend.core.factor import FactorRegistry
+
+    rows = await asyncio.to_thread(get_nav_history, fund_code)
+    if not rows or len(rows) < 40:
+        return {"success": False, "message": "净值数据不足"}
+
+    feed = feed_from_storage(fund_code)
+    if feed is None:
+        return {"success": False, "message": "净值数据不足"}
+
+    load_all()
+    # 只画存活的量价因子（权重 > 0），淘汰因子画进来是噪声
+    metas = [m for m in FactorRegistry.list(domain="fund")
+             if m.name.startswith("tech_") and m.params.get("weight", 0) > 0]
+    if not metas:
+        return {"success": False, "message": "无可用因子"}
+
+    last_date = str(rows[-1].get("date", ""))[:10]
+    end = date.fromisoformat(last_date) if last_date else date.today()
+
+    points = []
+    for k in range(months - 1, -1, -1):
+        as_of = end - timedelta(days=30 * k)
+        snap = {}
+        for m in metas:
+            try:
+                raw = FactorRegistry.get(m.name)().compute(
+                    [fund_code], as_of, m.params.get("lookback", 60), feed)
+            except Exception:
+                continue
+            v = raw.get(fund_code)
+            if v is not None and np.isfinite(v):
+                snap[m.name] = round(float(np.clip(_squash(v, op_of(m.name)), 0, 1)), 4)
+        if snap:
+            points.append({"date": as_of.isoformat(), "factors": snap})
+
+    return {
+        "success": True,
+        "data": {
+            "fund_code": fund_code,
+            "series": [{"name": m.name, "display_name": m.display_name,
+                        "weight": m.params.get("weight", 0)} for m in metas],
+            "points": points,
         },
     }
 

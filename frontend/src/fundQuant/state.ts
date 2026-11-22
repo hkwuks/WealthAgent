@@ -142,15 +142,17 @@ const DEFAULT_LAYOUT: LayoutConfig = {
   name: '默认布局',
   panels: {
     kpi: { visible: true, order: 0 },
-    allocation: { visible: true, order: 1, grid_pos: { x: 0, y: 1, w: 3, h: 2 } },
-    signal_list: { visible: true, order: 2, grid_pos: { x: 0, y: 3, w: 1, h: 2 } },
-    detail: { visible: true, order: 3, grid_pos: { x: 1, y: 3, w: 2, h: 2 } },
-    nav_chart: { visible: false, order: 4, grid_pos: { x: 0, y: 1, w: 2, h: 1 } },
-    fund_ranking: { visible: false, order: 5, grid_pos: { x: 0, y: 3, w: 1, h: 1 } },
-    attribution: { visible: false, order: 6, grid_pos: { x: 1, y: 3, w: 1, h: 1 } },
-    monthly_returns: { visible: false, order: 7, grid_pos: { x: 2, y: 3, w: 1, h: 1 } },
-    'paper-trade': { visible: true, order: 8, grid_pos: { x: 0, y: 5, w: 3, h: 1 } },
-    'strategy-backtest': { visible: true, order: 9, grid_pos: { x: 0, y: 6, w: 3, h: 1 } },
+    nav_chart: { visible: true, order: 1, grid_pos: { x: 0, y: 1, w: 3, h: 1 } },
+    signal_list: { visible: true, order: 2, grid_pos: { x: 0, y: 2, w: 3, h: 1 } },
+    // 策略配置与策略详情：与信号列表、基金详情是两组独立功能，各占一行
+    strategy_config: { visible: true, order: 3, grid_pos: { x: 0, y: 3, w: 1, h: 2 } },
+    strategy_detail: { visible: true, order: 4, grid_pos: { x: 1, y: 3, w: 2, h: 2 } },
+    detail: { visible: true, order: 5, grid_pos: { x: 0, y: 5, w: 3, h: 1 } },
+    fund_ranking: { visible: true, order: 6, grid_pos: { x: 0, y: 6, w: 1, h: 1 } },
+    attribution: { visible: true, order: 7, grid_pos: { x: 1, y: 6, w: 1, h: 1 } },
+    monthly_returns: { visible: true, order: 8, grid_pos: { x: 2, y: 6, w: 1, h: 1 } },
+    'paper-trade': { visible: true, order: 9, grid_pos: { x: 0, y: 7, w: 3, h: 1 } },
+    'strategy-backtest': { visible: true, order: 10, grid_pos: { x: 0, y: 8, w: 3, h: 1 } },
   },
 }
 

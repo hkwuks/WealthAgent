@@ -1,141 +1,205 @@
 import { PanelBase } from '../layout'
-import { fundQuantApi, type StrategyAllocationSignal } from '../api'
-import { state, persistConfigCapital } from '../state'
+import { fundQuantApi } from '../api'
+import { state } from '../state'
 
-const NAME_MAP: Record<string, string> = {
-  etf_rotation_aurora: 'ETF动量轮动',
-  all_weather_aurora: '桥水全天候',
-  bl_quadrant_aurora: 'BL四象限观点',
-  black_litterman_aurora: 'Black-Litterman',
-  risk_parity_aurora: '风险平价',
-  dynamic_risk_parity_aurora: '动态风险平价',
-  vol_targeting_aurora: '波动率目标',
-  trend_following_aurora: '趋势跟踪',
-  gmv_aurora: '最小方差(GMV)',
-  hrp_aurora: '层次风险平价(HRP)',
-  max_diversification_aurora: '最大多元化(MDP)',
-}
+const DIR_LABEL: Record<string, string> = { buy: '↑买入', sell: '↓卖出', hold: '→持有' }
+const DIR_CLASS: Record<string, string> = { buy: 'tag-buy', sell: 'tag-sell', hold: 'tag-hold' }
 
-/**
- * 策略选择列表 — 左侧面板，用户点选策略后右侧展示详情
- */
 export class SignalList extends PanelBase {
-  private strategies: StrategyAllocationSignal[] = []
+  private sseSource: EventSource | null = null
+  private refreshTimer: ReturnType<typeof setInterval> | null = null
 
   constructor() {
-    super({ id: 'signal_list', title: '策略配置', defaultGridPos: { x: 0, y: 2, w: 1, h: 2 } })
+    // 信号列表的 5 列在 1/3 宽（约 413px）里会被挤成竖排/省略号。
+    // 满宽独占一行，名称才有可读空间。
+    super({ id: 'signal_list', title: '信号列表', defaultGridPos: { x: 0, y: 2, w: 3, h: 1 } })
   }
 
   render(): HTMLElement {
     const el = document.createElement('div')
     el.className = 'panel-signallist'
-    el.style.cssText = 'display:flex;flex-direction:column;overflow:hidden;min-height:0;'
     el.innerHTML = `
       <div class="panel-header">
-        <h3>📊 策略列表</h3>
-        <button class="btn btn-sm btn-primary btn-refresh-alloc" title="刷新">🔄</button>
+        <h3>信号列表</h3>
+        <div class="panel-toolbar">
+          <select class="sig-filter">
+            <option value="all">全部</option>
+            <option value="buy">买入</option>
+            <option value="sell">卖出</option>
+          </select>
+          <span class="sig-sse-dot"></span>
+        </div>
       </div>
-      <div style="padding:6px 8px 0;display:flex;align-items:center;gap:6px;">
-        <label for="alloc-capital" style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">配置基准</label>
-        <input id="alloc-capital" type="number" min="0" step="10000" style="width:100%;min-width:0;font-size:12px;padding:3px 6px;border:1px solid var(--border-color);border-radius:4px;background:var(--bg-primary);color:var(--text-primary);" title="用于计算各策略买入金额的基准资金，不会影响你的真实持仓">
+      <div class="sig-table-wrapper">
+        <table class="sig-table">
+          <thead>
+            <tr>
+              <th>基金</th>
+              <th>方向</th>
+              <th class="text-right">置信度</th>
+              <th>策略</th>
+              <th style="width:34px;"></th>
+            </tr>
+          </thead>
+          <tbody class="sig-tbody"></tbody>
+        </table>
       </div>
-      <div class="alloc-list" style="flex:1;min-height:0;overflow-y:auto;padding:8px;"></div>
-      <div class="alloc-msg" style="font-size:12px;color:var(--text-tertiary);padding:12px;text-align:center;">加载中…</div>`
+      <div class="sig-footer">
+        <span>实时推送 SSE</span>
+      </div>`
     return el
   }
 
-  private blUnsub: (() => void) | null = null
-  private capUnsub: (() => void) | null = null
-
   protected afterMount(): void {
-    this.el?.querySelector('.btn-refresh-alloc')?.addEventListener('click', () => this.refresh())
-    const capInput = this.el?.querySelector('#alloc-capital') as HTMLInputElement | null
-    if (capInput) {
-      capInput.value = String(state.get('configCapital'))
-      let timer: ReturnType<typeof setTimeout> | null = null
-      capInput.addEventListener('input', () => {
-        if (timer) clearTimeout(timer)
-        timer = setTimeout(() => {
-          const v = parseFloat(capInput.value)
-          if (!Number.isFinite(v) || v <= 0) return
-          persistConfigCapital(v)   // 持久化并广播，右侧详情面板随金额刷新
-          this.refresh()            // 左侧金额列随新基准重算
-        }, 400)
-      })
-    }
-    this.blUnsub = state.on('blViews', () => this.refresh())
-    this.capUnsub = state.on('configCapital', () => {
-      if (capInput) capInput.value = String(state.get('configCapital'))
+    // 过滤切换 → 客户端过滤（调用 refresh 重新获取后由 render 过滤）
+    this.el?.querySelector('.sig-filter')?.addEventListener('change', () => this.refresh())
+
+    // 行点击 → 选中基金
+    this.el?.querySelector('.sig-tbody')?.addEventListener('click', (e) => {
+      const studyBtn = (e.target as HTMLElement).closest('.sig-study-btn')
+      if (studyBtn) {
+        // 研究按钮 → 打开研究区
+        const btn = studyBtn as HTMLElement
+        const code = btn.dataset.code || ''
+        const signal = {
+          direction: btn.dataset.direction || 'hold',
+          confidence: parseFloat(btn.dataset.confidence || '0'),
+          strategy_name: btn.dataset.strategy || '',
+          timestamp: btn.dataset.timestamp || '',
+          fund_code: code,
+          fund_name: '',
+        } as any
+        const fundName = state.get('fundPool').find(f => f.fund_code === code)?.fund_name || ''
+        signal.fund_name = fundName
+        // 研究区现在是「策略暴露 / 因子评价」两个 tab，点信号看因子暴露
+        state.set('researchPanel', { visible: true, activeTab: 'exposure', fundCode: code, signal })
+        return
+      }
+      const row = (e.target as HTMLElement).closest<HTMLElement>('[data-code]')
+      if (row) state.set('selectedFund', row.dataset.code || null)
     })
-    this.refresh()
+
+    // SSE
+    this.startSSE()
+
+    // 定时刷新
+    this.refreshTimer = setInterval(() => this.refresh(), 30000)
   }
 
-  private allocParams(): Record<string, any> {
-    const views = state.get('blViews') || []
-    return views.length ? { views } : {}
+  private setDotColor(color: string): void {
+    const dot = this.el?.querySelector('.sig-sse-dot') as HTMLElement
+    if (dot) dot.style.background = color
+  }
+
+  private startSSE(): void {
+    this.sseSource = new EventSource('/api/fund-quant/signal/stream')
+    this.sseSource.onopen = () => this.setDotColor('#10b981')
+    this.sseSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data.type === 'heartbeat') return
+        if (data.fund?.code) {
+          this.refresh()
+          // 闪烁琥珀色提示新信号
+          this.setDotColor('#fbbf24')
+          setTimeout(() => this.setDotColor('#10b981'), 2000)
+        }
+      } catch { /* ignore parse errors */ }
+    }
+    this.sseSource.onerror = () => {
+      // 标记断开 + 10s 重连
+      this.setDotColor('#94a3b8')
+      this.sseSource?.close()
+      setTimeout(() => this.startSSE(), 10000)
+    }
   }
 
   async refresh(): Promise<void> {
-    const container = this.el?.querySelector('.alloc-list') as HTMLElement
-    const msg = this.el?.querySelector('.alloc-msg') as HTMLElement
-    if (!container) return
-
-    const codes = state.get('fundPool').map(f => f.fund_code)
-    if (!codes.length) {
-      msg!.textContent = '基金池为空，请先加载基金数据'
-      return
-    }
-
+    if (!this.el) return
+    const filter = (this.el.querySelector('.sig-filter') as HTMLSelectElement)?.value || 'all'
     try {
-      const params = this.allocParams()
-      const capital = state.get('configCapital')
-      const res = await fundQuantApi.getStrategyAllocation(codes, capital, params)
-      if (!res.success) throw new Error('请求失败')
-      this.strategies = res.data.strategies
-      if (!this.strategies.length) {
-        msg!.textContent = '暂无可用策略'
+      // 只显示 fundPool 中存在的基金信号。白名单传给后端，
+      // 由后端先过滤再截断——库里 148 条 000001 历史测试残留会挤掉真实信号。
+      const poolCodes = state.get('fundPool').map(f => f.fund_code)
+      if (!poolCodes.length) {
+        // 基金池还没加载完。此时不传白名单会拿到测试残留数据，宁可不显示。
+        const tb = this.el.querySelector('.sig-tbody')
+        if (tb) tb.innerHTML = `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--text-tertiary);font-size:13px;">等待基金池加载…</td></tr>`
         return
       }
-      msg!.textContent = ''
-      this.renderList(container)
-    } catch (e: any) {
-      msg!.textContent = `❌ ${e?.message || '获取策略失败'}`
-    }
-  }
+      const res = await fundQuantApi.getLatestSignals(poolCodes, 30)
+      let signals = res.data || []
 
-  private renderList(container: HTMLElement): void {
-    const selected = state.get('selectedStrategy')
-    container.innerHTML = ''
-
-    for (const s of this.strategies) {
-      const name = NAME_MAP[s.strategy] || s.strategy
-      const isSelected = s.strategy === selected
-      const entries = Object.entries(s.weights).filter(([, w]) => w > 0)
-      const topHoldings = entries.slice(0, 3).map(([, w]) => `${(w * 100).toFixed(0)}%`).join(' / ')
-
-      const card = document.createElement('div')
-      card.style.cssText = `padding:10px 12px;margin-bottom:6px;border-radius:8px;cursor:pointer;transition:all .15s;
-        border:1.5px solid ${isSelected ? 'var(--primary-color)' : 'var(--border-light)'};
-        background:${isSelected ? 'var(--primary-color)10' : 'var(--bg-secondary)'};`
-      card.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <strong style="font-size:13px;color:${isSelected ? 'var(--primary-color)' : 'var(--text-primary)'};">${name}</strong>
-          <span style="font-size:11px;color:var(--text-tertiary);">信心 ${(s.confidence * 100).toFixed(0)}%</span>
-        </div>
-        <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;">
-          ${entries.length}只基金 · ${topHoldings || '—'}
-        </div>`
-      card.addEventListener('click', () => {
-        state.set('selectedStrategy', s.strategy)
-        this.renderList(container)
+      // 去重 (code + direction + confidence 相同视为重复)
+      const seen = new Set<string>()
+      signals = signals.filter(s => {
+        const key = `${s.fund_code}|${s.direction}|${s.confidence}|${s.strategy_name}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
       })
-      container.appendChild(card)
-    }
+
+      if (filter !== 'all') signals = signals.filter(s => s.direction === filter)
+
+      const tbody = this.el.querySelector('.sig-tbody')
+      if (!tbody) return
+
+      if (!signals.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="padding:24px;text-align:center;color:var(--text-tertiary);font-size:13px;">暂无信号数据</td></tr>`
+        state.set('signals', [])
+        return
+      }
+
+      // 生成行html，如果是新数据则标记 glow class
+      const existingRows = tbody.querySelectorAll('tr[data-code]')
+      const existingKeys = new Set<string>()
+      existingRows.forEach(r => existingKeys.add(r.getAttribute('data-key') || ''))
+
+      tbody.innerHTML = signals.slice(0, 30).map(s => {
+        const key = `${s.fund_code}|${s.direction}|${s.confidence}`
+        const isNew = existingRows.length > 0 && !existingKeys.has(key)
+        const name = s.fund_name || s.fund_code
+        const when = (s.created_at || '').slice(5, 16)
+        return `<tr data-code="${s.fund_code}" data-key="${key}" class="${isNew ? 'sig-row-new' : ''}">
+          <td class="sig-name" title="${name} (${s.fund_code}) · ${when}">
+            <div class="sig-name-cell">
+              <span class="sig-name-text">${name}</span>
+              <span class="sig-code">${s.fund_code}</span>
+            </div>
+          </td>
+          <td class="sig-dir">
+            <span class="${DIR_CLASS[s.direction] || ''}">${DIR_LABEL[s.direction] || s.direction}</span>
+          </td>
+          <td class="sig-conf">
+            <span class="sig-conf-num">${(s.confidence * 100).toFixed(0)}%</span>
+            <span class="sig-conf-bar"><i style="width:${s.confidence * 100}%;background:${
+              s.confidence > 0.7 ? '#10b981' : s.confidence > 0.5 ? '#f59e0b' : '#94a3b8'}"></i></span>
+          </td>
+          <td class="sig-strat" title="${s.strategy_name || '-'}">${s.strategy_name || '-'}</td>
+          <td class="sig-act">
+            <button class="btn btn-sm btn-ghost sig-study-btn" data-code="${s.fund_code}" data-direction="${s.direction}" data-confidence="${s.confidence}" data-strategy="${s.strategy_name || ''}" data-timestamp="${s.created_at || ''}" title="研究此信号">🔍</button>
+          </td>
+        </tr>`
+      }).join('')
+
+      state.set('signals', signals.map(s => ({
+        direction: s.direction as any,
+        confidence: s.confidence,
+        strategy_name: s.strategy_name,
+        timestamp: s.created_at,
+        fund_code: s.fund_code,
+        fund_name: s.fund_name || '',
+      })))
+    } catch { /* 静默保留旧数据 */ }
   }
 
   destroy(): void {
-    this.blUnsub?.()
-    this.capUnsub?.()
+    this.sseSource?.close()
+    if (this.refreshTimer) clearInterval(this.refreshTimer)
     super.destroy()
+  }
+
+  onActivated(): void {
+    this.refresh()
   }
 }
