@@ -22,11 +22,11 @@ export class DetailPanel extends PanelBase {
       <div class="detail-body" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:12px 16px;">
         <div class="detail-section detail-section-signals">
           <h4 style="font-size:13px;font-weight:600;color:var(--text-primary);margin:0 0 8px;">信号历史</h4>
-          <div class="detail-signals-body" style="max-height:160px;overflow-y:auto;"></div>
+          <div class="detail-signals-body" style="max-height:240px;overflow-y:auto;"></div>
         </div>
         <div class="detail-section detail-section-monthly">
           <h4 style="font-size:13px;font-weight:600;color:var(--text-primary);margin:0 0 8px;">月度收益</h4>
-          <div class="detail-monthly-body" style="max-height:160px;overflow-y:auto;"></div>
+          <div class="detail-monthly-body" style="max-height:240px;overflow-y:auto;"></div>
         </div>
         <div class="detail-section detail-section-info">
           <h4 style="font-size:13px;font-weight:600;color:var(--text-primary);margin:0 0 8px;">基金信息</h4>
@@ -38,7 +38,7 @@ export class DetailPanel extends PanelBase {
         </div>
         <div class="detail-section detail-section-factors" style="grid-column:2/4;">
           <h4 style="font-size:13px;font-weight:600;color:var(--text-primary);margin:0 0 8px;">因子暴露</h4>
-          <div class="detail-factors-body" style="height:140px;"></div>
+          <div class="detail-factors-body" style="height:180px;"></div>
         </div>
       </div>`
     return el

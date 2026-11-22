@@ -1838,6 +1838,35 @@ tr:hover { background: var(--bg-tertiary); }
 .sig-table { width: 100%; border-collapse: collapse; font-size: 18px; }
 .sig-table th { padding: 4px 6px; text-align: left; color: var(--text-tertiary); font-weight: 600; font-size: 18px; border-bottom: 1px solid var(--border-bright); text-transform: uppercase; letter-spacing: .3px; }
 .sig-table td { padding: 4px 6px; border-bottom: 1px solid var(--border-light); }
+/* 窄面板里 5 列会互相挤压。名称拿走剩余宽度（max-width:0 是 flex/grid 里
+   让 ellipsis 生效的惯用技巧），其余列按内容宽度不换行。 */
+.sig-table td, .sig-table th { white-space: nowrap; }
+/* 满宽后不再需要把剩余宽度全给名称：给其它列足够空间，名称用剩余部分 */
+.sig-name { overflow: hidden; }
+.sig-table th:nth-child(2), .sig-table td:nth-child(2) { width: 72px; }
+.sig-table th:nth-child(3), .sig-table td:nth-child(3) { width: 130px; }
+.sig-table th:nth-child(4), .sig-table td:nth-child(4) { width: 160px; }
+/* 名称与代码在同一单元格内用 flex：名称弹性收缩并显示省略号，
+   代码固定不缩。用 calc(100%-48px) 在 table 单元格里算不准，实测只剩「国…」。 */
+.sig-name-cell { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+.sig-name-text { font-weight: 600; color: var(--text-primary);
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; }
+.sig-code { font-size: 11px; color: var(--text-tertiary);
+  flex: 0 0 auto; font-family: var(--font-mono); }
+.sig-dir > span { font-weight: 600; }
+.sig-conf { text-align: right; }
+.sig-conf-num { color: var(--text-primary); font-weight: 600;
+  font-variant-numeric: tabular-nums; }
+.sig-conf-bar { display: inline-block; width: 34px; height: 5px; margin-left: 5px;
+  background: var(--bg-tertiary); border-radius: 3px; overflow: hidden;
+  vertical-align: middle; }
+.sig-conf-bar > i { display: block; height: 100%; border-radius: 3px;
+  transition: width .3s; }
+.sig-strat { color: var(--text-secondary); font-size: 12px;
+  max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.sig-act { text-align: center; }
+.sig-act .btn { font-size: 11px; padding: 1px 4px; }
 
 tr[data-code] { cursor: pointer; }
 tr[data-code]:hover { background: var(--bg-tertiary); }
@@ -1878,7 +1907,7 @@ tr[data-code]:hover { background: var(--bg-tertiary); }
 
 .panel-navchart .period-btn:hover { border-color: var(--primary-color); color: var(--primary-color); }
 .panel-navchart .period-btn.active { background: var(--primary-color); color: var(--text-inverse); border-color: transparent; }
-.panel-navchart .panel-chart { height: 300px; width: 100%; }
+.panel-navchart .panel-chart { height: 380px; width: 100%; }
 
 /* 组合配置面板 */
 .panel-allocation {
@@ -1889,9 +1918,14 @@ tr[data-code]:hover { background: var(--bg-tertiary); }
 }
 
 .panel-allocation .panel-header { padding: 6px 10px; }
-.alloc-body { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.alloc-chart { height: 120px; }
-.alloc-table-wrapper { overflow-y: auto; max-height: 120px; }
+.alloc-body {
+  display: grid; grid-template-columns: minmax(180px, 0.8fr) minmax(220px, 1.2fr);
+  gap: 8px; align-items: stretch;
+}
+/* 图表要足够高才能看清饼图/矩形树图的分区 */
+.alloc-chart { height: 360px; }
+/* 表格与图表同高；23 只基金约 815px，超出的部分滚动 */
+.alloc-table-wrapper { overflow-y: auto; max-height: 360px; }
 .alloc-table { width: 100%; border-collapse: collapse; font-size: 18px; }
 .alloc-table th { padding: 3px 4px; text-align: left; color: var(--text-tertiary); font-size: 18px; text-transform: uppercase; }
 .alloc-table td { padding: 3px 4px; }
@@ -2109,7 +2143,7 @@ th.sortable.sorted-desc::after { content: ' ↓'; opacity: 1; color: var(--prima
 /* 参数扫描 */
 .panel-param-scan { display: flex; flex-direction: column; }
 .ps-form input, .ps-form select, .ps-form textarea { box-sizing: border-box; }
-.ps-table-wrapper { overflow-x: auto; max-height: 120px; }
+.ps-table-wrapper { overflow-x: auto; max-height: 200px; }
 .ps-table-wrapper table { width: 100%; font-size: 18px; border-collapse: collapse; }
 .ps-table-wrapper th { padding: 2px 3px; text-align: right; background: var(--bg-tertiary); cursor: pointer; white-space: nowrap; font-size: 18px; text-transform: uppercase; }
 .ps-table-wrapper th:first-child { text-align: left; }

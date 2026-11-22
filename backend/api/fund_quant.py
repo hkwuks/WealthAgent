@@ -673,9 +673,26 @@ async def export_backtest(backtest_id: str, fmt: str = "json"):
 
 @router.get("/signal/latest")
 async def get_latest_signals(fund_code: Optional[str] = None,
-                              signal_type: Optional[str] = None):
-    """获取最新信号"""
-    signals = await asyncio.to_thread(partial(get_signals, fund_code=fund_code, signal_type=signal_type, limit=20))
+                              signal_type: Optional[str] = None,
+                              fund_codes: Optional[str] = None,
+                              limit: int = 20):
+    """获取最新信号。
+
+    fund_codes: 逗号分隔的基金代码白名单。库里有 362 条信号，其中 148 条是
+    000001 的历史测试残留；只取前 20 条会被它占满，真实持仓信号一条都进不来。
+    传白名单让后端先过滤再截断，而不是让前端拿到 20 条再丢掉。
+    """
+    if fund_codes:
+        wanted = {c.strip() for c in fund_codes.split(",") if c.strip()}
+        # 多取一些再过滤，避免过滤后不足 limit 条
+        raw = await asyncio.to_thread(
+            partial(get_signals, fund_code=fund_code, signal_type=signal_type,
+                    limit=max(limit * 30, 500)))
+        signals = [s for s in raw if s.get("fund_code") in wanted][:limit]
+    else:
+        signals = await asyncio.to_thread(
+            partial(get_signals, fund_code=fund_code, signal_type=signal_type,
+                    limit=limit))
     return {"success": True, "data": signals}
 
 
@@ -720,9 +737,18 @@ async def portfolio_status():
     except Exception:
         pass
 
-    # 获取信号计数
+    # 获取信号计数 —— 只统计用户基金池内的，否则 000001 等历史测试残留
+    # 会让 KPI 显示「↑216 ↓39」而信号列表面板却是空的一类矛盾。
     try:
-        signals = await asyncio.to_thread(partial(get_signals, limit=1000))
+        from pathlib import Path
+        funds_file = Path(__file__).resolve().parents[2] / "data" / "backend" / "funds.json"
+        pool: set[str] = set()
+        if funds_file.exists():
+            import json as _json
+            pool = {f.get("fund_code") for f in _json.loads(funds_file.read_text(encoding="utf-8"))}
+        signals = await asyncio.to_thread(partial(get_signals, limit=5000))
+        if pool:
+            signals = [s for s in signals if s.get("fund_code") in pool]
         buy = sum(1 for s in signals if s.get("direction") == "buy")
         sell = sum(1 for s in signals if s.get("direction") == "sell")
         hold = sum(1 for s in signals if s.get("direction") == "hold") if False else 0

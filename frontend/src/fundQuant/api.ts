@@ -282,7 +282,13 @@ export const fundQuantApi = {
     if (fund_code) params.set('fund_code', fund_code)
     return get<{ success: boolean; data: SignalRecord[] }>(`/signal/history?${params}`)
   },
-  getLatestSignals: () => get<{ success: boolean; data: SignalRecord[] }>('/signal/latest'),
+  getLatestSignals: (fundCodes?: string[], limit = 20) => {
+    const params = new URLSearchParams({ limit: String(limit) })
+    // 传白名单让后端先过滤再截断：库里混着大量历史测试信号，
+    // 不传的话前 20 条可能全被测试数据占满。
+    if (fundCodes?.length) params.set('fund_codes', fundCodes.join(','))
+    return get<{ success: boolean; data: SignalRecord[] }>(`/signal/latest?${params}`)
+  },
 
   // Allocation
   optimizeAllocation: (fund_codes: string[], params?: any) =>
