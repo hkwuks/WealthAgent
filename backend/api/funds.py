@@ -43,11 +43,23 @@ async def save_funds_to_file(funds: List[Dict[str, Any]]):
 
 
 def _save_funds_sync(funds: List[Dict[str, Any]]):
+    # 先写临时文件再原子替换。
+    # 原来直接 open(...,'w') 会先截断再写，中途失败/并发就会留下
+    # 半截 JSON（实测出现过尾部多出一段旧内容的 "Extra data" 解析错误，
+    # 导致 /api/funds 静默返回空列表，整个基金池消失）。
+    tmp = f"{FUNDS_FILE_PATH}.tmp"
     try:
-        with open(FUNDS_FILE_PATH, 'w', encoding='utf-8') as f:
+        with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(funds, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, FUNDS_FILE_PATH)
     except Exception as e:
         logger.error(f"保存基金文件失败: {e}")
+        try:
+            os.path.exists(tmp) and os.remove(tmp)
+        except OSError:
+            pass
 
 
 @router.get(
