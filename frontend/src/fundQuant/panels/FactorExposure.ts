@@ -24,14 +24,24 @@ const OP_LABELS: Record<string, string> = {
   skew: '收益偏度',
 }
 
-/** tech_ma_gap_10 -> ma_gap（与后端 normalize.op_of 同规则） */
-function opOf(name: string): string | null {
+/**
+ * tech_ma_gap_10 -> { op: 'ma_gap', win: 10 }
+ * 与后端 normalize.op_of 同规则：末尾那段一定是窗口数字。
+ */
+function splitName(name: string): { op: string; win: number } | null {
   if (!name.startsWith('tech_')) return null
   const body = name.slice(5)
   const i = body.lastIndexOf('_')
   if (i <= 0) return null
   const win = body.slice(i + 1)
-  return /^\d+$/.test(win) ? body.slice(0, i) : null
+  return /^\d+$/.test(win) ? { op: body.slice(0, i), win: +win } : null
+}
+
+/** 因子名 -> 可读中文，如「均线偏离 10日」 */
+function labelOf(name: string): string {
+  const s = splitName(name)
+  if (!s) return name
+  return `${OP_LABELS[s.op] || s.op} ${s.win}日`
 }
 
 export class FactorExposure {
@@ -46,13 +56,35 @@ export class FactorExposure {
 
   private renderHTML(): string {
     return `
-      <div class="research-scroll" style="display:flex;flex-direction:column;gap:12px;">
+      <div class="research-scroll fx-root">
+        <!-- 摘要条：总分是核心输出，单独给视觉重量 -->
+        <div class="fx-summary">
+          <div class="fx-score">
+            <span class="fx-score-label">综合得分</span>
+            <span class="fx-total-score">--</span>
+          </div>
+          <div class="fx-summary-facts">
+            <div class="fx-fact">
+              <span class="fx-fact-num fx-alive-count">--</span>
+              <span class="fx-fact-label">有效因子</span>
+            </div>
+            <div class="fx-fact">
+              <span class="fx-fact-num fx-dead-count">--</span>
+              <span class="fx-fact-label">已淘汰</span>
+            </div>
+            <div class="fx-fact">
+              <span class="fx-fact-num fx-pool-count">--</span>
+              <span class="fx-fact-label">同类基金</span>
+            </div>
+          </div>
+        </div>
+
         <div class="fx-main-row">
-          <div>
-            <div class="research-section-title">因子贡献（按算子聚合）</div>
+          <div class="fx-card">
+            <div class="research-section-title">因子贡献</div>
             <div class="fx-radar-chart"></div>
           </div>
-          <div>
+          <div class="fx-card">
             <div class="research-section-title">因子明细</div>
             <div class="fx-table-wrapper">
               <table class="fx-table">
@@ -60,15 +92,13 @@ export class FactorExposure {
                 <tbody class="fx-tbody"></tbody>
               </table>
             </div>
-            <div class="fx-score-row">
-              总分 <span class="fx-total-score">--</span>
-              <span class="fx-pool-info"></span>
-            </div>
           </div>
         </div>
 
-        <div class="fx-history-block">
-          <div class="research-section-title">历史因子暴露变化（近 1 年，真实回溯）</div>
+        <div class="fx-card fx-history-block">
+          <div class="research-section-title">历史因子暴露变化
+            <span class="fx-sub">近 1 年 · 按权重取前 5</span>
+          </div>
           <div class="fx-history-chart"></div>
         </div>
       </div>`
@@ -86,19 +116,24 @@ export class FactorExposure {
         this.showNoData()
         return
       }
+      this.renderSummary(res.data)
       this.renderRadar(res.data)
       this.renderTable(res.data)
-      this.el.querySelector('.fx-total-score')!.textContent = res.data.total_score.toFixed(4)
-
-      const pool = this.el.querySelector('.fx-pool-info')!
-      pool.textContent = res.data.n_funds_in_category
-        ? `　同类 ${res.data.n_funds_in_category} 只`
-        : '　同类池不足，无百分位'
     } catch {
       this.showNoData()
       return
     }
     this.loadHistory(fundCode)
+  }
+
+  private renderSummary(data: FactorExposureData): void {
+    const items = Object.values(data.factors)
+    const alive = items.filter(f => f.weight > 0).length
+    this.el!.querySelector('.fx-total-score')!.textContent = data.total_score.toFixed(4)
+    this.el!.querySelector('.fx-alive-count')!.textContent = String(alive)
+    this.el!.querySelector('.fx-dead-count')!.textContent = String(items.length - alive)
+    this.el!.querySelector('.fx-pool-count')!.textContent =
+      data.n_funds_in_category ? String(data.n_funds_in_category) : '—'
   }
 
   private async loadHistory(fundCode: string): Promise<void> {
@@ -135,9 +170,9 @@ export class FactorExposure {
 
     const groups: Record<string, number[]> = {}
     for (const [name, item] of Object.entries(data.factors)) {
-      const op = opOf(name)
-      if (!op || item.weight <= 0) continue          // 淘汰因子不进雷达图
-      ;(groups[op] ||= []).push(item.value)
+      const s = splitName(name)
+      if (!s || item.weight <= 0) continue          // 淘汰因子不进雷达图
+      ;(groups[s.op] ||= []).push(item.value)
     }
     const ops = Object.keys(groups)
     if (!ops.length) {
@@ -151,22 +186,49 @@ export class FactorExposure {
       return +(a.reduce((s, v) => s + v, 0) / a.length).toFixed(3)
     })
 
-    const theme = getChartTheme(document.body.classList.contains('dark-mode'))
+    const isDark = document.body.classList.contains('dark-mode')
+    const theme = getChartTheme(isDark)
+    const axis = isDark ? '#2a4060' : '#cbd5e1'
+    const label = isDark ? '#8494ad' : '#475569'
+
     this.chart.setOption({
       ...theme,
+      tooltip: {
+        ...theme.tooltip,
+        trigger: 'item',
+        formatter: () => ops.map((op, i) =>
+          `${OP_LABELS[op] || op}　<b>${values[i].toFixed(2)}</b>`).join('<br>'),
+      },
       radar: {
         indicator: indicators,
         shape: 'polygon',
-        radius: '62%',
-        name: { textStyle: { fontSize: 11 } },
+        radius: '58%',
+        center: ['50%', '50%'],
+        splitNumber: 4,
+        axisName: {
+          color: label, fontSize: 11,
+          // 标签放到轴外侧，避免压在图形和容器边缘上
+          padding: [2, 4],
+        },
+        splitLine: { lineStyle: { color: axis, opacity: 0.6 } },
+        splitArea: {
+          areaStyle: { color: isDark
+            ? ['rgba(232,168,56,0.02)', 'rgba(232,168,56,0.05)']
+            : ['rgba(232,168,56,0.03)', 'rgba(232,168,56,0.08)'] },
+        },
+        axisLine: { lineStyle: { color: axis, opacity: 0.6 } },
       },
+      legend: { show: false },
       series: [{
         type: 'radar',
+        symbolSize: 3,
         data: [{
           value: values,
-          name: data.fund_name,
-          areaStyle: { color: 'rgba(59,130,246,0.2)' },
-          lineStyle: { color: '#3b82f6', width: 2 },
+          // 不设 name：否则底部会渲染一个系列标签，压住最下方的轴名
+          // 系统强调色是琥珀金，不是蓝色
+          areaStyle: { color: 'rgba(232,168,56,0.18)' },
+          lineStyle: { color: '#e8a838', width: 2 },
+          itemStyle: { color: '#e8a838' },
         }],
       }],
     })
@@ -180,8 +242,8 @@ export class FactorExposure {
     // 只要有一个因子能算分位，才显示这一列
     const showPct = Object.values(data.factors).some(f => f.rank_pct !== null)
     thead.innerHTML = `<tr>
-      <th>因子</th><th class="num">值</th><th class="num">权重</th>
-      ${showPct ? '<th class="num">同类百分位</th>' : ''}
+      <th>因子</th><th class="num">强度</th><th class="num">权重</th>
+      ${showPct ? '<th class="pct-col">同类百分位</th>' : ''}
     </tr>`
 
     const rows = Object.entries(data.factors)
@@ -193,16 +255,21 @@ export class FactorExposure {
         let pctCell = ''
         if (showPct) {
           if (!dead && pct !== null) {
-            const color = pct >= 80 ? 'var(--danger-color)'
-              : pct >= 60 ? 'var(--primary-color)'
-              : pct >= 40 ? 'var(--text-secondary)' : 'var(--success-color)'
-            pctCell = `<td class="num" style="color:${color};font-weight:600;">${pct}%</td>`
+            const tone = pct >= 80 ? 'hi' : pct >= 60 ? 'up' : pct >= 40 ? 'mid' : 'lo'
+            // 迷你条：让百分位可一眼横向比较，而不是读一串数字
+            pctCell = `<td class="pct-col">
+              <div class="fx-pct">
+                <div class="fx-pct-bar"><i class="${tone}" style="width:${pct}%"></i></div>
+                <span class="fx-pct-num ${tone}">${pct}</span>
+              </div>
+            </td>`
           } else {
-            pctCell = '<td class="num muted">—</td>'
+            pctCell = '<td class="pct-col muted">—</td>'
           }
         }
         return `<tr${cls}>
-          <td>${name}${dead ? ' <span class="fx-tag">已淘汰</span>' : ''}</td>
+          <td class="fx-name" title="${name}">${labelOf(name)}${
+            dead ? ' <span class="fx-tag">淘汰</span>' : ''}</td>
           <td class="num">${item.value.toFixed(2)}</td>
           <td class="num">${(item.weight * 100).toFixed(1)}%</td>
           ${pctCell}
@@ -218,26 +285,53 @@ export class FactorExposure {
     this.historyChart?.dispose()
     this.historyChart = echarts.init(el)
 
+    // 10 条线会糊成一团。只画权重最高的 5 个，其余是噪声。
+    const top = [...data.series].sort((a, b) => b.weight - a.weight).slice(0, 5)
     const dates = data.points.map(p => p.date)
-    const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
-      '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16']
-    const theme = getChartTheme(document.body.classList.contains('dark-mode'))
+    const isDark = document.body.classList.contains('dark-mode')
+    const theme = getChartTheme(isDark)
+
+    // 暖色系，与终端琥珀主题一致；深色背景上提高亮度
+    const colors = isDark
+      ? ['#e8a838', '#4a90d9', '#22c55e', '#ef4444', '#a78bfa']
+      : ['#c08828', '#3b7dd0', '#16a34a', '#dc2626', '#7c3aed']
 
     this.historyChart.setOption({
       ...theme,
-      tooltip: { trigger: 'axis' },
-      legend: { bottom: 0, textStyle: { fontSize: 10 }, itemWidth: 10, itemHeight: 6 },
-      grid: { left: 40, right: 12, top: 10, bottom: 34 },
-      xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 10 } },
-      yAxis: { type: 'value', min: 0, max: 1, axisLabel: { fontSize: 10 } },
-      series: data.series.map((s, i) => ({
-        name: s.display_name,
+      tooltip: {
+        ...theme.tooltip,
+        valueFormatter: (v: unknown) => (typeof v === 'number' ? v.toFixed(3) : '—'),
+      },
+      legend: {
+        bottom: 0, icon: 'roundRect', itemWidth: 8, itemHeight: 8, itemGap: 10,
+        textStyle: { fontSize: 10, color: isDark ? '#8494ad' : '#475569' },
+      },
+      grid: { left: 40, right: 14, top: 10, bottom: 62 },
+      xAxis: {
+        type: 'category',
+        data: dates,
+        boundaryGap: false,
+        axisLine: { lineStyle: { color: isDark ? '#1e2d42' : '#e2e8f0' } },
+        axisLabel: { fontSize: 10, color: isDark ? '#546478' : '#64748b' },
+      },
+      yAxis: {
+        type: 'value', min: 0, max: 1,
+        splitLine: { lineStyle: { color: isDark ? '#152238' : '#f1f5f9' } },
+        axisLabel: { fontSize: 10, color: isDark ? '#546478' : '#64748b' },
+      },
+      series: top.map((s, i) => ({
+        name: labelOf(s.name),
         type: 'line',
         smooth: true,
         showSymbol: false,
+        emphasis: { focus: 'series' },
         data: data.points.map(p => p.factors[s.name] ?? null),
-        lineStyle: { width: 1.5, color: colors[i % colors.length] },
+        lineStyle: { width: 1.8, color: colors[i % colors.length] },
         itemStyle: { color: colors[i % colors.length] },
+        areaStyle: i === 0 ? {
+          opacity: 0.10,
+          color: colors[0],
+        } : undefined,
       })),
     })
   }
