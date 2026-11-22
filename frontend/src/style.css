@@ -1743,8 +1743,13 @@ tr:hover { background: var(--bg-tertiary); }
   border-radius: var(--radius);
   border: 1px solid var(--border-color);
   min-height: 0;
-  overflow: hidden;
+  /* 不要用 overflow:hidden —— 它会把子元素的 sticky 表头和阴影一起裁掉，
+     滚动时表现为「表头/标题被切掉一半」。需要裁剪的场景各自加。 */
 }
+
+/* KPI 顶部琥珀色强调线。必须比 .fq-dashboard-grid > * 的 shorthand 更具体，
+   否则被 border:1px solid var(--border-color) 覆盖成普通灰边。 */
+.fq-dashboard-grid > .kpi-bar { border-top: 2px solid var(--primary-color); }
 
 .fq-dashboard-grid .panel-header {
   display: flex; align-items: center; justify-content: space-between;
