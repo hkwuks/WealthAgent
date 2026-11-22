@@ -10,7 +10,9 @@ export class SignalList extends PanelBase {
   private refreshTimer: ReturnType<typeof setInterval> | null = null
 
   constructor() {
-    super({ id: 'signal_list', title: '信号列表', defaultGridPos: { x: 0, y: 2, w: 1, h: 1 } })
+    // 信号列表的 5 列在 1/3 宽（约 413px）里会被挤成竖排/省略号。
+    // 满宽独占一行，名称才有可读空间。
+    super({ id: 'signal_list', title: '信号列表', defaultGridPos: { x: 0, y: 2, w: 3, h: 1 } })
   }
 
   render(): HTMLElement {
@@ -36,8 +38,7 @@ export class SignalList extends PanelBase {
               <th>方向</th>
               <th class="text-right">置信度</th>
               <th>策略</th>
-              <th class="text-right">时间</th>
-              <th style="width:40px;"></th>
+              <th style="width:34px;"></th>
             </tr>
           </thead>
           <tbody class="sig-tbody"></tbody>
@@ -116,14 +117,11 @@ export class SignalList extends PanelBase {
     if (!this.el) return
     const filter = (this.el.querySelector('.sig-filter') as HTMLSelectElement)?.value || 'all'
     try {
-      const res = await fundQuantApi.getLatestSignals()
+      // 只显示 fundPool 中存在的基金信号。白名单传给后端，
+      // 由后端先过滤再截断——库里 148 条 000001 历史测试残留会挤掉真实信号。
+      const poolCodes = state.get('fundPool').map(f => f.fund_code)
+      const res = await fundQuantApi.getLatestSignals(poolCodes, 30)
       let signals = res.data || []
-
-      // 只显示 fundPool 中存在的基金信号，过滤测试数据
-      const poolCodes = new Set(state.get('fundPool').map(f => f.fund_code))
-      if (poolCodes.size > 0) {
-        signals = signals.filter(s => poolCodes.has(s.fund_code))
-      }
 
       // 去重 (code + direction + confidence 相同视为重复)
       const seen = new Set<string>()
@@ -153,26 +151,26 @@ export class SignalList extends PanelBase {
       tbody.innerHTML = signals.slice(0, 30).map(s => {
         const key = `${s.fund_code}|${s.direction}|${s.confidence}`
         const isNew = existingRows.length > 0 && !existingKeys.has(key)
+        const name = s.fund_name || s.fund_code
+        const when = (s.created_at || '').slice(5, 16)
         return `<tr data-code="${s.fund_code}" data-key="${key}" class="${isNew ? 'sig-row-new' : ''}">
-          <td style="padding:6px 8px;border-bottom:1px solid var(--border-light);">
-            <span style="font-weight:600;color:var(--text-primary);">${s.fund_name || s.fund_code}</span>
-            <span style="font-size:11px;color:var(--text-tertiary);margin-left:4px;">${s.fund_code}</span>
-          </td>
-          <td style="padding:6px 8px;border-bottom:1px solid var(--border-light);">
-            <span class="${DIR_CLASS[s.direction] || ''}" style="font-weight:600;">${DIR_LABEL[s.direction] || s.direction}</span>
-          </td>
-          <td style="padding:6px 8px;border-bottom:1px solid var(--border-light);text-align:right;">
-            <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;">
-              <span style="color:var(--text-primary);font-weight:600;">${(s.confidence * 100).toFixed(0)}%</span>
-              <div style="width:50px;height:6px;background:var(--bg-tertiary);border-radius:3px;">
-                <div style="height:100%;width:${s.confidence * 100}%;background:${s.confidence > 0.7 ? '#10b981' : s.confidence > 0.5 ? '#f59e0b' : '#94a3b8'};border-radius:3px;transition:width 0.3s;"></div>
-              </div>
+          <td class="sig-name" title="${name} (${s.fund_code}) · ${when}">
+            <div class="sig-name-cell">
+              <span class="sig-name-text">${name}</span>
+              <span class="sig-code">${s.fund_code}</span>
             </div>
           </td>
-          <td style="padding:6px 8px;border-bottom:1px solid var(--border-light);color:var(--text-secondary);font-size:12px;">${s.strategy_name || '-'}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid var(--border-light);text-align:right;color:var(--text-tertiary);font-size:11px;">${(s.created_at || '').slice(5, 16)}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid var(--border-light);text-align:center;">
-            <button class="btn btn-sm btn-ghost sig-study-btn" data-code="${s.fund_code}" data-direction="${s.direction}" data-confidence="${s.confidence}" data-strategy="${s.strategy_name || ''}" data-timestamp="${s.created_at || ''}" title="研究此信号" style="font-size:11px;padding:1px 4px;">🔍</button>
+          <td class="sig-dir">
+            <span class="${DIR_CLASS[s.direction] || ''}">${DIR_LABEL[s.direction] || s.direction}</span>
+          </td>
+          <td class="sig-conf">
+            <span class="sig-conf-num">${(s.confidence * 100).toFixed(0)}%</span>
+            <span class="sig-conf-bar"><i style="width:${s.confidence * 100}%;background:${
+              s.confidence > 0.7 ? '#10b981' : s.confidence > 0.5 ? '#f59e0b' : '#94a3b8'}"></i></span>
+          </td>
+          <td class="sig-strat" title="${s.strategy_name || '-'}">${s.strategy_name || '-'}</td>
+          <td class="sig-act">
+            <button class="btn btn-sm btn-ghost sig-study-btn" data-code="${s.fund_code}" data-direction="${s.direction}" data-confidence="${s.confidence}" data-strategy="${s.strategy_name || ''}" data-timestamp="${s.created_at || ''}" title="研究此信号">🔍</button>
           </td>
         </tr>`
       }).join('')

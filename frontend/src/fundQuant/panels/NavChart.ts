@@ -289,10 +289,15 @@ export class NavChart extends PanelBase {
       tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
       legend: {
         data: ['净值', '沪深300', '买入信号', '卖出信号', '回撤'],
-        bottom: 0,
+        // 图例贴底，与旋转 45° 的 x 轴标签之间留足空间。
+        // 用像素而非百分比：容器高度变化时百分比会算错，图例跑到图里压住曲线。
+        bottom: 2,
+        itemGap: 14,
+        itemWidth: 14,
+        itemHeight: 8,
         textStyle: { fontSize: 11 },
       },
-      grid: { left: '3%', right: '4%', bottom: '18%', top: '4%', containLabel: true },
+      grid: { left: '3%', right: '4%', bottom: 78, top: '4%', containLabel: true },
       xAxis: {
         type: 'category',
         data: dates,
