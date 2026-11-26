@@ -10,7 +10,10 @@ numpy
 python-multipart
 websockets
 aiofiles
-akshare
+# 1.20.44 起 akshare 批量改名 68 个接口（stock_zh_index_daily -> index_zh_daily_sina
+# 等），调用旧名直接抛 AttributeError。锁定在改名之前，与本地开发环境一致。
+# 升级时需同步改 storage.py / data_sync.py / market_data.py / gold 里的调用名。
+akshare>=1.18.28,<1.20.44
 yfinance
 tushare
 loguru
