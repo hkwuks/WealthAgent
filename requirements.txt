@@ -1,19 +1,27 @@
+# 依赖版本统一：本地与 CI 装同一套版本。
+# 原则见下方注释，改动时请同步更新本地环境（pip install -r requirements.txt）。
 # FastAPI 0.117+ resolves Starlette to versions containing security fixes.
 fastapi>=0.117,<1.0
-torch
+# 以 CI 为准（2.15.x）。本地 2.7.0 是旧环境，统一后需重装。
+torch>=2.15,<2.16
 uvicorn[standard]
 pydantic
 pydantic-settings
 aiohttp
-pandas
-numpy
+# pandas / numpy 是数据层的核心，锁小版本区间避免行为漂移。
+pandas>=3.1,<3.2
+numpy>=2.4,<2.7
 python-multipart
 websockets
 aiofiles
-# 1.20.44 起 akshare 批量改名 68 个接口（stock_zh_index_daily -> index_zh_daily_sina
-# 等），调用旧名直接抛 AttributeError。锁定在改名之前，与本地开发环境一致。
-# 升级时需同步改 storage.py / data_sync.py / market_data.py / gold 里的调用名。
-akshare>=1.18.28,<1.20.44
+# akshare 版本必须同时满足三件事（实测 1.19.5 上 21/23 接口可用）：
+#   1. 早于 1.20.44 —— 该版本批量改名 68 个接口（stock_zh_index_daily ->
+#      index_zh_daily_sina 等），旧名调用直接抛 AttributeError。
+#   2. 早于 1.20.0 —— futures_hq_spot 在 1.20.0 被移除（market_data.py 用它取 DXY/VIX）。
+#   3. 不早于 1.19.5 —— 实测该版本起 stock_zh_index_daily 等全部在位。
+# 注意：fund_info_em / fund_dividend_em 在任何版本都不存在，是死代码
+#      （collector.py 里被 try/except 静默吞掉），与版本无关，不要为它调版本。
+akshare>=1.19.5,<1.20.0
 yfinance
 tushare
 loguru
